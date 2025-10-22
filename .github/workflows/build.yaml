@@ -123,9 +123,6 @@ jobs:
           # macOS arm64
           CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o dist/kauth-darwin-arm64 ./cmd/kauth
 
-          # Windows amd64
-          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -o dist/kauth-windows-amd64.exe ./cmd/kauth
-
       - name: Create checksums
         run: |
           cd dist
@@ -173,11 +170,6 @@ jobs:
             curl -LO https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/kauth-darwin-arm64
             chmod +x kauth-darwin-arm64
             sudo mv kauth-darwin-arm64 /usr/local/bin/kauth
-            ```
-
-            **Windows (amd64):**
-            ```powershell
-            curl.exe -LO https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/kauth-windows-amd64.exe
             ```
 
             ### Verify checksums
