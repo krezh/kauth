@@ -31,3 +31,6 @@ Thumbs.db
 # Nix result symlinks
 result
 result-*
+
+# dev
+.direnv
