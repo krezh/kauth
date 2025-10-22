@@ -1,0 +1,46 @@
+# RBAC examples for OIDC users
+
+---
+# Grant cluster-admin to k8s-admins group
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: oidc-cluster-admins
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: cluster-admin
+subjects:
+  - kind: Group
+    name: oidc:k8s-admins
+    apiGroup: rbac.authorization.k8s.io
+
+---
+# Grant view permissions to viewers group
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: oidc-viewers
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: view
+subjects:
+  - kind: Group
+    name: oidc:viewers
+    apiGroup: rbac.authorization.k8s.io
+
+---
+# Grant edit permissions to developers group
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: oidc-developers
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: edit
+subjects:
+  - kind: Group
+    name: oidc:developers
+    apiGroup: rbac.authorization.k8s.io

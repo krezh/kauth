@@ -1,0 +1,33 @@
+# Binaries (only in root)
+/kauth
+/kauth-server
+/kauth-*
+*.exe
+
+# Go build artifacts
+vendor/
+*.o
+*.a
+*.so
+
+# Test binaries
+*.test
+*.out
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Token cache (for testing)
+.kube/
+
+# Nix result symlinks
+result
+result-*

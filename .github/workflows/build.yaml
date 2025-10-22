@@ -1,0 +1,206 @@
+name: Build and Push Container
+
+on:
+  push:
+    branches:
+      - main
+    tags:
+      - 'v*'
+  pull_request:
+    branches:
+      - main
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_NAME: ${{ github.repository }}
+
+jobs:
+  build-nix:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v14
+      
+      - name: Setup Nix cache
+        uses: DeterminateSystems/magic-nix-cache-action@v8
+      
+      - name: Build Docker image with Nix
+        run: |
+          nix build .#docker
+          echo "DOCKER_IMAGE=$(readlink -f result)" >> $GITHUB_ENV
+      
+      - name: Load Docker image
+        run: |
+          docker load < $DOCKER_IMAGE
+          docker images
+      
+      - name: Log in to GitHub Container Registry
+        if: github.event_name != 'pull_request'
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-server
+          tags: |
+            type=ref,event=branch
+            type=ref,event=pr
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=sha,prefix={{branch}}-
+            type=raw,value=latest,enable={{is_default_branch}}
+      
+      - name: Tag and push image
+        if: github.event_name != 'pull_request'
+        run: |
+          # Get the image name from nix build
+          IMAGE_ID=$(docker images --format "{{.Repository}}:{{.Tag}}" | grep kauth-server | head -1)
+          echo "Built image: $IMAGE_ID"
+          
+          # Tag with metadata
+          for tag in ${{ steps.meta.outputs.tags }}; do
+            echo "Tagging as: $tag"
+            docker tag $IMAGE_ID $tag
+            docker push $tag
+          done
+      
+      - name: Build CLI binaries
+        run: |
+          nix build .#cli
+          mkdir -p artifacts
+          cp result/bin/kauth artifacts/kauth-linux-amd64
+      
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: kauth-cli
+          path: artifacts/
+
+  build-multiarch:
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: read
+      packages: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-server
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+      
+      - name: Build and push multi-arch image
+        uses: docker/build-push-action@v5
+        with:
+          context: .
+          file: ./deploy/kubernetes/Dockerfile
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  release:
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [build-nix]
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+      
+      - name: Install Nix
+        uses: DeterminateSystems/nix-installer-action@v14
+      
+      - name: Setup Nix cache
+        uses: DeterminateSystems/magic-nix-cache-action@v8
+      
+      - name: Build all CLI binaries
+        run: |
+          mkdir -p dist
+          
+          # Linux amd64
+          nix build .#cli
+          cp result/bin/kauth dist/kauth-linux-amd64
+          
+          # You can add more architectures here with cross-compilation
+          # For now, we'll just provide linux-amd64 from Nix
+      
+      - name: Create checksums
+        run: |
+          cd dist
+          sha256sum * > checksums.txt
+      
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*
+          body: |
+            ## kauth ${{ github.ref_name }}
+            
+            ### Container Images
+            
+            ```bash
+            docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}-server:${{ github.ref_name }}
+            ```
+            
+            ### Install CLI
+            
+            **Linux (amd64):**
+            ```bash
+            curl -LO https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/kauth-linux-amd64
+            chmod +x kauth-linux-amd64
+            sudo mv kauth-linux-amd64 /usr/local/bin/kauth
+            ```
+            
+            **With Nix:**
+            ```bash
+            nix run github:${{ github.repository }}/${{ github.ref_name }} -- login --url https://kauth.example.com
+            ```
+            
+            ### Verify checksums
+            
+            ```bash
+            curl -LO https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/checksums.txt
+            sha256sum -c checksums.txt
+            ```
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
