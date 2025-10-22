@@ -31,9 +31,12 @@ func main() {
 		log.Fatal("BASE_URL is required (e.g. https://kauth.example.com)")
 	}
 
-	// Auto-detect cluster server (from in-cluster env vars or default)
-	clusterServer := server.GetClusterServer()
-	log.Printf("Cluster server: %s", clusterServer)
+	// Get cluster API endpoint URL (must be set manually)
+	clusterServer := getEnv("KUBERNETES_API_URL", "")
+	if clusterServer == "" {
+		log.Fatal("KUBERNETES_API_URL is required (e.g. https://kubernetes.example.com:6443)")
+	}
+	log.Printf("Cluster API URL: %s", clusterServer)
 
 	// Auto-detect cluster CA (from env or in-cluster mount)
 	clusterCA, err := server.GetClusterCA()
