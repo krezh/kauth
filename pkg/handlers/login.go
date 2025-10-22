@@ -291,7 +291,7 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	// Render success page
 	w.Header().Set("Content-Type", "text/html")
 	_ = HTML(
-		Head(
+		Head(Meta(Charset("UTF-8")),
 			Title("Authentication Successful"),
 			StyleEl(Raw(`
 				body {
