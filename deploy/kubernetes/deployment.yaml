@@ -10,13 +10,12 @@ metadata:
   namespace: kauth
 type: Opaque
 stringData:
-  OIDC_ISSUER_URL: "https://authentik.example.com/application/o/kube-apiserver/"
-  OIDC_CLIENT_ID: "kube-apiserver"
-  OIDC_CLIENT_SECRET: "your-client-secret-here"
-  CLUSTER_NAME: "kubernetes"
-  # CLUSTER_SERVER: Auto-detected from in-cluster environment
-  # CLUSTER_CA_DATA: Auto-detected from /var/run/secrets/kubernetes.io/serviceaccount/ca.crt
-  BASE_URL: "https://kauth.example.com"
+  OIDC_ISSUER_URL: ""
+  OIDC_CLIENT_ID: ""
+  OIDC_CLIENT_SECRET: ""
+  CLUSTER_NAME: ""
+  KUBERNETES_API_URL: ""
+  BASE_URL: ""
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -24,7 +23,7 @@ metadata:
   name: kauth
   namespace: kauth
 spec:
-  replicas: 2
+  replicas: 1
   selector:
     matchLabels:
       app: kauth
@@ -35,33 +34,34 @@ spec:
     spec:
       serviceAccountName: kauth
       containers:
-      - name: kauth
-        image: ghcr.io/yourusername/kauth-server:latest
-        ports:
-        - containerPort: 8080
-          name: http
-        envFrom:
-        - secretRef:
-            name: kauth-config
-        livenessProbe:
-          httpGet:
-            path: /health
-            port: 8080
-          initialDelaySeconds: 10
-          periodSeconds: 10
-        readinessProbe:
-          httpGet:
-            path: /health
-            port: 8080
-          initialDelaySeconds: 5
-          periodSeconds: 5
-        resources:
-          requests:
-            memory: "64Mi"
-            cpu: "100m"
-          limits:
-            memory: "128Mi"
-            cpu: "200m"
+        - name: kauth
+          image: ghcr.io/krezh/kauth-server:latest
+          imagePullPolicy: Always
+          ports:
+            - containerPort: 8080
+              name: http
+          envFrom:
+            - secretRef:
+                name: kauth-config
+          livenessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /health
+              port: 8080
+            initialDelaySeconds: 5
+            periodSeconds: 5
+          resources:
+            requests:
+              memory: "64Mi"
+              cpu: "100m"
+            limits:
+              memory: "128Mi"
+              cpu: "200m"
 ---
 apiVersion: v1
 kind: ServiceAccount
@@ -78,9 +78,9 @@ spec:
   selector:
     app: kauth
   ports:
-  - port: 80
-    targetPort: 8080
-    name: http
+    - port: 80
+      targetPort: 8080
+      name: http
   type: ClusterIP
 ---
 apiVersion: networking.k8s.io/v1
@@ -88,23 +88,19 @@ kind: Ingress
 metadata:
   name: kauth
   namespace: kauth
-  annotations:
-    cert-manager.io/cluster-issuer: "letsencrypt-prod"
-    nginx.ingress.kubernetes.io/ssl-redirect: "true"
 spec:
-  ingressClassName: nginx
+  ingressClassName: nginx-internal
   tls:
-  - hosts:
-    - kauth.example.com
-    secretName: kauth-tls
+    - hosts:
+        - kauth.talos.plexuz.xyz
   rules:
-  - host: kauth.example.com
-    http:
-      paths:
-      - path: /
-        pathType: Prefix
-        backend:
-          service:
-            name: kauth
-            port:
-              number: 80
+    - host: kauth.talos.plexuz.xyz
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: kauth
+                port:
+                  number: 80
