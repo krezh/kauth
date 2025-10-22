@@ -48,10 +48,6 @@ jobs:
           name: kauth-cli
           path: artifacts/
 
-      - name: Set up QEMU
-        if: github.event_name != 'pull_request'
-        uses: docker/setup-qemu-action@v3
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -83,7 +79,7 @@ jobs:
         with:
           context: .
           file: ./deploy/kubernetes/Dockerfile
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
@@ -107,21 +103,10 @@ jobs:
           go-version-file: go.mod
           cache: true
 
-      - name: Build CLI binaries for multiple platforms
+      - name: Build CLI binary
         run: |
           mkdir -p dist
-
-          # Linux amd64
           CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -o dist/kauth-linux-amd64 ./cmd/kauth
-
-          # Linux arm64
-          CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o dist/kauth-linux-arm64 ./cmd/kauth
-
-          # macOS amd64
-          CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -o dist/kauth-darwin-amd64 ./cmd/kauth
-
-          # macOS arm64
-          CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -o dist/kauth-darwin-arm64 ./cmd/kauth
 
       - name: Create checksums
         run: |
@@ -144,32 +129,10 @@ jobs:
 
             ### Install CLI
 
-            **Linux (amd64):**
             ```bash
             curl -LO https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/kauth-linux-amd64
             chmod +x kauth-linux-amd64
             sudo mv kauth-linux-amd64 /usr/local/bin/kauth
-            ```
-
-            **Linux (arm64):**
-            ```bash
-            curl -LO https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/kauth-linux-arm64
-            chmod +x kauth-linux-arm64
-            sudo mv kauth-linux-arm64 /usr/local/bin/kauth
-            ```
-
-            **macOS (Intel):**
-            ```bash
-            curl -LO https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/kauth-darwin-amd64
-            chmod +x kauth-darwin-amd64
-            sudo mv kauth-darwin-amd64 /usr/local/bin/kauth
-            ```
-
-            **macOS (Apple Silicon):**
-            ```bash
-            curl -LO https://github.com/${{ github.repository }}/releases/download/${{ github.ref_name }}/kauth-darwin-arm64
-            chmod +x kauth-darwin-arm64
-            sudo mv kauth-darwin-arm64 /usr/local/bin/kauth
             ```
 
             ### Verify checksums
