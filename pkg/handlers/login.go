@@ -14,6 +14,9 @@ import (
 	"kauth/pkg/oauth"
 
 	"golang.org/x/oauth2"
+
+	. "maragu.dev/gomponents"
+	. "maragu.dev/gomponents/html"
 )
 
 type LoginHandler struct {
@@ -285,36 +288,44 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		Kubeconfig: kubeconfig,
 	})
 
-	// Success page
+	// Render success page
 	w.Header().Set("Content-Type", "text/html")
-	fmt.Fprintf(w, `<!DOCTYPE html>
-<html>
-<head>
-    <title>Authentication Successful</title>
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            max-width: 600px;
-            margin: 50px auto;
-            padding: 20px;
-            text-align: center;
-        }
-        .success {
-            color: #4CAF50;
-            font-size: 48px;
-            margin-bottom: 20px;
-        }
-        h1 { color: #333; }
-        p { color: #666; font-size: 18px; }
-    </style>
-</head>
-<body>
-    <div class="success">✓</div>
-    <h1>Authentication Successful!</h1>
-    <p>You can close this window and return to your terminal.</p>
-    <p style="margin-top: 40px; font-size: 14px;">Your kubeconfig is being configured automatically...</p>
-</body>
-</html>`)
+	_ = HTML(
+		Head(
+			Title("Authentication Successful"),
+			StyleEl(Raw(`
+				body {
+					font-family: Arial, sans-serif;
+					max-width: 600px;
+					margin: 50px auto;
+					padding: 20px;
+					text-align: center;
+				}
+				.success {
+					color: #4CAF50;
+					font-size: 48px;
+					margin-bottom: 20px;
+				}
+				h1 { color: #333; }
+				p { color: #666; font-size: 18px; }
+			`)),
+			// Auto-close page after 5 seconds
+			Script(Raw(`
+				setTimeout(function() {
+					window.close();
+				}, 5000);
+			`)),
+		),
+		Body(
+			Div(Class("success"), Text("✓")),
+			H1(Text("Authentication Successful!")),
+			P(Text("You can close this window and return to your terminal.")),
+			P(
+				Style("margin-top: 40px; font-size: 14px;"),
+				Text("Your kubeconfig is being configured automatically..."),
+			),
+		),
+	).Render(w)
 }
 
 func (h *LoginHandler) generateKubeconfig(email, idToken string) string {
