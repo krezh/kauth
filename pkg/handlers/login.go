@@ -15,8 +15,8 @@ import (
 
 	"golang.org/x/oauth2"
 
-	. "maragu.dev/gomponents"
-	. "maragu.dev/gomponents/html"
+	c "maragu.dev/gomponents"
+	hh "maragu.dev/gomponents/html"
 )
 
 type LoginHandler struct {
@@ -111,7 +111,7 @@ func (h *LoginHandler) HandleStartLogin(w http.ResponseWriter, r *http.Request) 
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 func (h *LoginHandler) HandleWatch(w http.ResponseWriter, r *http.Request) {
@@ -177,11 +177,11 @@ func (h *LoginHandler) HandleWatch(w http.ResponseWriter, r *http.Request) {
 		select {
 		case status := <-listener:
 			data, _ := json.Marshal(status)
-			fmt.Fprintf(w, "data: %s\n\n", data)
+			_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
 			flusher.Flush()
 			return
 		case <-ticker.C:
-			fmt.Fprintf(w, ": keepalive\n\n")
+			_, _ = fmt.Fprintf(w, ": keepalive\n\n")
 			flusher.Flush()
 		case <-r.Context().Done():
 			return
@@ -191,7 +191,7 @@ func (h *LoginHandler) HandleWatch(w http.ResponseWriter, r *http.Request) {
 
 func (h *LoginHandler) sendFinalStatus(w http.ResponseWriter, status *StatusResponse) {
 	data, _ := json.Marshal(status)
-	fmt.Fprintf(w, "data: %s\n\n", data)
+	_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
 }
 
 func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
@@ -339,39 +339,41 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 
 	// Render success page
 	w.Header().Set("Content-Type", "text/html")
-	_ = HTML(
-		Head(
-			Meta(Charset("UTF-8")),
-			Title("Authentication Successful"),
-			StyleEl(Raw(`
-				body {
-					font-family: Arial, sans-serif;
-					max-width: 600px;
-					margin: 50px auto;
-					padding: 20px;
-					text-align: center;
-				}
-				.success {
-					color: #4CAF50;
-					font-size: 48px;
-					margin-bottom: 20px;
-				}
-				h1 { color: #333; }
-				p { color: #666; font-size: 18px; }
-			`)),
-			Script(Raw(`
-				setTimeout(function() {
-					window.close();
-				}, 5000);
-			`)),
-		),
-		Body(
-			Div(Class("success"), Text("✓")),
-			H1(Text("Authentication Successful!")),
-			P(Text("You can close this window and return to your terminal.")),
-			P(
-				Style("margin-top: 40px; font-size: 14px;"),
-				Text("Your kubeconfig is being configured automatically..."),
+	_ = hh.Doctype(
+		hh.HTML(
+			hh.Head(
+				hh.Meta(c.Attr("charset", "UTF-8")),
+				hh.TitleEl(c.Text("Authentication Successful")),
+				hh.StyleEl(c.Raw(`
+					body {
+						font-family: Arial, sans-serif;
+						max-width: 600px;
+						margin: 50px auto;
+						padding: 20px;
+						text-align: center;
+					}
+					.success {
+						color: #4CAF50;
+						font-size: 48px;
+						margin-bottom: 20px;
+					}
+					h1 { color: #333; }
+					p { color: #666; font-size: 18px; }
+				`)),
+				hh.Script(c.Raw(`
+					setTimeout(function() {
+						window.close();
+					}, 5000);
+				`)),
+			),
+			hh.Body(
+				hh.Div(c.Attr("class", "success"), c.Text("✓")),
+				hh.H1(c.Text("Authentication Successful!")),
+				hh.P(c.Text("You can close this window and return to your terminal.")),
+				hh.P(
+					c.Attr("style", "margin-top: 40px; font-size: 14px;"),
+					c.Text("Your kubeconfig is being configured automatically..."),
+				),
 			),
 		),
 	).Render(w)
@@ -449,6 +451,6 @@ func (h *LoginHandler) cleanupSSENotifications() {
 
 func generateRandomString(size int) string {
 	b := make([]byte, size)
-	rand.Read(b)
+	_, _ = rand.Read(b)
 	return base64.RawURLEncoding.EncodeToString(b)
 }

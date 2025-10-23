@@ -34,7 +34,7 @@
             pname = "kauth";
             inherit version;
             src = ./.;
-            vendorHash = "sha256-O7AOeL6FaTUPI3gQ22FN6peEJkeE6PpQ1bnRf7EN/6U=";
+            vendorHash = "sha256-9M+zn2mgEwbntGFpaFlRJ/Gl93yqm93tYyWYod9/W00=";
             subPackages = [ "cmd/kauth" ];
             ldflags = [
               "-s"
@@ -46,7 +46,7 @@
             pname = "kauth-server";
             inherit version;
             src = ./.;
-            vendorHash = "sha256-O7AOeL6FaTUPI3gQ22FN6peEJkeE6PpQ1bnRf7EN/6U=";
+            vendorHash = "sha256-9M+zn2mgEwbntGFpaFlRJ/Gl93yqm93tYyWYod9/W00=";
             subPackages = [ "cmd/kauth-server" ];
             ldflags = [
               "-s"

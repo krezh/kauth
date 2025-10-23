@@ -17,6 +17,10 @@ check:
 update:
     nix flake update
 
+flake-build:
+    nix build .#kauth
+    nix build .#kauth-server
+
 # Update vendor hashes in flake.nix
 vendor:
     #!/usr/bin/env bash
@@ -41,7 +45,7 @@ vendor:
     fi
 
 # Tag current commit with version
-tag VERSION: vendor test check
+tag VERSION: vendor test check flake-build
     @echo "Tagging version {{ VERSION }}..."
     git tag -a {{ VERSION }} -m "Release {{ VERSION }}"
     git push origin {{ VERSION }}

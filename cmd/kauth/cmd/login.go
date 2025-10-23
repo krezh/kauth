@@ -29,7 +29,7 @@ Just provide the service URL and everything else is automatic.`,
 func init() {
 	rootCmd.AddCommand(loginCmd)
 	loginCmd.Flags().StringVar(&serviceURL, "url", "", "kauth service URL (e.g. https://kauth.example.com)")
-	loginCmd.MarkFlagRequired("url")
+	_ = loginCmd.MarkFlagRequired("url")
 }
 
 type InfoResponse struct {
@@ -70,7 +70,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to connect to service: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("service returned error: %s", resp.Status)
@@ -89,7 +89,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to start login: %w", err)
 	}
-	defer loginResp.Body.Close()
+	defer func() { _ = loginResp.Body.Close() }()
 
 	var loginData StartLoginResponse
 	if err := json.NewDecoder(loginResp.Body).Decode(&loginData); err != nil {
@@ -159,7 +159,7 @@ func watchForCompletion(client *http.Client, baseURL, sessionToken string) (*Sta
 	if err != nil {
 		return nil, fmt.Errorf("failed to connect to watch endpoint: %w", err)
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("watch endpoint returned error: %s", resp.Status)

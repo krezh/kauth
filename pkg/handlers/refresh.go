@@ -73,11 +73,12 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 	// Validate and decrypt refresh token
 	refreshToken, err := h.jwtManager.ValidateRefreshToken(req.RefreshToken, h.rotationWindow)
 	if err != nil {
-		if err == jwt.ErrExpiredToken {
+		switch err {
+		case jwt.ErrExpiredToken:
 			http.Error(w, "Refresh token expired", http.StatusUnauthorized)
-		} else if err == jwt.ErrInvalidSignature {
+		case jwt.ErrInvalidSignature:
 			http.Error(w, "Invalid refresh token", http.StatusUnauthorized)
-		} else {
+		default:
 			http.Error(w, "Invalid refresh token", http.StatusUnauthorized)
 		}
 		return
@@ -157,7 +158,7 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(resp)
+	_ = json.NewEncoder(w).Encode(resp)
 }
 
 func (h *RefreshHandler) generateKubeconfig(email, idToken string) string {

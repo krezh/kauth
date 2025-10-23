@@ -28,6 +28,6 @@ func HandleInfo(clusterName, clusterServer, issuerURL, clientID, baseURL string)
 		}
 
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(info)
+		_ = json.NewEncoder(w).Encode(info)
 	}
 }

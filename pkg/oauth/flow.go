@@ -87,7 +87,7 @@ func (p *Provider) startCallbackServer(ctx context.Context, port int, expectedSt
 
 		// Success response to browser
 		w.Header().Set("Content-Type", "text/html")
-		fmt.Fprintf(w, `<!DOCTYPE html>
+		_, _ = fmt.Fprintf(w, `<!DOCTYPE html>
 <html>
 <head>
     <title>Authentication Successful</title>
@@ -136,7 +136,7 @@ func (p *Provider) startCallbackServer(ctx context.Context, port int, expectedSt
 		defer func() {
 			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			server.Shutdown(shutdownCtx)
+			_ = server.Shutdown(shutdownCtx)
 		}()
 
 		select {
