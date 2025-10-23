@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -124,6 +125,7 @@ func (h *LoginHandler) HandleWatch(w http.ResponseWriter, r *http.Request) {
 	// Validate session token
 	session, err := h.jwtManager.ValidateSessionToken(sessionToken)
 	if err != nil {
+		log.Printf("Watch: Failed to validate session token: %v", err)
 		if err == jwt.ErrExpiredToken {
 			http.Error(w, "Session expired", http.StatusUnauthorized)
 		} else {
@@ -165,6 +167,7 @@ func (h *LoginHandler) HandleWatch(w http.ResponseWriter, r *http.Request) {
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
+		log.Printf("Watch: Streaming not supported")
 		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
 		return
 	}
