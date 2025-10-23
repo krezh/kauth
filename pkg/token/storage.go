@@ -12,11 +12,12 @@ import (
 
 // Cache represents the token cache structure
 type Cache struct {
-	AccessToken  string    `json:"access_token"`
-	RefreshToken string    `json:"refresh_token"`
-	IDToken      string    `json:"id_token"`
-	TokenType    string    `json:"token_type"`
-	Expiry       time.Time `json:"expiry"`
+	AccessToken       string    `json:"access_token"`
+	RefreshToken      string    `json:"refresh_token"`       // OIDC provider refresh token
+	KauthRefreshToken string    `json:"kauth_refresh_token"` // kauth server refresh token (new)
+	IDToken           string    `json:"id_token"`
+	TokenType         string    `json:"token_type"`
+	Expiry            time.Time `json:"expiry"`
 }
 
 // Storage handles token persistence
@@ -141,4 +142,62 @@ func GetIDToken(token *oauth2.Token) (string, error) {
 	}
 
 	return idToken, nil
+}
+
+// SaveWithKauthToken saves a token with kauth refresh token
+func (s *Storage) SaveWithKauthToken(token *oauth2.Token, kauthRefreshToken string) error {
+	if token == nil {
+		return fmt.Errorf("cannot save nil token")
+	}
+
+	// Create cache directory with 0700 permissions (rwx for owner only)
+	dir := filepath.Dir(s.cachePath)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return fmt.Errorf("failed to create cache directory: %w", err)
+	}
+
+	// Build cache structure
+	cache := Cache{
+		AccessToken:       token.AccessToken,
+		RefreshToken:      token.RefreshToken,
+		KauthRefreshToken: kauthRefreshToken,
+		TokenType:         token.TokenType,
+		Expiry:            token.Expiry,
+	}
+
+	// Extract ID token from extras
+	if idToken, ok := token.Extra("id_token").(string); ok {
+		cache.IDToken = idToken
+	}
+
+	// Marshal to JSON
+	data, err := json.MarshalIndent(cache, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal token: %w", err)
+	}
+
+	// Write with 0600 permissions (rw- for owner only)
+	if err := os.WriteFile(s.cachePath, data, 0600); err != nil {
+		return fmt.Errorf("failed to write token cache: %w", err)
+	}
+
+	return nil
+}
+
+// GetKauthRefreshToken loads the kauth refresh token from cache
+func (s *Storage) GetKauthRefreshToken() (string, error) {
+	data, err := os.ReadFile(s.cachePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil // No cache exists
+		}
+		return "", fmt.Errorf("failed to read token cache: %w", err)
+	}
+
+	var cache Cache
+	if err := json.Unmarshal(data, &cache); err != nil {
+		return "", fmt.Errorf("failed to unmarshal token cache: %w", err)
+	}
+
+	return cache.KauthRefreshToken, nil
 }

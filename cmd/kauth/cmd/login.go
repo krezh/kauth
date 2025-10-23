@@ -38,17 +38,19 @@ type InfoResponse struct {
 	IssuerURL     string `json:"issuer_url"`
 	ClientID      string `json:"client_id"`
 	LoginURL      string `json:"login_url"`
+	RefreshURL    string `json:"refresh_url"` // New: refresh endpoint
 }
 
 type StartLoginResponse struct {
-	SessionID string `json:"session_id"`
-	LoginURL  string `json:"login_url"`
+	SessionToken string `json:"session_token"` // Changed from session_id to session_token (JWT)
+	LoginURL     string `json:"login_url"`
 }
 
 type StatusResponse struct {
-	Ready      bool   `json:"ready"`
-	Kubeconfig string `json:"kubeconfig,omitempty"`
-	Error      string `json:"error,omitempty"`
+	Ready        bool   `json:"ready"`
+	Kubeconfig   string `json:"kubeconfig,omitempty"`
+	RefreshToken string `json:"refresh_token,omitempty"` // New: kauth refresh token
+	Error        string `json:"error,omitempty"`
 }
 
 func runLogin(cmd *cobra.Command, args []string) error {
@@ -105,7 +107,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	fmt.Printf("⏳ Waiting for authentication to complete...\n")
 
 	// Watch for completion via SSE
-	kubeconfig, err := watchForCompletion(client, serviceURL, loginData.SessionID)
+	status, err := watchForCompletion(client, serviceURL, loginData.SessionToken)
 	if err != nil {
 		return err
 	}
@@ -117,12 +119,34 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to create .kube directory: %w", err)
 	}
 
-	if err := os.WriteFile(kubeconfigPath, []byte(kubeconfig), 0600); err != nil {
+	if err := os.WriteFile(kubeconfigPath, []byte(status.Kubeconfig), 0600); err != nil {
 		return fmt.Errorf("failed to save kubeconfig: %w", err)
+	}
+
+	// Save refresh token and server URL
+	cacheDir := filepath.Join(os.Getenv("HOME"), ".kube", "cache")
+	if err := os.MkdirAll(cacheDir, 0700); err != nil {
+		return fmt.Errorf("failed to create cache directory: %w", err)
+	}
+
+	if status.RefreshToken != "" {
+		refreshTokenPath := filepath.Join(cacheDir, "kauth-refresh-token")
+		if err := os.WriteFile(refreshTokenPath, []byte(status.RefreshToken), 0600); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to save refresh token: %v\n", err)
+		}
+	}
+
+	// Save server URL so get-token can find it automatically
+	serverURLPath := filepath.Join(cacheDir, "kauth-server-url")
+	if err := os.WriteFile(serverURLPath, []byte(serviceURL), 0600); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to save server URL: %v\n", err)
 	}
 
 	fmt.Printf("\n✅ Authentication successful!\n")
 	fmt.Printf("✅ Kubeconfig saved to: %s\n", kubeconfigPath)
+	if status.RefreshToken != "" {
+		fmt.Printf("✅ Refresh token saved for automatic token renewal\n")
+	}
 	fmt.Printf("\n🎉 You're ready to use kubectl:\n")
 	fmt.Printf("   kubectl get pods\n")
 	fmt.Printf("   kubectl get nodes\n\n")
@@ -130,15 +154,15 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func watchForCompletion(client *http.Client, baseURL, sessionID string) (string, error) {
-	resp, err := client.Get(fmt.Sprintf("%s/watch?session=%s", baseURL, sessionID))
+func watchForCompletion(client *http.Client, baseURL, sessionToken string) (*StatusResponse, error) {
+	resp, err := client.Get(fmt.Sprintf("%s/watch?session_token=%s", baseURL, sessionToken))
 	if err != nil {
-		return "", fmt.Errorf("failed to connect to watch endpoint: %w", err)
+		return nil, fmt.Errorf("failed to connect to watch endpoint: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("watch endpoint returned error: %s", resp.Status)
+		return nil, fmt.Errorf("watch endpoint returned error: %s", resp.Status)
 	}
 
 	// Read SSE stream
@@ -156,20 +180,20 @@ func watchForCompletion(client *http.Client, baseURL, sessionID string) (string,
 			}
 
 			if status.Error != "" {
-				return "", fmt.Errorf("authentication failed: %s", status.Error)
+				return nil, fmt.Errorf("authentication failed: %s", status.Error)
 			}
 
 			if status.Ready && status.Kubeconfig != "" {
-				return status.Kubeconfig, nil
+				return &status, nil
 			}
 		}
 	}
 
 	if err := scanner.Err(); err != nil {
-		return "", fmt.Errorf("error reading stream: %w", err)
+		return nil, fmt.Errorf("error reading stream: %w", err)
 	}
 
-	return "", fmt.Errorf("stream ended unexpectedly")
+	return nil, fmt.Errorf("stream ended unexpectedly")
 }
 
 func openBrowser(url string) error {

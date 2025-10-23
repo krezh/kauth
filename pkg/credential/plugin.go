@@ -13,7 +13,7 @@ import (
 
 // ExecCredential represents the kubectl exec credential plugin format
 type ExecCredential struct {
-	TypeMeta metav1.TypeMeta                       `json:",inline"`
+	TypeMeta metav1.TypeMeta                    `json:",inline"`
 	Status   *clientauthv1.ExecCredentialStatus `json:"status,omitempty"`
 }
 

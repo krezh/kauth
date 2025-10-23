@@ -26,12 +26,12 @@ type UpdateConfig struct {
 
 // Kubeconfig represents a Kubernetes config file
 type Kubeconfig struct {
-	APIVersion     string                   `yaml:"apiVersion"`
-	Kind           string                   `yaml:"kind"`
-	CurrentContext string                   `yaml:"current-context,omitempty"`
-	Clusters       []NamedCluster           `yaml:"clusters"`
-	Contexts       []NamedContext           `yaml:"contexts"`
-	Users          []NamedUser              `yaml:"users"`
+	APIVersion     string         `yaml:"apiVersion"`
+	Kind           string         `yaml:"kind"`
+	CurrentContext string         `yaml:"current-context,omitempty"`
+	Clusters       []NamedCluster `yaml:"clusters"`
+	Contexts       []NamedContext `yaml:"contexts"`
+	Users          []NamedUser    `yaml:"users"`
 }
 
 type NamedCluster struct {
@@ -99,7 +99,7 @@ func UpdateKubeconfig(cfg UpdateConfig) error {
 		cluster := Cluster{
 			Server: cfg.ClusterServer,
 		}
-		
+
 		if cfg.ClusterCA != "" {
 			// Read CA file and base64 encode
 			caData, err := os.ReadFile(cfg.ClusterCA)
@@ -108,7 +108,7 @@ func UpdateKubeconfig(cfg UpdateConfig) error {
 			}
 			cluster.CertificateAuthorityData = base64.StdEncoding.EncodeToString(caData)
 		}
-		
+
 		kubeconfig.upsertCluster(cfg.ClusterName, cluster)
 	}
 
@@ -118,11 +118,11 @@ func UpdateKubeconfig(cfg UpdateConfig) error {
 		"--issuer-url=" + cfg.IssuerURL,
 		"--client-id=" + cfg.ClientID,
 	}
-	
+
 	if cfg.ClientSecret != "" {
 		args = append(args, "--client-secret="+cfg.ClientSecret)
 	}
-	
+
 	if cfg.CallbackPort != 8000 {
 		args = append(args, fmt.Sprintf("--callback-port=%d", cfg.CallbackPort))
 	}

@@ -8,7 +8,7 @@ import (
 const (
 	// Default Kubernetes service DNS name
 	defaultKubernetesService = "https://kubernetes.default.svc"
-	
+
 	// Environment variables that may contain the API server URL
 	kubernetesServiceHostEnv = "KUBERNETES_SERVICE_HOST"
 	kubernetesServicePortEnv = "KUBERNETES_SERVICE_PORT"
@@ -28,7 +28,7 @@ func GetClusterServer() string {
 	// Try in-cluster environment variables
 	host := os.Getenv(kubernetesServiceHostEnv)
 	port := os.Getenv(kubernetesServicePortEnv)
-	
+
 	if host != "" && port != "" {
 		return fmt.Sprintf("https://%s:%s", host, port)
 	}
