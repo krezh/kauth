@@ -146,17 +146,17 @@ func (h *LoginHandler) HandleWatch(w http.ResponseWriter, r *http.Request) {
 		h.sseNotifications[notificationKey] = notification
 	}
 
+	// Set SSE headers
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
 	// Check if result already exists
 	if notification.Result != nil {
 		h.sseMutex.Unlock()
 		h.sendFinalStatus(w, notification.Result)
 		return
 	}
-
-	// Set SSE headers
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
 
 	// Create channel for this listener
 	listener := make(chan StatusResponse, 1)

@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"log"
 	"net/http"
 	"sync"
 	"time"
@@ -167,8 +168,8 @@ func RequestLogger(next http.Handler) http.Handler {
 
 		duration := time.Since(start)
 
-		// Simple logging (in production, use structured logging)
-		println(time.Now().Format(time.RFC3339), r.Method, r.URL.Path, rw.statusCode, duration.String())
+		// Log in consistent format
+		log.Printf("%s %s %d %s", r.Method, r.URL.Path, rw.statusCode, duration)
 	})
 }
 

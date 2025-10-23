@@ -45,11 +45,7 @@ vendor:
     fi
 
 # Tag current commit with version
-tag VERSION: vendor test check flake-build
-    @echo "Tagging version {{ VERSION }}..."
-    git tag -a {{ VERSION }} -m "Release {{ VERSION }}"
-    git push origin {{ VERSION }}
-    @echo "Tagged and pushed {{ VERSION }}"
+pre-commit: vendor test check flake-build
 
 # Clean artifacts
 clean:
