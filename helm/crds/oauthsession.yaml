@@ -35,9 +35,9 @@ spec:
                   type: boolean
                   description: Whether OAuth flow has completed
                   default: false
-                kubeconfig:
+                email:
                   type: string
-                  description: Generated kubeconfig (populated after successful auth)
+                  description: Authenticated user's email address
                 refreshToken:
                   type: string
                   description: JWT refresh token for token rotation

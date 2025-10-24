@@ -267,19 +267,6 @@ func getEnvFloat(key string, defaultValue float64) float64 {
 	return floatVal
 }
 
-func getEnvBool(key string, defaultValue bool) bool {
-	value := os.Getenv(key)
-	if value == "" {
-		return defaultValue
-	}
-	boolVal, err := strconv.ParseBool(value)
-	if err != nil {
-		log.Printf("Invalid bool for %s: %s, using default", key, value)
-		return defaultValue
-	}
-	return boolVal
-}
-
 func getEnvStringSlice(key string, defaultValue []string) []string {
 	value := os.Getenv(key)
 	if value == "" {

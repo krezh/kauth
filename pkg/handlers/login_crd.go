@@ -49,9 +49,15 @@ func (h *LoginHandler) watchSessions() {
 					h.sseMutex.Unlock()
 
 					if len(listeners) > 0 {
+						// Generate kubeconfig on-demand from stored email
+						var kubeconfig string
+						if session.Status.Ready && session.Status.Email != "" {
+							kubeconfig = h.generateKubeconfig(session.Status.Email)
+						}
+
 						status := StatusResponse{
 							Ready:        session.Status.Ready,
-							Kubeconfig:   session.Status.Kubeconfig,
+							Kubeconfig:   kubeconfig,
 							RefreshToken: session.Status.RefreshToken,
 							Error:        session.Status.Error,
 						}

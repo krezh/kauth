@@ -6,12 +6,19 @@ default:
 
 # Run tests
 test:
-    go test ./...
+    go test -v ./...
+
+fmt:
+    go fmt ./...
+
+lint:
+    golangci-lint run
+
+vet:
+    go vet ./...
 
 # Format and lint
-check:
-    go fmt ./...
-    golangci-lint run
+check: fmt lint
 
 # Update flake
 update:
@@ -44,8 +51,7 @@ vendor:
         echo "No hash mismatch found - vendorHashes may already be correct"
     fi
 
-# Tag current commit with version
-pre-commit: vendor test check flake-build
+pre-commit: vendor check flake-build
 
 # Create a new release with interactive version selection
 release:

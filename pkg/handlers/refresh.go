@@ -166,7 +166,7 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 		claims.Email, claims.Name, claims.Sub, claims.Groups, refreshToken.RotationCounter+1, h.clusterName, expiresIn)
 
 	// Generate updated kubeconfig
-	kubeconfig := h.generateKubeconfig(claims.Email, idToken)
+	kubeconfig := h.generateKubeconfig(claims.Email)
 
 	resp := RefreshResponse{
 		IDToken:      idToken,
@@ -180,9 +180,7 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
-func (h *RefreshHandler) generateKubeconfig(email, idToken string) string {
-	// Generate kubeconfig with exec credential plugin
-	// This ensures automatic token refresh without manual intervention
+func (h *RefreshHandler) generateKubeconfig(email string) string {
 	return fmt.Sprintf(`apiVersion: v1
 kind: Config
 clusters:

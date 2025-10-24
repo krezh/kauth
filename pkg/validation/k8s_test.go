@@ -189,14 +189,14 @@ func TestSanitizeToResourceName(t *testing.T) {
 // Benchmark tests
 func BenchmarkSanitizeToResourceName(b *testing.B) {
 	input := "User.Name+Test@Example.COM"
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		SanitizeToResourceName(input)
 	}
 }
 
 func BenchmarkValidateResourceName(b *testing.B) {
 	input := "valid-resource-name"
-	for i := 0; i < b.N; i++ {
+	for b.Loop() {
 		ValidateResourceName(input)
 	}
 }

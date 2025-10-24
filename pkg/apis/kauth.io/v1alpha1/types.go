@@ -10,10 +10,10 @@ import (
 // OAuthSession represents a temporary OAuth authentication session
 type OAuthSession struct {
 	metav1.TypeMeta   `json:",inline"`
-	metav1.ObjectMeta `json:"metadata,omitempty"`
+	metav1.ObjectMeta `json:"metadata,omitzero"`
 
 	Spec   OAuthSessionSpec   `json:"spec"`
-	Status OAuthSessionStatus `json:"status,omitempty"`
+	Status OAuthSessionStatus `json:"status,omitzero"`
 }
 
 // OAuthSessionSpec defines the desired state of an OAuth session
@@ -33,8 +33,8 @@ type OAuthSessionStatus struct {
 	// Ready indicates whether the OAuth flow has completed successfully
 	Ready bool `json:"ready"`
 
-	// Kubeconfig contains the generated kubeconfig after successful authentication
-	Kubeconfig string `json:"kubeconfig,omitempty"`
+	// Email is the authenticated user's email address
+	Email string `json:"email,omitempty"`
 
 	// RefreshToken is the JWT refresh token for token rotation
 	RefreshToken string `json:"refreshToken,omitempty"`
@@ -51,6 +51,6 @@ type OAuthSessionStatus struct {
 // OAuthSessionList contains a list of OAuthSession
 type OAuthSessionList struct {
 	metav1.TypeMeta `json:",inline"`
-	metav1.ListMeta `json:"metadata,omitempty"`
+	metav1.ListMeta `json:"metadata,omitzero"`
 	Items           []OAuthSession `json:"items"`
 }

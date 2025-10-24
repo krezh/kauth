@@ -105,7 +105,7 @@ func (s *Storage) Load() (*oauth2.Token, error) {
 
 	// Add ID token to extras if present
 	if cache.IDToken != "" {
-		token = token.WithExtra(map[string]interface{}{
+		token = token.WithExtra(map[string]any{
 			"id_token": cache.IDToken,
 		})
 	}
