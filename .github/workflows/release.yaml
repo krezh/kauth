@@ -58,7 +58,7 @@ jobs:
         run: |
           CURRENT_TAG=${GITHUB_REF#refs/tags/}
 
-          helm package charts/kauth \
+          helm package helm \
             --version ${CURRENT_TAG} \
             --app-version ${CURRENT_TAG}
 
