@@ -161,6 +161,11 @@ func RequestLogger(next http.Handler) http.Handler {
 
 		next.ServeHTTP(rw, r)
 
+		// Skip logging for health check endpoint to reduce noise
+		if r.URL.Path == "/health" {
+			return
+		}
+
 		duration := time.Since(start)
 
 		// Log in consistent format
