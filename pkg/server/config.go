@@ -30,6 +30,8 @@ type Config struct {
 	AllowedOrigins []string // CORS allowed origins (empty = none, ["*"] = all)
 	RateLimitRPS   float64  // Rate limit requests per second (default: 10)
 	RateLimitBurst int      // Rate limit burst size (default: 20)
-	EnforceHTTPS   bool     // Redirect HTTP to HTTPS
 	RotationWindow int      // Number of previous refresh tokens to accept (default: 2)
+
+	// Authorization Configuration
+	AllowedGroups []string // OIDC groups allowed to authenticate (empty = allow all)
 }

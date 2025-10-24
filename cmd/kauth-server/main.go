@@ -18,27 +18,21 @@ import (
 )
 
 func main() {
-	// Load JWT keys from environment
+	// Load JWT keys from environment (REQUIRED)
 	jwtSigningKey := getEnvBytes("JWT_SIGNING_KEY")
 	jwtEncryptionKey := getEnvBytes("JWT_ENCRYPTION_KEY")
 
 	if len(jwtSigningKey) == 0 || len(jwtEncryptionKey) == 0 {
-		log.Println("WARNING: JWT keys not found in environment. Generating random keys.")
-		log.Println("For production, set JWT_SIGNING_KEY and JWT_ENCRYPTION_KEY environment variables.")
-		log.Println("Generate keys with: openssl rand -base64 32")
+		log.Fatal("JWT_SIGNING_KEY and JWT_ENCRYPTION_KEY are required environment variables.\n" +
+			"Generate secure keys with: openssl rand -base64 32")
+	}
 
-		var err error
-		jwtSigningKey, err = jwt.GenerateRandomKey(32)
-		if err != nil {
-			log.Fatalf("Failed to generate signing key: %v", err)
-		}
-		jwtEncryptionKey, err = jwt.GenerateRandomKey(32)
-		if err != nil {
-			log.Fatalf("Failed to generate encryption key: %v", err)
-		}
+	if len(jwtSigningKey) < 32 {
+		log.Fatal("JWT_SIGNING_KEY must be at least 32 bytes")
+	}
 
-		log.Printf("Generated JWT_SIGNING_KEY: %s", base64.StdEncoding.EncodeToString(jwtSigningKey))
-		log.Printf("Generated JWT_ENCRYPTION_KEY: %s", base64.StdEncoding.EncodeToString(jwtEncryptionKey))
+	if len(jwtEncryptionKey) != 32 {
+		log.Fatal("JWT_ENCRYPTION_KEY must be exactly 32 bytes")
 	}
 
 	cfg := server.Config{
@@ -55,9 +49,9 @@ func main() {
 		SessionTTL:       getEnvDuration("SESSION_TTL", 15*time.Minute),
 		RefreshTokenTTL:  getEnvDuration("REFRESH_TOKEN_TTL", 7*24*time.Hour),
 		AllowedOrigins:   getEnvStringSlice("ALLOWED_ORIGINS", []string{}),
+		AllowedGroups:    getEnvStringSlice("ALLOWED_GROUPS", []string{}),
 		RateLimitRPS:     getEnvFloat("RATE_LIMIT_RPS", 10.0),
 		RateLimitBurst:   getEnvInt("RATE_LIMIT_BURST", 20),
-		EnforceHTTPS:     getEnvBool("ENFORCE_HTTPS", false),
 		RotationWindow:   getEnvInt("ROTATION_WINDOW", 2),
 	}
 
@@ -109,6 +103,7 @@ func main() {
 		clusterCA,
 		cfg.SessionTTL,
 		cfg.RefreshTokenTTL,
+		cfg.AllowedGroups,
 	)
 
 	refreshHandler := handlers.NewRefreshHandler(
@@ -169,6 +164,11 @@ func main() {
 	log.Printf("Rate Limit: %.1f req/s, burst %d", cfg.RateLimitRPS, cfg.RateLimitBurst)
 	if len(cfg.AllowedOrigins) > 0 {
 		log.Printf("CORS Enabled for origins: %v", cfg.AllowedOrigins)
+	}
+	if len(cfg.AllowedGroups) > 0 {
+		log.Printf("Group Authorization: Allowed groups: %v", cfg.AllowedGroups)
+	} else {
+		log.Printf("Group Authorization: Disabled (all OIDC users allowed)")
 	}
 
 	if cfg.TLSCertFile != "" && cfg.TLSKeyFile != "" {

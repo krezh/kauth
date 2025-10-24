@@ -28,6 +28,7 @@ type LoginHandler struct {
 	clusterCA       string
 	sessionTTL      time.Duration
 	refreshTokenTTL time.Duration
+	allowedGroups   []string
 
 	// Minimal transient state for SSE delivery only
 	sseNotifications map[string]*SSENotification
@@ -59,6 +60,7 @@ func NewLoginHandler(
 	jwtManager *jwt.Manager,
 	clusterName, clusterServer, clusterCA string,
 	sessionTTL, refreshTokenTTL time.Duration,
+	allowedGroups []string,
 ) *LoginHandler {
 	h := &LoginHandler{
 		provider:         provider,
@@ -68,6 +70,7 @@ func NewLoginHandler(
 		clusterCA:        clusterCA,
 		sessionTTL:       sessionTTL,
 		refreshTokenTTL:  refreshTokenTTL,
+		allowedGroups:    allowedGroups,
 		sseNotifications: make(map[string]*SSENotification),
 	}
 
@@ -298,9 +301,13 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var claims struct {
-		Email string `json:"email"`
+		Email  string   `json:"email"`
+		Groups []string `json:"groups"`
+		Name   string   `json:"name"`
+		Sub    string   `json:"sub"`
 	}
 	if err := verified.Claims(&claims); err != nil {
+		log.Printf("AUTH_FAILURE: Failed to extract claims from ID token: %v", err)
 		h.notifyListeners(state, &StatusResponse{
 			Ready: false,
 			Error: "Failed to extract claims",
@@ -308,6 +315,24 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to extract claims", http.StatusInternalServerError)
 		return
 	}
+
+	// Validate group membership if required
+	if len(h.allowedGroups) > 0 {
+		if !h.isUserAuthorized(claims.Groups) {
+			log.Printf("AUTH_DENIED: user=%q groups=%v allowed_groups=%v reason=group_not_allowed",
+				claims.Email, claims.Groups, h.allowedGroups)
+			h.notifyListeners(state, &StatusResponse{
+				Ready: false,
+				Error: "User is not a member of allowed groups",
+			})
+			http.Error(w, "Forbidden: user not in allowed groups", http.StatusForbidden)
+			return
+		}
+	}
+
+	// Log successful authentication with details
+	log.Printf("AUTH_SUCCESS: user=%q name=%q sub=%q groups=%v cluster=%q",
+		claims.Email, claims.Name, claims.Sub, claims.Groups, h.clusterName)
 
 	// Create refresh token (contains OIDC refresh token encrypted)
 	oidcRefreshToken := ""
@@ -346,36 +371,150 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		hh.HTML(
 			hh.Head(
 				hh.Meta(c.Attr("charset", "UTF-8")),
+				hh.Meta(c.Attr("name", "viewport"), c.Attr("content", "width=device-width, initial-scale=1.0")),
 				hh.TitleEl(c.Text("Authentication Successful")),
 				hh.StyleEl(c.Raw(`
+					* {
+						margin: 0;
+						padding: 0;
+						box-sizing: border-box;
+					}
 					body {
-						font-family: Arial, sans-serif;
-						max-width: 600px;
-						margin: 50px auto;
-						padding: 20px;
+						font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+						background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+						min-height: 100vh;
+						display: flex;
+						align-items: center;
+						justify-content: center;
+						color: #e0e0e0;
+					}
+					.container {
+						max-width: 500px;
+						width: 100%;
+						padding: 40px;
 						text-align: center;
 					}
-					.success {
-						color: #4CAF50;
-						font-size: 48px;
-						margin-bottom: 20px;
+					.success-icon {
+						width: 80px;
+						height: 80px;
+						margin: 0 auto 30px;
+						border-radius: 50%;
+						background: linear-gradient(135deg, #00d2ff 0%, #3a7bd5 100%);
+						display: flex;
+						align-items: center;
+						justify-content: center;
+						animation: scaleIn 0.5s ease-out;
 					}
-					h1 { color: #333; }
-					p { color: #666; font-size: 18px; }
+					.success-icon svg {
+						width: 50px;
+						height: 50px;
+						stroke: white;
+						stroke-width: 3;
+						stroke-linecap: round;
+						stroke-linejoin: round;
+						fill: none;
+						animation: drawCheck 0.5s ease-out 0.3s forwards;
+						stroke-dasharray: 50;
+						stroke-dashoffset: 50;
+					}
+					@keyframes scaleIn {
+						from {
+							transform: scale(0);
+							opacity: 0;
+						}
+						to {
+							transform: scale(1);
+							opacity: 1;
+						}
+					}
+					@keyframes drawCheck {
+						to {
+							stroke-dashoffset: 0;
+						}
+					}
+					h1 {
+						color: #ffffff;
+						font-size: 28px;
+						margin-bottom: 15px;
+						font-weight: 600;
+					}
+					p {
+						color: #b0b0b0;
+						font-size: 16px;
+						line-height: 1.6;
+						margin-bottom: 15px;
+					}
+					.info {
+						background: rgba(255, 255, 255, 0.05);
+						border: 1px solid rgba(255, 255, 255, 0.1);
+						border-radius: 8px;
+						padding: 20px;
+						margin: 30px 0;
+					}
+					.info p {
+						color: #90caf9;
+						font-size: 14px;
+						margin: 0;
+					}
+					.progress-container {
+						width: 100%;
+						height: 4px;
+						background: rgba(255, 255, 255, 0.1);
+						border-radius: 2px;
+						overflow: hidden;
+						margin-top: 30px;
+					}
+					.progress-bar {
+						height: 100%;
+						background: linear-gradient(90deg, #00d2ff 0%, #3a7bd5 100%);
+						border-radius: 2px;
+						animation: progress 5s linear forwards;
+					}
+					@keyframes progress {
+						from {
+							width: 100%;
+						}
+						to {
+							width: 0%;
+						}
+					}
+					.timer {
+						color: #808080;
+						font-size: 12px;
+						margin-top: 10px;
+					}
 				`)),
 				hh.Script(c.Raw(`
-					setTimeout(function() {
-						window.close();
-					}, 5000);
+					let timeLeft = 5;
+					const timerEl = document.getElementById('timer');
+
+					const countdown = setInterval(function() {
+						timeLeft--;
+						if (timerEl) {
+							timerEl.textContent = timeLeft;
+						}
+						if (timeLeft <= 0) {
+							clearInterval(countdown);
+							window.close();
+						}
+					}, 1000);
 				`)),
 			),
 			hh.Body(
-				hh.Div(c.Attr("class", "success"), c.Text("✓")),
-				hh.H1(c.Text("Authentication Successful!")),
-				hh.P(c.Text("You can close this window and return to your terminal.")),
-				hh.P(
-					c.Attr("style", "margin-top: 40px; font-size: 14px;"),
-					c.Text("Your kubeconfig is being configured automatically..."),
+				hh.Div(c.Attr("class", "container"),
+					hh.Div(c.Attr("class", "success-icon"),
+						c.Raw(`<svg viewBox="0 0 50 50"><path d="M 10 25 L 20 35 L 40 15"></path></svg>`),
+					),
+					hh.H1(c.Text("Authentication Successful!")),
+					hh.P(c.Text("You can close this window and return to your terminal.")),
+					hh.Div(c.Attr("class", "progress-container"),
+						hh.Div(c.Attr("class", "progress-bar")),
+					),
+					hh.Div(c.Attr("class", "timer"),
+						c.Text("Window closes in "),
+						hh.Span(c.Attr("id", "timer"), c.Text("5")),
+						c.Text(" seconds"),
+					),
 				),
 			),
 		),
@@ -456,4 +595,23 @@ func generateRandomString(size int) string {
 	b := make([]byte, size)
 	_, _ = rand.Read(b)
 	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+// isUserAuthorized checks if user belongs to any allowed group
+func (h *LoginHandler) isUserAuthorized(userGroups []string) bool {
+	if len(h.allowedGroups) == 0 {
+		// No group restrictions
+		return true
+	}
+
+	// Check if user has any of the allowed groups
+	for _, userGroup := range userGroups {
+		for _, allowedGroup := range h.allowedGroups {
+			if userGroup == allowedGroup {
+				return true
+			}
+		}
+	}
+
+	return false
 }
