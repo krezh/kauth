@@ -26,14 +26,8 @@ func (h *LoginHandler) watchSessions() {
 
 		for event := range watcher.ResultChan() {
 			if event.Type == watch.Modified || event.Type == watch.Added {
-				// Convert unstructured to OAuthSession
-				unstructuredObj, ok := event.Object.(runtime.Object)
-				if !ok {
-					continue
-				}
-
-				// Try to convert to our type
-				unstructuredMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(unstructuredObj)
+				// Convert event object to unstructured map
+				unstructuredMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(event.Object)
 				if err != nil {
 					log.Printf("Failed to convert to unstructured: %v", err)
 					continue

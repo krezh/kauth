@@ -38,18 +38,18 @@ type InfoResponse struct {
 	IssuerURL     string `json:"issuer_url"`
 	ClientID      string `json:"client_id"`
 	LoginURL      string `json:"login_url"`
-	RefreshURL    string `json:"refresh_url"` // New: refresh endpoint
+	RefreshURL    string `json:"refresh_url"`
 }
 
 type StartLoginResponse struct {
-	SessionToken string `json:"session_token"` // Changed from session_id to session_token (JWT)
+	SessionToken string `json:"session_token"`
 	LoginURL     string `json:"login_url"`
 }
 
 type StatusResponse struct {
 	Ready        bool   `json:"ready"`
 	Kubeconfig   string `json:"kubeconfig,omitempty"`
-	RefreshToken string `json:"refresh_token,omitempty"` // New: kauth refresh token
+	RefreshToken string `json:"refresh_token,omitempty"`
 	Error        string `json:"error,omitempty"`
 }
 

@@ -3,6 +3,7 @@ package middleware
 import (
 	"log"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
@@ -50,13 +51,7 @@ func CORS(allowedOrigins []string) func(http.Handler) http.Handler {
 			origin := r.Header.Get("Origin")
 
 			// Check if origin is allowed
-			allowed := false
-			for _, allowedOrigin := range allowedOrigins {
-				if allowedOrigin == "*" || allowedOrigin == origin {
-					allowed = true
-					break
-				}
-			}
+			allowed := slices.Contains(allowedOrigins, "*") || slices.Contains(allowedOrigins, origin)
 
 			if allowed {
 				if origin == "" {

@@ -6,6 +6,7 @@ import (
 	"time"
 
 	v1alpha1 "kauth/pkg/apis/kauth.io/v1alpha1"
+	"kauth/pkg/validation"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -197,13 +198,14 @@ func (c *Client) CleanupOldSessions(ctx context.Context, ttl time.Duration) erro
 }
 
 // sanitizeName converts OAuth state to valid Kubernetes resource name
-// Kubernetes names must be lowercase alphanumeric with dashes
+// Kubernetes names must be lowercase alphanumeric characters, '-' or '.',
+// and must start and end with an alphanumeric character (RFC 1123 subdomain)
 func sanitizeName(state string) string {
 	// Use a prefix to avoid collision with other resources
-	// Truncate state if too long (max 63 chars for k8s names)
-	name := "oauth-" + state
-	if len(name) > 63 {
-		name = name[:63]
+	sanitized := validation.SanitizeToResourceName(state)
+	// Ensure we don't exceed 63 chars with the prefix
+	if len(sanitized)+6 > 63 {
+		sanitized = sanitized[:57]
 	}
-	return name
+	return "oauth-" + sanitized
 }

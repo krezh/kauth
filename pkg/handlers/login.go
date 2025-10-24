@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"slices"
 	"sync"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"kauth/pkg/jwt"
 	"kauth/pkg/oauth"
 	"kauth/pkg/session"
+	"kauth/pkg/validation"
 
 	"golang.org/x/oauth2"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -49,7 +51,7 @@ type StartLoginResponse struct {
 type StatusResponse struct {
 	Ready        bool   `json:"ready"`
 	Kubeconfig   string `json:"kubeconfig,omitempty"`
-	RefreshToken string `json:"refresh_token,omitempty"` // New: for token rotation
+	RefreshToken string `json:"refresh_token,omitempty"`
 	Error        string `json:"error,omitempty"`
 }
 
@@ -549,6 +551,8 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 func (h *LoginHandler) generateKubeconfig(email, idToken string) string {
 	// Generate kubeconfig with exec credential plugin
 	// This ensures automatic token refresh without manual intervention
+	// Sanitize email to ensure valid Kubernetes resource name
+	sanitizedEmail := validation.SanitizeEmail(email)
 	return fmt.Sprintf(`apiVersion: v1
 kind: Config
 clusters:
@@ -572,8 +576,8 @@ contexts:
     user: %s
 current-context: %s
 `, h.clusterName, h.clusterServer, h.clusterCA,
-		email,
-		h.clusterName, h.clusterName, email,
+		sanitizedEmail,
+		h.clusterName, h.clusterName, sanitizedEmail,
 		h.clusterName)
 }
 
@@ -595,10 +599,8 @@ func (h *LoginHandler) isUserAuthorized(userGroups []string) bool {
 
 	// Check if user has any of the allowed groups
 	for _, userGroup := range userGroups {
-		for _, allowedGroup := range h.allowedGroups {
-			if userGroup == allowedGroup {
-				return true
-			}
+		if slices.Contains(h.allowedGroups, userGroup) {
+			return true
 		}
 	}
 

@@ -12,7 +12,7 @@ type InfoResponse struct {
 	IssuerURL     string `json:"issuer_url"`
 	ClientID      string `json:"client_id"`
 	LoginURL      string `json:"login_url"`
-	RefreshURL    string `json:"refresh_url"` // New: endpoint for token refresh
+	RefreshURL    string `json:"refresh_url"`
 }
 
 // HandleInfo returns cluster configuration

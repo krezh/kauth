@@ -16,6 +16,7 @@ import (
 	"kauth/pkg/oauth"
 	"kauth/pkg/server"
 	"kauth/pkg/session"
+	"kauth/pkg/validation"
 
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -39,11 +40,17 @@ func main() {
 		log.Fatal("JWT_ENCRYPTION_KEY must be exactly 32 bytes")
 	}
 
+	// Validate cluster name
+	clusterName := getEnv("CLUSTER_NAME", "kubernetes")
+	if err := validation.ValidateResourceName(clusterName); err != nil {
+		log.Fatalf("Invalid CLUSTER_NAME: %v\nCluster name must be lowercase alphanumeric with hyphens or dots (RFC 1123), max 63 characters", err)
+	}
+
 	cfg := server.Config{
 		IssuerURL:        getEnv("OIDC_ISSUER_URL", ""),
 		ClientID:         getEnv("OIDC_CLIENT_ID", ""),
 		ClientSecret:     getEnv("OIDC_CLIENT_SECRET", ""),
-		ClusterName:      getEnv("CLUSTER_NAME", "kubernetes"),
+		ClusterName:      clusterName,
 		BaseURL:          getEnv("BASE_URL", ""),
 		ListenAddr:       getEnv("LISTEN_ADDR", ":8080"),
 		TLSCertFile:      getEnv("TLS_CERT_FILE", ""),
