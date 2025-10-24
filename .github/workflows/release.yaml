@@ -1,0 +1,51 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+  packages: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          fetch-depth: 0
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          # Get previous tag
+          PREV_TAG=$(git tag --sort=-version:refname | grep -E '^v[0-9]' | head -n 2 | tail -n 1)
+          CURRENT_TAG=${GITHUB_REF#refs/tags/}
+
+          echo "## Changes since ${PREV_TAG}" > changelog.md
+          echo "" >> changelog.md
+
+          # Generate changelog from commits
+          git log ${PREV_TAG}..${CURRENT_TAG} --pretty=format:"- %s (%an)" --no-merges >> changelog.md
+
+          echo "" >> changelog.md
+          echo "" >> changelog.md
+          echo "## Container Images" >> changelog.md
+          echo "" >> changelog.md
+          echo '```bash' >> changelog.md
+          echo "docker pull ghcr.io/${{ github.repository }}-server:${CURRENT_TAG}" >> changelog.md
+          echo "docker pull ghcr.io/${{ github.repository }}-server:${CURRENT_TAG#v}" >> changelog.md
+          echo '```' >> changelog.md
+
+          cat changelog.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@6da8fa9354ddfdc4aeace5fc48d7f679b5214090 # v2
+        with:
+          body_path: changelog.md
+          generate_release_notes: true
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

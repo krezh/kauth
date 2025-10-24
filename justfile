@@ -52,8 +52,16 @@ release:
     #!/usr/bin/env bash
     set -e
 
+    # Ensure we're on main
+    BRANCH=$(git branch --show-current)
+    if [[ "$BRANCH" != "main" ]]; then
+        echo "❌ Must be on main branch to release (currently on: $BRANCH)"
+        exit 1
+    fi
+
     # Sync with remote
-    git pull --tags
+    git pull
+    git push
 
     # Get current version
     CURRENT=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
