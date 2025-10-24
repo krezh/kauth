@@ -47,25 +47,25 @@ jobs:
         with:
           version: latest
 
-      - name: Login to GitHub Container Registry
-        run: |
-          echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io -u ${{ github.actor }} --password-stdin
+      - name: Log in to Container Registry
+        uses: docker/login-action@5e57cd118135c172c3672efd75eb46360885c0ef # v3.6.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Package and Push Helm Chart
+      - name: Package Helm Chart
         run: |
           CURRENT_TAG=${GITHUB_REF#refs/tags/}
 
-          # Update Chart.yaml with release version
-          sed -i "s/^version:.*/version: ${CURRENT_TAG#v}/" helm/Chart.yaml
-          sed -i "s/^appVersion:.*/appVersion: \"${CURRENT_TAG}\"/" helm/Chart.yaml
+          helm package charts/kauth \
+            --version ${CURRENT_TAG} \
+            --app-version ${CURRENT_TAG}
 
-          # Package chart
-          helm package helm/
-
-          # Push to OCI registry
-          helm push kauth-server-${CURRENT_TAG#v}.tgz oci://ghcr.io/${{ github.repository_owner }}
-
-          echo "Helm chart pushed to oci://ghcr.io/${{ github.repository_owner }}/kauth-server:${CURRENT_TAG#v}"
+      - name: Push Helm Chart to GHCR
+        run: |
+          helm push kauth-server-${CURRENT_TAG#v}.tgz oci://ghcr.io/${{ github.repository_owner }}/charts
+          echo "Helm chart pushed to oci://ghcr.io/${{ github.repository_owner }}/charts/kauth-server:${CURRENT_TAG#v}"
 
       - name: Update changelog with Helm chart info
         run: |
@@ -75,7 +75,7 @@ jobs:
           echo "## Helm Chart" >> changelog.md
           echo "" >> changelog.md
           echo '```bash' >> changelog.md
-          echo "helm install kauth-server oci://ghcr.io/${{ github.repository_owner }}/kauth-server --version ${CURRENT_TAG#v}" >> changelog.md
+          echo "helm install kauth-server oci://ghcr.io/${{ github.repository_owner }}/charts/kauth-server --version ${CURRENT_TAG#v}" >> changelog.md
           echo '```' >> changelog.md
 
       - name: Create GitHub Release
@@ -83,6 +83,5 @@ jobs:
         with:
           body_path: changelog.md
           generate_release_notes: true
-          files: kauth-server-*.tgz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
