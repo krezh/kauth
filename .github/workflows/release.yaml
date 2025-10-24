@@ -59,8 +59,8 @@ jobs:
           CURRENT_TAG=${GITHUB_REF#refs/tags/}
 
           helm package helm \
-            --version ${CURRENT_TAG} \
-            --app-version ${CURRENT_TAG}
+            --version ${CURRENT_TAG#v} \
+            --app-version ${CURRENT_TAG#v}
 
       - name: Push Helm Chart to GHCR
         run: |
