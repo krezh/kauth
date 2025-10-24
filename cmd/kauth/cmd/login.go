@@ -15,7 +15,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var serviceURL string
+var serverURL string
 
 var loginCmd = &cobra.Command{
 	Use:   "login",
@@ -28,8 +28,7 @@ Just provide the service URL and everything else is automatic.`,
 
 func init() {
 	rootCmd.AddCommand(loginCmd)
-	loginCmd.Flags().StringVar(&serviceURL, "url", "", "kauth service URL (e.g. https://kauth.example.com)")
-	_ = loginCmd.MarkFlagRequired("url")
+	loginCmd.Flags().StringVar(&serverURL, "url", "", "kauth service URL (e.g. https://kauth.example.com)")
 }
 
 type InfoResponse struct {
@@ -54,6 +53,25 @@ type StatusResponse struct {
 }
 
 func runLogin(cmd *cobra.Command, args []string) error {
+	// Determine server URL
+	if serverURL == "" {
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("failed to get home directory: %w", err)
+		}
+		serverURLPath := filepath.Join(homeDir, ".kube", "cache", "kauth-server-url")
+		serverURLBytes, err := os.ReadFile(serverURLPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return fmt.Errorf("no server URL provided and no cached URL found. Please run 'kauth login --url <server-url>' first")
+			}
+			return fmt.Errorf("failed to read cached server URL: %w", err)
+		}
+		serverURL = strings.TrimSpace(string(serverURLBytes))
+		if serverURL == "" {
+			return fmt.Errorf("cached server URL is empty. Please run 'kauth login --url <server-url>' first")
+		}
+	}
 	// Create HTTP client with cookie jar for session affinity
 	jar, err := cookiejar.New(nil)
 	if err != nil {
@@ -64,9 +82,9 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	}
 
 	// Fetch service info
-	fmt.Printf("🔗 Connecting to %s...\n", serviceURL)
+	fmt.Printf("🔗 Connecting to %s...\n", serverURL)
 
-	resp, err := client.Get(serviceURL + "/info")
+	resp, err := client.Get(serverURL + "/info")
 	if err != nil {
 		return fmt.Errorf("failed to connect to service: %w", err)
 	}
@@ -85,7 +103,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	fmt.Printf("🔐 Opening browser for authentication...\n\n")
 
 	// Start login flow
-	loginResp, err := client.Get(serviceURL + "/start-login")
+	loginResp, err := client.Get(serverURL + "/start-login")
 	if err != nil {
 		return fmt.Errorf("failed to start login: %w", err)
 	}
@@ -107,7 +125,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	fmt.Printf("⏳ Waiting for authentication to complete...\n")
 
 	// Watch for completion via SSE
-	status, err := watchForCompletion(client, serviceURL, loginData.SessionToken)
+	status, err := watchForCompletion(client, serverURL, loginData.SessionToken)
 	if err != nil {
 		return err
 	}
@@ -136,20 +154,14 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Save server URL so get-token can find it automatically
+	// Save server URL so we can reuse it later
 	serverURLPath := filepath.Join(cacheDir, "kauth-server-url")
-	if err := os.WriteFile(serverURLPath, []byte(serviceURL), 0600); err != nil {
+	if err := os.WriteFile(serverURLPath, []byte(serverURL), 0600); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to save server URL: %v\n", err)
 	}
 
 	fmt.Printf("\n✅ Authentication successful!\n")
 	fmt.Printf("✅ Kubeconfig saved to: %s\n", kubeconfigPath)
-	if status.RefreshToken != "" {
-		fmt.Printf("✅ Refresh token saved for automatic token renewal\n")
-	}
-	fmt.Printf("\n🎉 You're ready to use kubectl:\n")
-	fmt.Printf("   kubectl get pods\n")
-	fmt.Printf("   kubectl get nodes\n\n")
 
 	return nil
 }
@@ -171,9 +183,7 @@ func watchForCompletion(client *http.Client, baseURL, sessionToken string) (*Sta
 		line := scanner.Text()
 
 		// SSE format: "data: <json>"
-		if strings.HasPrefix(line, "data: ") {
-			data := strings.TrimPrefix(line, "data: ")
-
+		if data, ok := strings.CutPrefix(line, "data: "); ok {
 			var status StatusResponse
 			if err := json.Unmarshal([]byte(data), &status); err != nil {
 				continue
@@ -204,9 +214,6 @@ func openBrowser(url string) error {
 	case "darwin":
 		cmd = "open"
 		args = []string{url}
-	case "windows":
-		cmd = "cmd"
-		args = []string{"/c", "start", "", url}
 	case "linux":
 		for _, c := range []string{"xdg-open", "x-www-browser", "www-browser"} {
 			if err := exec.Command(c, url).Start(); err == nil {
