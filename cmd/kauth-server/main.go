@@ -15,6 +15,10 @@ import (
 	"kauth/pkg/middleware"
 	"kauth/pkg/oauth"
 	"kauth/pkg/server"
+	"kauth/pkg/session"
+
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
 func main() {
@@ -85,6 +89,21 @@ func main() {
 	log.Printf("JWT manager initialized")
 
 	ctx := context.Background()
+
+	// Initialize Kubernetes client
+	k8sConfig, err := getK8sConfig()
+	if err != nil {
+		log.Fatalf("Failed to get Kubernetes config: %v", err)
+	}
+
+	// Create session client for managing OAuthSession CRDs
+	namespace := getEnv("KAUTH_NAMESPACE", "default")
+	sessionClient, err := session.NewClient(k8sConfig, namespace)
+	if err != nil {
+		log.Fatalf("Failed to create session client: %v", err)
+	}
+	log.Printf("Session client initialized (namespace: %s)", namespace)
+
 	provider, err := oauth.NewProvider(ctx, oauth.Config{
 		IssuerURL:    cfg.IssuerURL,
 		ClientID:     cfg.ClientID,
@@ -104,6 +123,7 @@ func main() {
 		cfg.SessionTTL,
 		cfg.RefreshTokenTTL,
 		cfg.AllowedGroups,
+		sessionClient,
 	)
 
 	refreshHandler := handlers.NewRefreshHandler(
@@ -259,4 +279,28 @@ func getEnvStringSlice(key string, defaultValue []string) []string {
 		return defaultValue
 	}
 	return strings.Split(value, ",")
+}
+
+// getK8sConfig returns Kubernetes client config (in-cluster or from kubeconfig)
+func getK8sConfig() (*rest.Config, error) {
+	// Try in-cluster config first (for pods running in Kubernetes)
+	config, err := rest.InClusterConfig()
+	if err == nil {
+		log.Println("Using in-cluster Kubernetes config")
+		return config, nil
+	}
+
+	// Fall back to kubeconfig (for local development)
+	kubeconfigPath := os.Getenv("KUBECONFIG")
+	if kubeconfigPath == "" {
+		kubeconfigPath = os.Getenv("HOME") + "/.kube/config"
+	}
+
+	config, err = clientcmd.BuildConfigFromFlags("", kubeconfigPath)
+	if err != nil {
+		return nil, err
+	}
+
+	log.Printf("Using kubeconfig: %s", kubeconfigPath)
+	return config, nil
 }

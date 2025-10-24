@@ -11,10 +11,13 @@ import (
 	"sync"
 	"time"
 
+	v1alpha1 "kauth/pkg/apis/kauth.io/v1alpha1"
 	"kauth/pkg/jwt"
 	"kauth/pkg/oauth"
+	"kauth/pkg/session"
 
 	"golang.org/x/oauth2"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 
 	c "maragu.dev/gomponents"
 	hh "maragu.dev/gomponents/html"
@@ -30,17 +33,12 @@ type LoginHandler struct {
 	refreshTokenTTL time.Duration
 	allowedGroups   []string
 
-	// Minimal transient state for SSE delivery only
-	sseNotifications map[string]*SSENotification
-	sseMutex         sync.RWMutex
-}
+	// CRD client for distributed session storage
+	sessionClient *session.Client
 
-// SSENotification holds temporary data for SSE delivery
-type SSENotification struct {
-	Verifier  string // PKCE verifier (needed for callback)
-	Listeners []chan StatusResponse
-	Result    *StatusResponse // Set when callback completes
-	CreatedAt time.Time
+	// Local SSE listeners (in-memory, per-pod)
+	sseListeners map[string][]chan StatusResponse
+	sseMutex     sync.RWMutex
 }
 
 type StartLoginResponse struct {
@@ -61,21 +59,26 @@ func NewLoginHandler(
 	clusterName, clusterServer, clusterCA string,
 	sessionTTL, refreshTokenTTL time.Duration,
 	allowedGroups []string,
+	sessionClient *session.Client,
 ) *LoginHandler {
 	h := &LoginHandler{
-		provider:         provider,
-		jwtManager:       jwtManager,
-		clusterName:      clusterName,
-		clusterServer:    clusterServer,
-		clusterCA:        clusterCA,
-		sessionTTL:       sessionTTL,
-		refreshTokenTTL:  refreshTokenTTL,
-		allowedGroups:    allowedGroups,
-		sseNotifications: make(map[string]*SSENotification),
+		provider:        provider,
+		jwtManager:      jwtManager,
+		clusterName:     clusterName,
+		clusterServer:   clusterServer,
+		clusterCA:       clusterCA,
+		sessionTTL:      sessionTTL,
+		refreshTokenTTL: refreshTokenTTL,
+		allowedGroups:   allowedGroups,
+		sessionClient:   sessionClient,
+		sseListeners:    make(map[string][]chan StatusResponse),
 	}
 
-	// Cleanup SSE notifications periodically (30 second TTL)
-	go h.cleanupSSENotifications()
+	// Start watching for session updates from CRD
+	go h.watchSessions()
+
+	// Cleanup old sessions periodically (30 second TTL)
+	go h.cleanupSessions()
 
 	return h
 }
@@ -92,15 +95,14 @@ func (h *LoginHandler) HandleStartLogin(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	// Store minimal state for callback (state -> verifier mapping)
-	// This is ephemeral and only needed for OAuth flow completion
-	h.sseMutex.Lock()
-	h.sseNotifications[state] = &SSENotification{
-		Verifier:  verifier,
-		Listeners: make([]chan StatusResponse, 0),
-		CreatedAt: time.Now(),
+	// Store session in CRD (distributed across all pods)
+	ctx := r.Context()
+	_, err = h.sessionClient.Create(ctx, state, verifier)
+	if err != nil {
+		log.Printf("Failed to create session CRD: %v", err)
+		http.Error(w, "Failed to create session", http.StatusInternalServerError)
+		return
 	}
-	h.sseMutex.Unlock()
 
 	// Create OAuth URL with state
 	authURL := h.provider.OAuth2Config.AuthCodeURL(
@@ -126,7 +128,7 @@ func (h *LoginHandler) HandleWatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate session token
-	session, err := h.jwtManager.ValidateSessionToken(sessionToken)
+	sessionJWT, err := h.jwtManager.ValidateSessionToken(sessionToken)
 	if err != nil {
 		log.Printf("Watch: Failed to validate session token: %v", err)
 		if err == jwt.ErrExpiredToken {
@@ -137,18 +139,18 @@ func (h *LoginHandler) HandleWatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Use state as notification key
-	notificationKey := session.State
+	state := sessionJWT.State
 
-	h.sseMutex.Lock()
-	notification, exists := h.sseNotifications[notificationKey]
-	if !exists {
-		// Create notification entry
-		notification = &SSENotification{
-			Listeners: make([]chan StatusResponse, 0),
-			CreatedAt: time.Now(),
+	// Check if session already completed in CRD
+	ctx := r.Context()
+	crdSession, err := h.sessionClient.Get(ctx, state)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			http.Error(w, "Session not found or expired", http.StatusNotFound)
+		} else {
+			http.Error(w, "Failed to get session", http.StatusInternalServerError)
 		}
-		h.sseNotifications[notificationKey] = notification
+		return
 	}
 
 	// Set SSE headers
@@ -156,17 +158,49 @@ func (h *LoginHandler) HandleWatch(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
-	// Check if result already exists
-	if notification.Result != nil {
-		h.sseMutex.Unlock()
-		h.sendFinalStatus(w, notification.Result)
+	// If already ready, send immediately
+	if crdSession.Status.Ready {
+		status := StatusResponse{
+			Ready:        true,
+			Kubeconfig:   crdSession.Status.Kubeconfig,
+			RefreshToken: crdSession.Status.RefreshToken,
+		}
+		h.sendFinalStatus(w, &status)
 		return
 	}
 
-	// Create channel for this listener
+	// If there's an error, send immediately
+	if crdSession.Status.Error != "" {
+		status := StatusResponse{
+			Ready: false,
+			Error: crdSession.Status.Error,
+		}
+		h.sendFinalStatus(w, &status)
+		return
+	}
+
+	// Register local listener for updates
 	listener := make(chan StatusResponse, 1)
-	notification.Listeners = append(notification.Listeners, listener)
+	h.sseMutex.Lock()
+	h.sseListeners[state] = append(h.sseListeners[state], listener)
 	h.sseMutex.Unlock()
+
+	// Cleanup listener on exit
+	defer func() {
+		h.sseMutex.Lock()
+		listeners := h.sseListeners[state]
+		for i, l := range listeners {
+			if l == listener {
+				h.sseListeners[state] = append(listeners[:i], listeners[i+1:]...)
+				break
+			}
+		}
+		if len(h.sseListeners[state]) == 0 {
+			delete(h.sseListeners, state)
+		}
+		h.sseMutex.Unlock()
+		close(listener)
+	}()
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -207,10 +241,34 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	defer cancel()
+
+	// Get session from CRD to retrieve verifier
+	crdSession, err := h.sessionClient.Get(ctx, state)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			http.Error(w, "Session not found or expired", http.StatusBadRequest)
+		} else {
+			http.Error(w, "Failed to get session", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	verifier := crdSession.Spec.Verifier
+	if verifier == "" {
+		_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
+			Ready: false,
+			Error: "Invalid session",
+		})
+		http.Error(w, "Invalid session", http.StatusInternalServerError)
+		return
+	}
+
 	// Handle OAuth errors
 	if errParam := r.URL.Query().Get("error"); errParam != "" {
 		errDesc := r.URL.Query().Get("error_description")
-		h.notifyListeners(state, &StatusResponse{
+		_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
 			Ready: false,
 			Error: fmt.Sprintf("%s: %s", errParam, errDesc),
 		})
@@ -220,49 +278,11 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 
 	code := r.URL.Query().Get("code")
 	if code == "" {
-		h.notifyListeners(state, &StatusResponse{
+		_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
 			Ready: false,
 			Error: "No authorization code returned",
 		})
 		http.Error(w, "No code returned", http.StatusBadRequest)
-		return
-	}
-
-	// Note: We can't validate the session token here because the browser
-	// doesn't send it in the callback. Instead, the client validates it
-	// when polling /watch. We use state as the notification key.
-
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
-	defer cancel()
-
-	// We need to get the verifier - but it's in the session token!
-	// Problem: Browser callback doesn't have the session token.
-	// Solution: Store minimal state mapping temporarily OR change flow.
-
-	// Let's store state->verifier mapping temporarily when /start-login is called
-	h.sseMutex.Lock()
-	notification := h.sseNotifications[state]
-	if notification == nil {
-		h.sseMutex.Unlock()
-		http.Error(w, "Session not found or expired", http.StatusBadRequest)
-		return
-	}
-	h.sseMutex.Unlock()
-
-	// Wait - we still need the verifier. Let me reconsider...
-	// The session token contains the verifier, but we can't access it here.
-	// We need to store state->verifier mapping when creating the session.
-
-	// Actually, let's add the verifier to the SSENotification
-	// We'll update HandleStartLogin to store it
-
-	verifier := notification.Verifier
-	if verifier == "" {
-		h.notifyListeners(state, &StatusResponse{
-			Ready: false,
-			Error: "Invalid session",
-		})
-		http.Error(w, "Invalid session", http.StatusInternalServerError)
 		return
 	}
 
@@ -272,7 +292,7 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		oauth2.VerifierOption(verifier),
 	)
 	if err != nil {
-		h.notifyListeners(state, &StatusResponse{
+		_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
 			Ready: false,
 			Error: fmt.Sprintf("Token exchange failed: %v", err),
 		})
@@ -282,7 +302,7 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 
 	idToken, ok := token.Extra("id_token").(string)
 	if !ok {
-		h.notifyListeners(state, &StatusResponse{
+		_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
 			Ready: false,
 			Error: "No ID token returned",
 		})
@@ -292,7 +312,7 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 
 	verified, err := h.provider.VerifyIDToken(ctx, idToken)
 	if err != nil {
-		h.notifyListeners(state, &StatusResponse{
+		_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
 			Ready: false,
 			Error: fmt.Sprintf("ID token verification failed: %v", err),
 		})
@@ -308,7 +328,7 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := verified.Claims(&claims); err != nil {
 		log.Printf("AUTH_FAILURE: Failed to extract claims from ID token: %v", err)
-		h.notifyListeners(state, &StatusResponse{
+		_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
 			Ready: false,
 			Error: "Failed to extract claims",
 		})
@@ -321,7 +341,7 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		if !h.isUserAuthorized(claims.Groups) {
 			log.Printf("AUTH_DENIED: user=%q groups=%v allowed_groups=%v reason=group_not_allowed",
 				claims.Email, claims.Groups, h.allowedGroups)
-			h.notifyListeners(state, &StatusResponse{
+			_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
 				Ready: false,
 				Error: "User is not a member of allowed groups",
 			})
@@ -347,7 +367,7 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		h.refreshTokenTTL,
 	)
 	if err != nil {
-		h.notifyListeners(state, &StatusResponse{
+		_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
 			Ready: false,
 			Error: "Failed to create refresh token",
 		})
@@ -358,12 +378,17 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	// Generate kubeconfig
 	kubeconfig := h.generateKubeconfig(claims.Email, idToken)
 
-	// Notify all listeners
-	h.notifyListeners(state, &StatusResponse{
+	// Update session status in CRD (triggers watch on all pods)
+	err = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
 		Ready:        true,
 		Kubeconfig:   kubeconfig,
 		RefreshToken: refreshToken,
 	})
+	if err != nil {
+		log.Printf("Failed to update session status: %v", err)
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
 
 	// Render success page
 	w.Header().Set("Content-Type", "text/html")
@@ -552,44 +577,8 @@ current-context: %s
 		h.clusterName)
 }
 
-func (h *LoginHandler) notifyListeners(state string, status *StatusResponse) {
-	h.sseMutex.Lock()
-	defer h.sseMutex.Unlock()
-
-	notification := h.sseNotifications[state]
-	if notification == nil {
-		return
-	}
-
-	// Store result for any future listeners
-	notification.Result = status
-
-	// Notify all active listeners
-	for _, listener := range notification.Listeners {
-		select {
-		case listener <- *status:
-		default:
-		}
-	}
-	notification.Listeners = nil
-}
-
-func (h *LoginHandler) cleanupSSENotifications() {
-	ticker := time.NewTicker(30 * time.Second)
-	defer ticker.Stop()
-
-	for range ticker.C {
-		h.sseMutex.Lock()
-		now := time.Now()
-		for key, notification := range h.sseNotifications {
-			// Remove notifications older than 30 seconds
-			if now.Sub(notification.CreatedAt) > 30*time.Second {
-				delete(h.sseNotifications, key)
-			}
-		}
-		h.sseMutex.Unlock()
-	}
-}
+// notifyListeners is deprecated - notifications now handled by CRD watch
+// Keeping stub for compatibility during migration
 
 func generateRandomString(size int) string {
 	b := make([]byte, size)

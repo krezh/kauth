@@ -1,0 +1,94 @@
+replicaCount: 3
+
+image:
+  repository: ghcr.io/yourusername/kauth-server
+  pullPolicy: IfNotPresent
+  tag: ""
+
+serviceAccount:
+  create: true
+  annotations: {}
+
+podAnnotations: {}
+podLabels: {}
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1000
+  fsGroup: 1000
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+
+service:
+  type: ClusterIP
+  port: 8080
+
+httpRoute:
+  enabled: false
+  parentRefs:
+    - name: gateway
+      namespace: gateway-system
+  hostnames:
+    - kauth.example.com
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+
+resources:
+  limits:
+    cpu: 500m
+    memory: 256Mi
+  requests:
+    cpu: 100m
+    memory: 128Mi
+
+livenessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 10
+  periodSeconds: 30
+
+readinessProbe:
+  httpGet:
+    path: /health
+    port: http
+  initialDelaySeconds: 5
+  periodSeconds: 10
+
+nodeSelector: {}
+
+affinity: {}
+
+# Environment variables
+env: []
+  # - name: CLUSTER_NAME
+  #   value: "production"
+  # - name: BASE_URL
+  #   value: "https://kauth.example.com"
+  # - name: SESSION_TTL
+  #   value: "15m"
+  # - name: REFRESH_TOKEN_TTL
+  #   value: "168h"
+
+# Environment from ConfigMaps/Secrets
+envFrom: []
+  # - secretRef:
+  #     name: kauth-secrets
+  # Required environment variables in secret:
+  #   OIDC_ISSUER_URL
+  #   OIDC_CLIENT_ID
+  #   OIDC_CLIENT_SECRET
+  #   JWT_SIGNING_KEY
+  #   JWT_ENCRYPTION_KEY
+  #   KUBERNETES_API_URL
+
+rbac:
+  create: true

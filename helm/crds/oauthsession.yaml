@@ -1,0 +1,70 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: oauthsessions.kauth.io
+spec:
+  group: kauth.io
+  versions:
+    - name: v1alpha1
+      served: true
+      storage: true
+      schema:
+        openAPIV3Schema:
+          type: object
+          properties:
+            spec:
+              type: object
+              required:
+                - state
+                - verifier
+              properties:
+                state:
+                  type: string
+                  description: OAuth state parameter for CSRF protection
+                verifier:
+                  type: string
+                  description: PKCE verifier for code exchange
+                createdAt:
+                  type: string
+                  format: date-time
+                  description: Timestamp when session was created
+            status:
+              type: object
+              properties:
+                ready:
+                  type: boolean
+                  description: Whether OAuth flow has completed
+                  default: false
+                kubeconfig:
+                  type: string
+                  description: Generated kubeconfig (populated after successful auth)
+                refreshToken:
+                  type: string
+                  description: JWT refresh token for token rotation
+                error:
+                  type: string
+                  description: Error message if OAuth flow failed
+                completedAt:
+                  type: string
+                  format: date-time
+                  description: Timestamp when OAuth flow completed
+      subresources:
+        status: {}
+      additionalPrinterColumns:
+        - name: Ready
+          type: boolean
+          jsonPath: .status.ready
+        - name: Age
+          type: date
+          jsonPath: .metadata.creationTimestamp
+        - name: State
+          type: string
+          jsonPath: .spec.state
+          priority: 1
+  scope: Namespaced
+  names:
+    plural: oauthsessions
+    singular: oauthsession
+    kind: OAuthSession
+    shortNames:
+      - oas
