@@ -64,9 +64,3 @@ func SanitizeToResourceName(input string) string {
 
 	return name
 }
-
-// SanitizeEmail converts an email address to a valid Kubernetes resource name
-// This is useful for generating user names in kubeconfigs
-func SanitizeEmail(email string) string {
-	return SanitizeToResourceName(email)
-}

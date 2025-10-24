@@ -186,59 +186,6 @@ func TestSanitizeToResourceName(t *testing.T) {
 	}
 }
 
-func TestSanitizeEmail(t *testing.T) {
-	tests := []struct {
-		name     string
-		email    string
-		expected string
-	}{
-		{
-			name:     "simple email",
-			email:    "user@example.com",
-			expected: "user-example-com",
-		},
-		{
-			name:     "email with subdomain",
-			email:    "user@mail.example.com",
-			expected: "user-mail-example-com",
-		},
-		{
-			name:     "email with plus addressing",
-			email:    "user+tag@example.com",
-			expected: "user-tag-example-com",
-		},
-		{
-			name:     "email with dots",
-			email:    "first.last@example.com",
-			expected: "first-last-example-com",
-		},
-		{
-			name:     "mixed case email",
-			email:    "User.Name@Example.COM",
-			expected: "user-name-example-com",
-		},
-		{
-			name:     "complex email",
-			email:    "John.Doe+Test@Subdomain.Example.COM",
-			expected: "john-doe-test-subdomain-example-com",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result := SanitizeEmail(tt.email)
-			if result != tt.expected {
-				t.Errorf("SanitizeEmail(%q) = %q, want %q", tt.email, result, tt.expected)
-			}
-
-			// Verify result is valid
-			if err := ValidateResourceName(result); err != nil {
-				t.Errorf("SanitizeEmail(%q) produced invalid result %q: %v", tt.email, result, err)
-			}
-		})
-	}
-}
-
 // Benchmark tests
 func BenchmarkSanitizeToResourceName(b *testing.B) {
 	input := "User.Name+Test@Example.COM"

@@ -16,7 +16,6 @@ import (
 	"kauth/pkg/jwt"
 	"kauth/pkg/oauth"
 	"kauth/pkg/session"
-	"kauth/pkg/validation"
 
 	"golang.org/x/oauth2"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -551,8 +550,6 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 func (h *LoginHandler) generateKubeconfig(email, idToken string) string {
 	// Generate kubeconfig with exec credential plugin
 	// This ensures automatic token refresh without manual intervention
-	// Sanitize email to ensure valid Kubernetes resource name
-	sanitizedEmail := validation.SanitizeEmail(email)
 	return fmt.Sprintf(`apiVersion: v1
 kind: Config
 clusters:
@@ -576,8 +573,8 @@ contexts:
     user: %s
 current-context: %s
 `, h.clusterName, h.clusterServer, h.clusterCA,
-		sanitizedEmail,
-		h.clusterName, h.clusterName, sanitizedEmail,
+		email,
+		h.clusterName, h.clusterName, email,
 		h.clusterName)
 }
 
