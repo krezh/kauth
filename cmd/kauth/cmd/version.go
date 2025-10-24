@@ -9,7 +9,6 @@ import (
 var (
 	Version   = "dev"
 	GitCommit = "unknown"
-	BuildDate = "unknown"
 )
 
 var versionCmd = &cobra.Command{
@@ -18,7 +17,6 @@ var versionCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		fmt.Printf("kauth version %s\n", Version)
 		fmt.Printf("Git commit: %s\n", GitCommit)
-		fmt.Printf("Built: %s\n", BuildDate)
 	},
 }
 
