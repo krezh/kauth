@@ -13,7 +13,7 @@ RUN CGO_ENABLED=0 GOOS=linux go build -o kauth-server ./cmd/kauth-server
 
 FROM alpine:latest
 
-RUN apk --no-cache add ca-certificates
+RUN apk --no-cache add ca-certificates tzdata
 
 WORKDIR /app
 
