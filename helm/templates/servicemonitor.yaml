@@ -2,16 +2,16 @@
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: {{ include "kauth.fullname" . }}
+  name: {{ include "kauth-server.fullname" . }}
   labels:
-    {{- include "kauth.labels" . | nindent 4 }}
+    {{- include "kauth-server.labels" . | nindent 4 }}
     {{- with .Values.monitoring.labels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
 spec:
   selector:
     matchLabels:
-      {{- include "kauth.selectorLabels" . | nindent 6 }}
+      {{- include "kauth-server.selectorLabels" . | nindent 6 }}
   endpoints:
     - port: http
       path: /metrics
