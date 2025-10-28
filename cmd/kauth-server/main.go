@@ -18,6 +18,7 @@ import (
 	"kauth/pkg/session"
 	"kauth/pkg/validation"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 )
@@ -159,6 +160,7 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("OK"))
 	})
+	mux.Handle("/metrics", promhttp.Handler())
 
 	// Apply middleware
 	var handler http.Handler = mux

@@ -43,7 +43,6 @@ httpRoute:
 
 resources:
   limits:
-    cpu: 500m
     memory: 256Mi
   requests:
     cpu: 100m
@@ -96,3 +95,20 @@ envFrom: []
 
 rbac:
   create: true
+
+# Prometheus monitoring configuration
+monitoring:
+  enabled: false  # Set to true to enable ServiceMonitor for Prometheus
+  interval: 30s
+  scrapeTimeout: 10s
+  labels: {}  # Additional labels for ServiceMonitor (e.g., release: prometheus)
+  relabelings: []
+
+  # Grafana dashboard configuration
+  grafanaDashboard:
+    enabled: false  # Set to true to create GrafanaDashboard CRD
+    instanceSelector:  # Selector for Grafana instance to use
+      matchLabels:
+        dashboards: "grafana"
+    folder: ""  # Optional: folder name in Grafana
+    labels: {}  # Additional labels for GrafanaDashboard

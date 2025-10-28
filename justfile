@@ -12,13 +12,17 @@ fmt:
     go fmt ./...
 
 lint:
-    golangci-lint run
+    golangci-lint run --tests=false
 
 vet:
     go vet ./...
 
+build:
+    go build ./cmd/kauth
+    go build ./cmd/kauth-server
+
 # Format and lint
-check: fmt lint
+check: fmt test lint
 
 # Update flake
 update:
@@ -31,30 +35,12 @@ flake-build:
 # Update vendor hashes in flake.nix
 vendor:
     #!/usr/bin/env bash
-    echo "Getting vendor hash for kauth..."
-    kauth_hash=$(nix build .#kauth 2>&1 | grep -oP 'got:\s+\K\S+' || echo "")
+    gomod2nix
 
-    echo "Getting vendor hash for kauth-server..."
-    server_hash=$(nix build .#kauth-server 2>&1 | grep -oP 'got:\s+\K\S+' || echo "")
-
-    if [ -n "$kauth_hash" ]; then
-        sed -i "0,/vendorHash = \".*\";/{s|vendorHash = \".*\";|vendorHash = \"$kauth_hash\";|}" flake.nix
-        echo "Updated kauth vendorHash to: $kauth_hash"
-    fi
-
-    if [ -n "$server_hash" ]; then
-        sed -i "0,/vendorHash = \".*\";/! {0,/vendorHash = \".*\";/ s|vendorHash = \".*\";|vendorHash = \"$server_hash\";|}" flake.nix
-        echo "Updated kauth-server vendorHash to: $server_hash"
-    fi
-
-    if [ -z "$kauth_hash" ] && [ -z "$server_hash" ]; then
-        echo "No hash mismatch found - vendorHashes may already be correct"
-    fi
-
-pre-commit: vendor check flake-build
+pre-commit: update vet vendor check flake-build
 
 # Create a new release with interactive version selection
-release:
+release: pre-commit
     #!/usr/bin/env bash
     set -e
 
