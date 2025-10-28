@@ -10,8 +10,7 @@ metadata:
     {{- end }}
 spec:
   instanceSelector:
-    matchLabels:
-      {{- toYaml .Values.monitoring.grafanaDashboard.instanceSelector | nindent 6 }}
+    {{- toYaml .Values.monitoring.grafanaDashboard.instanceSelector | nindent 4 }}
   {{- with .Values.monitoring.grafanaDashboard.folder }}
   folder: {{ . }}
   {{- end }}
