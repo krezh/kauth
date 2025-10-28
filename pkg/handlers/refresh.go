@@ -18,9 +18,7 @@ import (
 type RefreshHandler struct {
 	provider        *oauth.Provider
 	jwtManager      *jwt.Manager
-	clusterName     string
-	clusterServer   string
-	clusterCA       string
+	kubeconfigGen   *KubeconfigGenerator
 	refreshTokenTTL time.Duration
 	rotationWindow  int // Number of previous tokens to accept
 }
@@ -45,11 +43,13 @@ func NewRefreshHandler(
 	rotationWindow int,
 ) *RefreshHandler {
 	return &RefreshHandler{
-		provider:        provider,
-		jwtManager:      jwtManager,
-		clusterName:     clusterName,
-		clusterServer:   clusterServer,
-		clusterCA:       clusterCA,
+		provider:   provider,
+		jwtManager: jwtManager,
+		kubeconfigGen: &KubeconfigGenerator{
+			ClusterName:   clusterName,
+			ClusterServer: clusterServer,
+			ClusterCA:     clusterCA,
+		},
 		refreshTokenTTL: refreshTokenTTL,
 		rotationWindow:  rotationWindow,
 	}
@@ -130,27 +130,12 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify the new ID token
-	verified, err := h.provider.VerifyIDToken(ctx, idToken)
+	// Verify the new ID token and extract claims
+	claims, _, err := VerifyAndExtractClaims(ctx, h.provider, idToken)
 	if err != nil {
 		log.Printf("REFRESH_FAILURE: user=%q reason=id_token_verification_failed error=%q", refreshToken.UserEmail, err)
 		metrics.RecordTokenRefreshFailure("id_token_verification_failed")
-		metrics.RecordOIDCRequest("verify_id_token", "failure")
-		http.Error(w, fmt.Sprintf("ID token verification failed: %v", err), http.StatusInternalServerError)
-		return
-	}
-	metrics.RecordOIDCRequest("verify_id_token", "success")
-
-	var claims struct {
-		Email  string   `json:"email"`
-		Groups []string `json:"groups"`
-		Name   string   `json:"name"`
-		Sub    string   `json:"sub"`
-	}
-	if err := verified.Claims(&claims); err != nil {
-		log.Printf("REFRESH_FAILURE: user=%q reason=claims_extraction_failed error=%q", refreshToken.UserEmail, err)
-		metrics.RecordTokenRefreshFailure("claims_extraction_failed")
-		http.Error(w, "Failed to extract claims", http.StatusInternalServerError)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
@@ -184,12 +169,13 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 
 	// Log successful token refresh
 	log.Printf("REFRESH_SUCCESS: user=%q name=%q sub=%q groups=%v rotation_counter=%d cluster=%q expires_in=%ds",
-		claims.Email, claims.Name, claims.Sub, claims.Groups, refreshToken.RotationCounter+1, h.clusterName, expiresIn)
+		claims.Email, claims.Name, claims.Sub, claims.Groups, refreshToken.RotationCounter+1, h.kubeconfigGen.ClusterName, expiresIn)
 
 	metrics.RecordTokenRefreshSuccess()
 
 	// Generate updated kubeconfig
-	kubeconfig := h.generateKubeconfig(claims.Email)
+	kubeconfig := h.kubeconfigGen.Generate(claims.Email)
+	metrics.RecordKubeconfigGenerationSuccess()
 
 	resp := RefreshResponse{
 		IDToken:      idToken,
@@ -201,33 +187,4 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(resp)
-}
-
-func (h *RefreshHandler) generateKubeconfig(email string) string {
-	return fmt.Sprintf(`apiVersion: v1
-kind: Config
-clusters:
-- name: %s
-  cluster:
-    server: %s
-    certificate-authority-data: %s
-users:
-- name: %s
-  user:
-    exec:
-      apiVersion: client.authentication.k8s.io/v1
-      command: kauth
-      args:
-      - get-token
-      interactiveMode: Never
-contexts:
-- name: %s
-  context:
-    cluster: %s
-    user: %s
-current-context: %s
-`, h.clusterName, h.clusterServer, h.clusterCA,
-		email,
-		h.clusterName, h.clusterName, email,
-		h.clusterName)
 }

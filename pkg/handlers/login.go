@@ -28,9 +28,7 @@ import (
 type LoginHandler struct {
 	provider        *oauth.Provider
 	jwtManager      *jwt.Manager
-	clusterName     string
-	clusterServer   string
-	clusterCA       string
+	kubeconfigGen   *KubeconfigGenerator
 	sessionTTL      time.Duration
 	refreshTokenTTL time.Duration
 	allowedGroups   []string
@@ -64,11 +62,13 @@ func NewLoginHandler(
 	sessionClient *session.Client,
 ) *LoginHandler {
 	h := &LoginHandler{
-		provider:        provider,
-		jwtManager:      jwtManager,
-		clusterName:     clusterName,
-		clusterServer:   clusterServer,
-		clusterCA:       clusterCA,
+		provider:   provider,
+		jwtManager: jwtManager,
+		kubeconfigGen: &KubeconfigGenerator{
+			ClusterName:   clusterName,
+			ClusterServer: clusterServer,
+			ClusterCA:     clusterCA,
+		},
 		sessionTTL:      sessionTTL,
 		refreshTokenTTL: refreshTokenTTL,
 		allowedGroups:   allowedGroups,
@@ -170,7 +170,8 @@ func (h *LoginHandler) HandleWatch(w http.ResponseWriter, r *http.Request) {
 	// If already ready, send immediately
 	if crdSession.Status.Ready {
 		// Generate kubeconfig on-demand from stored email
-		kubeconfig := h.generateKubeconfig(crdSession.Status.Email)
+		kubeconfig := h.kubeconfigGen.Generate(crdSession.Status.Email)
+		metrics.RecordKubeconfigGenerationSuccess()
 
 		status := StatusResponse{
 			Ready:        true,
@@ -343,35 +344,15 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	verified, err := h.provider.VerifyIDToken(ctx, idToken)
+	claims, _, err := VerifyAndExtractClaims(ctx, h.provider, idToken)
 	if err != nil {
 		metrics.RecordCallbackFailure()
 		metrics.RecordLoginFailure("id_token_verification_failed")
-		metrics.RecordOIDCRequest("verify_id_token", "failure")
 		_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
 			Ready: false,
-			Error: fmt.Sprintf("ID token verification failed: %v", err),
+			Error: err.Error(),
 		})
 		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	metrics.RecordOIDCRequest("verify_id_token", "success")
-
-	var claims struct {
-		Email  string   `json:"email"`
-		Groups []string `json:"groups"`
-		Name   string   `json:"name"`
-		Sub    string   `json:"sub"`
-	}
-	if err := verified.Claims(&claims); err != nil {
-		log.Printf("AUTH_FAILURE: Failed to extract claims from ID token: %v", err)
-		metrics.RecordCallbackFailure()
-		metrics.RecordLoginFailure("claims_extraction_failed")
-		_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
-			Ready: false,
-			Error: "Failed to extract claims",
-		})
-		http.Error(w, "Failed to extract claims", http.StatusInternalServerError)
 		return
 	}
 
@@ -395,7 +376,7 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 
 	// Log successful authentication with details
 	log.Printf("AUTH_SUCCESS: user=%q name=%q sub=%q groups=%v cluster=%q",
-		claims.Email, claims.Name, claims.Sub, claims.Groups, h.clusterName)
+		claims.Email, claims.Name, claims.Sub, claims.Groups, h.kubeconfigGen.ClusterName)
 
 	metrics.RecordCallbackSuccess()
 	metrics.RecordLoginSuccess()
@@ -422,7 +403,6 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Generate kubeconfig
 	// Update session status in CRD (triggers watch on all pods)
 	// Store only email and refresh token, kubeconfig will be generated on-demand
 	err = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
@@ -436,8 +416,6 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
-
-	metrics.RecordKubeconfigGenerationSuccess()
 
 	// Render success page
 	w.Header().Set("Content-Type", "text/html")
@@ -593,37 +571,6 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 			),
 		),
 	).Render(w)
-}
-
-func (h *LoginHandler) generateKubeconfig(email string) string {
-	// Generate kubeconfig with exec credential plugin
-	// This ensures automatic token refresh without manual intervention
-	return fmt.Sprintf(`apiVersion: v1
-kind: Config
-clusters:
-- name: %s
-  cluster:
-    server: %s
-    certificate-authority-data: %s
-users:
-- name: %s
-  user:
-    exec:
-      apiVersion: client.authentication.k8s.io/v1
-      command: kauth
-      args:
-      - get-token
-      interactiveMode: Never
-contexts:
-- name: %s
-  context:
-    cluster: %s
-    user: %s
-current-context: %s
-`, h.clusterName, h.clusterServer, h.clusterCA,
-		email,
-		h.clusterName, h.clusterName, email,
-		h.clusterName)
 }
 
 // notifyListeners is deprecated - notifications now handled by CRD watch

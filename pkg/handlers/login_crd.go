@@ -6,6 +6,7 @@ import (
 	"time"
 
 	v1alpha1 "kauth/pkg/apis/kauth.io/v1alpha1"
+	"kauth/pkg/metrics"
 
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/watch"
@@ -52,7 +53,8 @@ func (h *LoginHandler) watchSessions() {
 						// Generate kubeconfig on-demand from stored email
 						var kubeconfig string
 						if session.Status.Ready && session.Status.Email != "" {
-							kubeconfig = h.generateKubeconfig(session.Status.Email)
+							kubeconfig = h.kubeconfigGen.Generate(session.Status.Email)
+							metrics.RecordKubeconfigGenerationSuccess()
 						}
 
 						status := StatusResponse{
