@@ -107,8 +107,12 @@ monitoring:
   # Grafana dashboard configuration
   grafanaDashboard:
     enabled: false  # Set to true to create GrafanaDashboard CRD
+    allowCrossNamespaceImport: true  # Allow importing dashboards from other namespaces
     instanceSelector:  # Selector for Grafana instance to use
       matchLabels:
-        dashboards: "grafana"
+        grafana.internal/instance: grafana
+    datasources:  # Datasource mappings for the dashboard
+      - datasourceName: prometheus
+        inputName: DS_PROMETHEUS
     folder: ""  # Optional: folder name in Grafana
     labels: {}  # Additional labels for GrafanaDashboard

@@ -9,11 +9,20 @@ metadata:
     {{- toYaml . | nindent 4 }}
     {{- end }}
 spec:
+{{- with .Values.monitoring.grafanaDashboard.allowCrossNamespaceImport }}
+  allowCrossNamespaceImport: {{ . }}
+{{- end }}
+{{- with .Values.monitoring.grafanaDashboard.instanceSelector }}
   instanceSelector:
-    {{- toYaml .Values.monitoring.grafanaDashboard.instanceSelector | nindent 4 }}
-  {{- with .Values.monitoring.grafanaDashboard.folder }}
+    {{- toYaml . | nindent 4 }}
+{{- end }}
+{{- with .Values.monitoring.grafanaDashboard.datasources }}
+  datasources:
+    {{- toYaml . | nindent 4 }}
+{{- end }}
+{{- with .Values.monitoring.grafanaDashboard.folder }}
   folder: {{ . }}
-  {{- end }}
+{{- end }}
   json: |
     {
       "annotations": {
