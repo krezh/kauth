@@ -30,6 +30,11 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      - name: Run golangci-lint
+        uses: golangci/golangci-lint-action@971e284b6050e8a5849b72094c50ab08da042db8 # v6.1.1
+        with:
+          version: latest
+
       - name: Run tests
         run: go test ./...
 
@@ -53,6 +58,18 @@ jobs:
             type=ref,event=pr,prefix=pr-
             type=semver,pattern={{version}}
 
+      - name: Get version info
+        id: version
+        run: |
+          # Get version from tag or use commit SHA
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            VERSION=${GITHUB_REF#refs/tags/v}
+          else
+            VERSION=${GITHUB_SHA::7}
+          fi
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "git_commit=${GITHUB_SHA}" >> $GITHUB_OUTPUT
+
       - name: Build and push Docker image
         uses: docker/build-push-action@263435318d21b8e681c14492fe198d362a7d2c83 # v6
         with:
@@ -62,5 +79,8 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ steps.version.outputs.version }}
+            GIT_COMMIT=${{ steps.version.outputs.git_commit }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

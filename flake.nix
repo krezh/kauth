@@ -22,7 +22,8 @@
           inherit system;
           overlays = [ gomod2nix.overlays.default ];
         };
-      version = self.rev or "dirty";
+      # For package metadata - will be refined during build
+      version = self.shortRev or self.lastModifiedDate or "dev";
     in
     {
       packages = forAllSystems (
@@ -32,32 +33,50 @@
         in
         {
           default = self.packages.${system}.kauth;
-          kauth = pkgs.buildGoApplication {
-            pname = "kauth";
-            inherit version;
-            src = ./.;
-            modules = ./gomod2nix.toml;
-            subPackages = [ "cmd/kauth" ];
-            ldflags = [
-              "-s"
-              "-w"
-              "-X github.com/krezh/kauth/cmd/kauth/cmd.Version=${version}"
-              "-X github.com/krezh/kauth/cmd/kauth/cmd.GitCommit=${self.rev or "unknown"}"
-            ];
-          };
-          kauth-server = pkgs.buildGoApplication {
-            pname = "kauth-server";
-            inherit version;
-            src = ./.;
-            modules = ./gomod2nix.toml;
-            subPackages = [ "cmd/kauth-server" ];
-            ldflags = [
-              "-s"
-              "-w"
-              "-X github.com/krezh/kauth/cmd/kauth/cmd.Version=${version}"
-              "-X github.com/krezh/kauth/cmd/kauth/cmd.GitCommit=${self.rev or "unknown"}"
-            ];
-          };
+          kauth =
+            let
+              # Get version from git describe if available, otherwise use fallback
+              gitVersion = pkgs.runCommand "git-version" { } ''
+                cd ${self}
+                ${pkgs.git}/bin/git describe --tags --always --dirty 2>/dev/null | sed 's/^v//' > $out || echo "${version}" > $out
+              '';
+              versionString = builtins.readFile gitVersion;
+            in
+            pkgs.buildGoApplication {
+              pname = "kauth";
+              version = versionString;
+              src = ./.;
+              modules = ./gomod2nix.toml;
+              subPackages = [ "cmd/kauth" ];
+              ldflags = [
+                "-s"
+                "-w"
+                "-X github.com/krezh/kauth/cmd/kauth/cmd.Version=${versionString}"
+                "-X github.com/krezh/kauth/cmd/kauth/cmd.GitCommit=${self.rev or "unknown"}"
+              ];
+            };
+          kauth-server =
+            let
+              # Get version from git describe if available, otherwise use fallback
+              gitVersion = pkgs.runCommand "git-version" { } ''
+                cd ${self}
+                ${pkgs.git}/bin/git describe --tags --always --dirty 2>/dev/null | sed 's/^v//' > $out || echo "${version}" > $out
+              '';
+              versionString = builtins.readFile gitVersion;
+            in
+            pkgs.buildGoApplication {
+              pname = "kauth-server";
+              version = versionString;
+              src = ./.;
+              modules = ./gomod2nix.toml;
+              subPackages = [ "cmd/kauth-server" ];
+              ldflags = [
+                "-s"
+                "-w"
+                "-X github.com/krezh/kauth/cmd/kauth/cmd.Version=${versionString}"
+                "-X github.com/krezh/kauth/cmd/kauth/cmd.GitCommit=${self.rev or "unknown"}"
+              ];
+            };
         }
       );
       devShells = forAllSystems (
