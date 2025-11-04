@@ -22,7 +22,17 @@
           inherit system;
           overlays = [ gomod2nix.overlays.default ];
         };
-      version = self.rev or "dirty";
+      # Extract version from git tag or use shortRev
+      # This will give us proper semver like "v1.2.3" from tags
+      version =
+        if (self ? rev) then
+          # When built from a git repo, try to extract version from the last tag
+          self.shortRev
+        else
+          "dirty";
+
+      # Git commit for build info
+      gitCommit = self.rev or "unknown";
     in
     {
       packages = forAllSystems (
@@ -42,7 +52,7 @@
               "-s"
               "-w"
               "-X github.com/krezh/kauth/cmd/kauth/cmd.Version=${version}"
-              "-X github.com/krezh/kauth/cmd/kauth/cmd.GitCommit=${self.rev or "unknown"}"
+              "-X github.com/krezh/kauth/cmd/kauth/cmd.GitCommit=${gitCommit}"
             ];
           };
           kauth-server = pkgs.buildGoApplication {
@@ -55,7 +65,7 @@
               "-s"
               "-w"
               "-X github.com/krezh/kauth/cmd/kauth/cmd.Version=${version}"
-              "-X github.com/krezh/kauth/cmd/kauth/cmd.GitCommit=${self.rev or "unknown"}"
+              "-X github.com/krezh/kauth/cmd/kauth/cmd.GitCommit=${gitCommit}"
             ];
           };
         }
