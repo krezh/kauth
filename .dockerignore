@@ -1,0 +1,56 @@
+# Git
+.git
+.gitignore
+.gitattributes
+
+# GitHub
+.github
+
+# Documentation
+*.md
+LICENSE
+docs/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Nix
+flake.nix
+flake.lock
+gomod2nix.toml
+result
+result-*
+.direnv
+.envrc
+
+# Development tools
+justfile
+.pre-commit-config.yaml
+
+# Helm charts (not needed for server binary build)
+helm/
+
+# Build artifacts
+/kauth
+/kauth-server
+/kauth-*
+*.exe
+vendor/
+*.o
+*.a
+*.so
+*.test
+*.out
+
+# Testing artifacts
+.kube/
+coverage.txt
+coverage.html

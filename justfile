@@ -8,6 +8,12 @@ default:
 test:
     go test ./...
 
+# Run tests with coverage
+coverage:
+    go test -race -coverprofile=coverage.txt -covermode=atomic ./...
+    go tool cover -html=coverage.txt -o coverage.html
+    @echo "Coverage report generated: coverage.html"
+
 fmt:
     go fmt ./...
 
