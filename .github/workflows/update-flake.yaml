@@ -7,6 +7,7 @@ on:
     paths:
       - "go.mod"
       - "go.sum"
+      - "!flake.nix" # Ignore flake.nix changes to prevent loops
   workflow_dispatch:
 
 jobs:
@@ -16,8 +17,23 @@ jobs:
       contents: write
 
     steps:
+      - name: Generate Token
+        uses: actions/create-github-app-token@67018539274d69449ef7c02e8e71183d1719ab42 # v2.1.4
+        id: app-token
+        with:
+          app-id: "${{ secrets.BOT_APP_ID }}"
+          private-key: "${{ secrets.BOT_APP_PRIVATE_KEY }}"
+
+      - name: Get Bot User ID
+        id: get-user-id
+        run: echo "user-id=$(gh api "/users/${{ steps.app-token.outputs.app-slug }}[bot]" --jq .id)" >> "$GITHUB_OUTPUT"
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+
       - name: Checkout
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
+        with:
+          token: ${{ steps.app-token.outputs.token }}
 
       - name: Install Nix
         uses: cachix/install-nix-action@fd24c48048070c1be9acd18c9d369a83f0fe94d7 # v31
@@ -32,14 +48,10 @@ jobs:
           nix build .#kauth-server
 
       - name: Commit changes
-        run: |
-          if git diff --quiet; then
-            echo "No changes to commit"
-            exit 0
-          fi
-
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add gomod2nix.toml flake.lock
-          git commit -m "chore: update flake dependencies [skip ci]"
-          git push
+        uses: stefanzweifel/git-auto-commit-action@8621497c8c39c72f3e2a999a26b4ca1b5058a842 # v5
+        with:
+          commit_message: "chore: update flake dependencies [skip ci]"
+          file_pattern: "gomod2nix.toml flake.lock"
+          commit_user_name: ${{ steps.app-token.outputs.app-slug }}[bot]
+          commit_user_email: ${{ steps.get-user-id.outputs.user-id }}+${{ steps.app-token.outputs.app-slug }}[bot]@users.noreply.github.com
+          commit_author: ${{ steps.app-token.outputs.app-slug }}[bot] <${{ steps.get-user-id.outputs.user-id }}+${{ steps.app-token.outputs.app-slug }}[bot]@users.noreply.github.com>
