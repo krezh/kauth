@@ -3,6 +3,7 @@
     ".": {
       "release-type": "go",
       "package-name": "kauth",
+      "include-component-in-tag": false,
       "exclude-paths": [".github/workflows"],
       "changelog-sections": [
         { "type": "feat", "section": "Features" },
