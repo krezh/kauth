@@ -118,7 +118,7 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Push Helm Chart to GHCR
-        uses: appany/helm-oci-chart-releaser@2e9e13a0a85e99e0c1d67bf115f77bcd04dc8040 # v0.4.2
+        uses: appany/helm-oci-chart-releaser@dd0551c15abe174eb57824ecde62e976091094da # v0.4.2
         with:
           name: kauth-server
           repository: ${{ github.repository_owner }}/charts
