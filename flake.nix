@@ -22,7 +22,7 @@
           inherit system;
           overlays = [ gomod2nix.overlays.default ];
         };
-      version = "0.1.30";
+      version = "0.1.31";
     in
     {
       packages = forAllSystems (
