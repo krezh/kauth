@@ -1,21 +1,15 @@
 name: Update Flake
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "go.mod"
-      - "go.sum"
-      - "!flake.nix" # Ignore flake.nix changes to prevent loops
-  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
 
 jobs:
-  update:
+  update-flake:
     runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
     steps:
       - name: Generate Token
         uses: actions/create-github-app-token@67018539274d69449ef7c02e8e71183d1719ab42 # v2.1.4
@@ -33,6 +27,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
         with:
+          ref: main
           token: ${{ steps.app-token.outputs.token }}
 
       - name: Install Nix
@@ -47,11 +42,12 @@ jobs:
           nix build .#kauth
           nix build .#kauth-server
 
-      - name: Commit changes
+      - name: Commit and push changes
         uses: stefanzweifel/git-auto-commit-action@28e16e81777b558cc906c8750092100bbb34c5e3 # v7
         with:
-          commit_message: "chore: update flake dependencies [skip ci]"
-          file_pattern: "gomod2nix.toml flake.lock"
+          commit_message: "chore: update flake to version ${{ github.event.release.tag_name }} [skip ci]"
+          file_pattern: "flake.nix gomod2nix.toml flake.lock"
+          branch: main
           commit_user_name: ${{ steps.app-token.outputs.app-slug }}[bot]
           commit_user_email: ${{ steps.get-user-id.outputs.user-id }}+${{ steps.app-token.outputs.app-slug }}[bot]@users.noreply.github.com
           commit_author: ${{ steps.app-token.outputs.app-slug }}[bot] <${{ steps.get-user-id.outputs.user-id }}+${{ steps.app-token.outputs.app-slug }}[bot]@users.noreply.github.com>
