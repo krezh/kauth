@@ -24,7 +24,7 @@ jobs:
           app-id: "${{ secrets.BOT_APP_ID }}"
           private-key: "${{ secrets.BOT_APP_PRIVATE_KEY }}"
 
-      - uses: googleapis/release-please-action@7987652d64b4581673a76e33ad5e98e3dd56832f # v4
+      - uses: googleapis/release-please-action@16a9c90856f42705d54a6fda1823352bdc62cf38 # v4
         id: release
         with:
           token: ${{ steps.app-token.outputs.token }}
@@ -115,10 +115,10 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ steps.app-token.outputs.token }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Push Helm Chart to GHCR
-        uses: appany/helm-oci-chart-releaser@2e9e13a0a85e99e0c1d67bf115f77bcd04dc8040 # v0.4.2
+        uses: appany/helm-oci-chart-releaser@dd0551c15abe174eb57824ecde62e976091094da # v0.4.2
         with:
           name: kauth-server
           repository: ${{ github.repository_owner }}/charts
@@ -126,11 +126,11 @@ jobs:
           path: helm
           registry: ghcr.io
           registry_username: ${{ github.actor }}
-          registry_password: ${{ steps.app-token.outputs.token }}
+          registry_password: ${{ secrets.GITHUB_TOKEN }}
           update_dependencies: true
 
       - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@9c1a2c4cab0b4a834bb7abcb2e39af88fc93f2cb # v6
+        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
         with:
           distribution: goreleaser
           version: latest
@@ -141,7 +141,7 @@ jobs:
           GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
 
       - name: Update Release with Helm Chart Info
-        uses: softprops/action-gh-release@e7a8f85e1c67a31e6ed99a94b41bd0b71bbee6b8 # v2
+        uses: softprops/action-gh-release@6da8fa9354ddfdc4aeace5fc48d7f679b5214090 # v2
         with:
           tag_name: ${{ needs.release-please.outputs.tag_name }}
           append_body: true
