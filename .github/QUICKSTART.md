@@ -1,6 +1,6 @@
-# Quick Start - Using Automated CI/CD
+# Quick Start - Using CI/CD
 
-This guide shows you exactly how to use the automated versioning and release system.
+This guide shows you exactly how to use the versioning and release system.
 
 ## Daily Development Workflow
 
@@ -18,44 +18,68 @@ just test
 just build
 ```
 
-### 2. Commit With Version Control
+### 2. Commit Normally (No Release)
 
-Your commit message controls the version bump:
+**Most commits don't need a release:**
 
 ```bash
-# Patch bump (0.1.0 → 0.1.1) - Bug fixes
+# Regular commits - NO release created
 git commit -m "fix: resolve authentication timeout issue"
+git commit -m "feat: add SAML authentication support"
+git commit -m "refactor: improve error handling"
+git commit -m "test: add integration tests"
 
-# Minor bump (0.1.0 → 0.2.0) - New features
-git commit -m "feat: add SAML authentication support #minor"
-
-# Major bump (0.1.0 → 1.0.0) - Breaking changes
-git commit -m "refactor: redesign authentication API #major"
-
-# No version bump - Documentation
-git commit -m "docs: update README [skip version]"
+# Push to main - CI runs tests, but NO release
+git push origin main
 ```
 
-### 3. Push to Main
+### 3. Create a Release When Ready
+
+**Option A: Add `[release]` to commit message**
 
 ```bash
-# Option A: Push directly to main (if you have permissions)
-git checkout main
-git pull
-git merge my-feature
+# Patch bump (0.1.0 → 0.1.1)
+git commit -m "fix: resolve critical auth bug [release]"
+
+# Minor bump (0.1.0 → 0.2.0)
+git commit -m "feat: add OAuth support [release] #minor"
+
+# Major bump (0.1.0 → 1.0.0)
+git commit -m "breaking: new API [release] #major"
+
+git push origin main
+# → Release created automatically!
+```
+
+**Option B: Manual release from GitHub**
+
+```bash
+# Push your commits normally
 git push origin main
 
-# Option B: Create a Pull Request (recommended)
-git push origin my-feature
-# Create PR on GitHub, get review, merge
+# Then go to GitHub:
+# Actions → Auto Version and Release → Run workflow
+# Select: patch/minor/major
+# → Release created!
 ```
 
-### 4. Automation Happens Automatically
+**Option C: Use justfile (local)**
 
-Once merged to `main`, the CI/CD system:
+```bash
+just release-manual
+# Follow prompts to create release
+```
 
+### 4. What Happens Next
+
+**Without `[release]` in commit:**
+- ✅ CI runs tests and builds
+- ✅ Docker image pushed with commit SHA
+- ❌ NO version tag created
+- ❌ NO GitHub Release created
+
+**With `[release]` in commit or manual trigger:**
 1. ✅ **Auto-version** runs (~30 seconds)
-   - Reads your commit message
    - Creates new tag (e.g., `v0.2.0`)
    - Updates `VERSION` file
    - Commits VERSION back to main
@@ -70,7 +94,7 @@ Once merged to `main`, the CI/CD system:
    - Publishes Helm chart v0.2.0
    - Creates GitHub Release
 
-**Total time: ~4-5 minutes from merge to release!**
+**Total time: ~4-5 minutes from trigger to release!**
 
 ### 5. Use Your Release
 
@@ -90,53 +114,63 @@ nix build github:krezh/kauth/v0.2.0#kauth-server
 
 ## Common Scenarios
 
-### Scenario 1: Quick Bug Fix
+### Scenario 1: Quick Bug Fix (No Release)
 
 ```bash
 # Fix the bug
 vim pkg/auth/session.go
 
-# Commit and push (automatic patch bump)
+# Commit and push - NO release
 git commit -am "fix: prevent session timeout race condition"
+git push origin main
+
+# CI runs tests, but no version created
+# No release needed yet
+```
+
+### Scenario 2: Release a Bug Fix
+
+```bash
+# After accumulating several bug fixes
+git commit -am "fix: critical security issue [release]"
 git push origin main
 
 # Wait 5 minutes, then:
 docker pull ghcr.io/krezh/kauth-server:latest  # Gets v0.1.1
 ```
 
-### Scenario 2: New Feature
+### Scenario 3: Accumulate Changes, Then Release
 
 ```bash
-# Implement feature
-vim pkg/auth/oauth.go
-vim pkg/auth/oauth_test.go
-
-# Test it
-just test
-
-# Commit with minor bump
-git commit -am "feat: add GitHub OAuth provider #minor"
+# Work on feature over multiple commits
+git commit -am "feat: add OAuth scaffold"
+git commit -am "feat: implement OAuth flow"
+git commit -am "test: add OAuth tests"
+git commit -am "docs: document OAuth setup"
 git push origin main
 
-# Wait 5 minutes, then:
-# New version v0.2.0 is released automatically
+# Later, when ready to release:
+git commit -am "feat: OAuth provider ready [release] #minor" --allow-empty
+git push origin main
+
+# OR use GitHub Actions UI to manually trigger release
 ```
 
-### Scenario 3: Breaking Change
+### Scenario 4: Breaking Change Release
 
 ```bash
 # Make breaking API changes
 vim pkg/api/v2/handler.go
 
-# Commit with major bump
-git commit -am "feat: migrate to v2 API with breaking changes #major"
+# When ready to release
+git commit -am "feat: v2 API ready [release] #major"
 git push origin main
 
 # Wait 5 minutes, then:
 # New version v1.0.0 is released
 ```
 
-### Scenario 4: Multiple Commits (PR)
+### Scenario 5: Multiple Commits in PR
 
 ```bash
 # Your PR has multiple commits:
@@ -145,55 +179,59 @@ git log --oneline
 # def456 test: add integration tests
 # ghi789 feat: add OIDC support
 
-# When PR is merged to main:
-# - Auto-version reads the latest commit
-# - If "feat:" is in the message → minor bump
-# - Creates appropriate version tag
-```
-
-### Scenario 5: Documentation Only
-
-```bash
-# Update docs (no version bump needed)
-vim README.md
-git commit -am "docs: add troubleshooting section [skip version]"
+# Merge PR normally - NO release
 git push origin main
 
-# CI/CD skips auto-versioning
-# No new release created
+# Later, add release commit:
+git commit -am "release: OIDC support ready [release] #minor" --allow-empty
+git push origin main
 ```
 
-### Scenario 6: Emergency Hotfix
+### Scenario 6: Just Want to Merge, No Release
+
+```bash
+# This is the DEFAULT behavior
+git commit -am "feat: work in progress feature"
+git commit -am "fix: small bug"
+git commit -am "docs: update README"
+git push origin main
+
+# Everything merges, CI runs, but NO releases created
+# Release only happens when YOU decide
+```
+
+### Scenario 7: Emergency Hotfix
 
 ```bash
 # Critical production bug on v1.2.3
 
-# Option A: Fix on main (creates v1.2.4)
+# Fix it
 git checkout main
 git pull
 vim pkg/critical/fix.go
-git commit -am "fix: critical security issue in token validation"
+
+# Release immediately
+git commit -am "fix: critical security issue [release]"
 git push origin main
 # → Automatic release v1.2.4
 
-# Option B: Manual release with specific version
-just release-manual
-# Follow prompts to create specific version
+# OR use GitHub Actions UI for immediate manual release
 ```
 
 ---
 
 ## Version Bump Reference
 
-| Commit Message Pattern | Bump Type | Example |
-|------------------------|-----------|---------|
-| `fix: ...` | patch | 0.1.0 → 0.1.1 |
-| `feat: ...` | minor | 0.1.0 → 0.2.0 |
-| `feat: ... #minor` | minor | 0.1.0 → 0.2.0 |
-| `... #major` | major | 0.1.0 → 1.0.0 |
-| `BREAKING CHANGE:` | major | 0.1.0 → 1.0.0 |
-| `docs: ... [skip version]` | none | No release |
-| `chore: ... [skip ci]` | none | No CI run |
+**Key Point: Releases only happen when you add `[release]` or manually trigger!**
+
+| Commit Message | Release? | Bump Type | Example |
+|----------------|----------|-----------|---------|
+| `fix: something` | ❌ NO | - | Just merges |
+| `fix: something [release]` | ✅ YES | patch | 0.1.0 → 0.1.1 |
+| `feat: new thing [release]` | ✅ YES | patch | 0.1.0 → 0.1.1 |
+| `feat: new thing [release] #minor` | ✅ YES | minor | 0.1.0 → 0.2.0 |
+| `anything [release] #major` | ✅ YES | major | 0.1.0 → 1.0.0 |
+| `docs: update` | ❌ NO | - | Just merges |
 
 ---
 
@@ -347,11 +385,14 @@ just release-manual
 # Before pushing, check your commit message
 git log -1 --pretty=%B
 
-# Predict the version bump:
-# - Contains "feat:" or "#minor" → minor bump
-# - Contains "#major" or "BREAKING CHANGE" → major bump
-# - Otherwise → patch bump
-# - Contains "[skip version]" → no bump
+# Will it trigger a release?
+# - Contains "[release]" → YES, creates release
+# - Otherwise → NO, just merges
+
+# If [release] is present, what bump?
+# - Contains "#major" → major bump (1.0.0)
+# - Contains "#minor" → minor bump (0.2.0)
+# - Otherwise → patch bump (0.1.1)
 ```
 
 ### Working with Nix Flake
@@ -375,29 +416,39 @@ nix build github:krezh/kauth#kauth-server
 
 ## Summary: The Complete Flow
 
+### Regular Development (No Release)
+
+```
+┌──────────────────────────────────────────┐
+│ 1. Make changes                          │
+│    git commit -m "feat: new feature"     │
+│    git push origin main                  │
+└────────────────┬─────────────────────────┘
+                 │
+                 ▼
+┌──────────────────────────────────────────┐
+│ 2. CI runs                               │
+│    • Tests pass ✅                       │
+│    • Builds succeed ✅                   │
+│    • NO release created ❌               │
+└──────────────────────────────────────────┘
+
+Developer continues working...
+```
+
+### When Ready to Release
+
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│ 1. Developer makes changes locally                          │
-│    • Write code                                              │
-│    • Test: just test                                         │
-│    • Build: just build                                       │
-└────────────────────────┬────────────────────────────────────┘
-                         │
-                         ▼
-┌─────────────────────────────────────────────────────────────┐
-│ 2. Commit with version control                              │
-│    git commit -m "feat: new feature #minor"                 │
-└────────────────────────┬────────────────────────────────────┘
-                         │
-                         ▼
-┌─────────────────────────────────────────────────────────────┐
-│ 3. Push to main (or merge PR)                               │
+│ 1. Decide to release                                        │
+│    git commit -m "release: ready [release] #minor"          │
+│    OR use GitHub Actions UI                                  │
 │    git push origin main                                      │
 └────────────────────────┬────────────────────────────────────┘
                          │
                          ▼
 ┌─────────────────────────────────────────────────────────────┐
-│ 4. AUTO-VERSION workflow (30 sec)                           │
+│ 2. AUTO-VERSION workflow (30 sec)                           │
 │    • Creates tag: v0.2.0                                     │
 │    • Updates VERSION: 0.2.0                                  │
 │    • Commits VERSION [skip ci]                              │
@@ -405,7 +456,7 @@ nix build github:krezh/kauth#kauth-server
                          │
                          ▼
 ┌─────────────────────────────────────────────────────────────┐
-│ 5. BUILD workflow (2-3 min)                                 │
+│ 3. BUILD workflow (2-3 min)                                 │
 │    • Runs tests                                              │
 │    • Builds Docker image                                     │
 │    • Tags: v0.2.0, 0.2.0, latest                            │
@@ -414,7 +465,7 @@ nix build github:krezh/kauth#kauth-server
                          │
                          ▼
 ┌─────────────────────────────────────────────────────────────┐
-│ 6. RELEASE workflow (1 min)                                 │
+│ 4. RELEASE workflow (1 min)                                 │
 │    • Generates changelog                                     │
 │    • Packages Helm chart v0.2.0                             │
 │    • Pushes Helm to GHCR                                     │
@@ -423,16 +474,15 @@ nix build github:krezh/kauth#kauth-server
                          │
                          ▼
 ┌─────────────────────────────────────────────────────────────┐
-│ 7. Use the release!                                         │
+│ 5. Use the release!                                         │
 │    • docker pull ghcr.io/krezh/kauth-server:v0.2.0          │
 │    • helm install ... --version 0.2.0                        │
 │    • nix build github:krezh/kauth/v0.2.0                    │
 └─────────────────────────────────────────────────────────────┘
 ```
 
-**Total time from commit to release: ~5 minutes**
-
-**Zero manual steps required!** 🎉
+**Release only when YOU trigger it!**
+**Total time from trigger to release: ~5 minutes** 🎉
 
 ---
 

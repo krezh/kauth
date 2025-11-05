@@ -9,6 +9,17 @@ on:
       - 'LICENSE'
       - 'justfile'
       - 'VERSION'
+  workflow_dispatch:
+    inputs:
+      bump_type:
+        description: 'Version bump type'
+        required: true
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+        default: 'patch'
 
 permissions:
   contents: write
@@ -17,8 +28,11 @@ permissions:
 jobs:
   version:
     runs-on: ubuntu-latest
-    # Skip if commit message contains [skip ci] or [skip version]
-    if: "!contains(github.event.head_commit.message, '[skip ci]') && !contains(github.event.head_commit.message, '[skip version]')"
+    # Only run if commit message contains [release] or if manually triggered
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      (contains(github.event.head_commit.message, '[release]') &&
+       !contains(github.event.head_commit.message, '[skip ci]'))
     steps:
       - name: Checkout
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
@@ -52,15 +66,21 @@ jobs:
             CURRENT_VERSION=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "0.1.0")
           fi
 
-          # Parse commit message for bump type
-          COMMIT_MSG="${{ github.event.head_commit.message }}"
-
-          if echo "$COMMIT_MSG" | grep -q "#major\|BREAKING CHANGE"; then
-            BUMP="major"
-          elif echo "$COMMIT_MSG" | grep -q "#minor\|^feat"; then
-            BUMP="minor"
+          # Determine bump type
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            # Manual trigger - use input
+            BUMP="${{ inputs.bump_type }}"
           else
-            BUMP="patch"
+            # Auto trigger - parse commit message
+            COMMIT_MSG="${{ github.event.head_commit.message }}"
+
+            if echo "$COMMIT_MSG" | grep -q "#major\|BREAKING CHANGE"; then
+              BUMP="major"
+            elif echo "$COMMIT_MSG" | grep -q "#minor\|^feat"; then
+              BUMP="minor"
+            else
+              BUMP="patch"
+            fi
           fi
 
           echo "current=$CURRENT_VERSION" >> $GITHUB_OUTPUT
