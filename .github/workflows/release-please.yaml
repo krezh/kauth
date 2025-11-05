@@ -130,7 +130,7 @@ jobs:
           update_dependencies: true
 
       - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@9c1a2c4cab0b4a834bb7abcb2e39af88fc93f2cb # v6
+        uses: goreleaser/goreleaser-action@e435ccd777264be153ace6237001ef4d979d3a7a # v6
         with:
           distribution: goreleaser
           version: latest
