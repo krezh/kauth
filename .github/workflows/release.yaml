@@ -24,6 +24,7 @@ jobs:
           # Get previous tag
           PREV_TAG=$(git tag --sort=-version:refname | grep -E '^v[0-9]' | head -n 2 | tail -n 1)
           CURRENT_TAG=${GITHUB_REF#refs/tags/}
+          VERSION=${CURRENT_TAG#v}
 
           echo "## Changes since ${PREV_TAG}" > changelog.md
           echo "" >> changelog.md
@@ -37,7 +38,8 @@ jobs:
           echo "" >> changelog.md
           echo '```bash' >> changelog.md
           echo "docker pull ghcr.io/${{ github.repository }}-server:${CURRENT_TAG}" >> changelog.md
-          echo "docker pull ghcr.io/${{ github.repository }}-server:${CURRENT_TAG#v}" >> changelog.md
+          echo "docker pull ghcr.io/${{ github.repository }}-server:${VERSION}" >> changelog.md
+          echo "docker pull ghcr.io/${{ github.repository }}-server:latest" >> changelog.md
           echo '```' >> changelog.md
 
           cat changelog.md
@@ -54,29 +56,42 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Package Helm Chart
+      - name: Get version
+        id: version
         run: |
           CURRENT_TAG=${GITHUB_REF#refs/tags/}
+          VERSION=${CURRENT_TAG#v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "tag=$CURRENT_TAG" >> $GITHUB_OUTPUT
 
-          helm package helm \
-            --version ${CURRENT_TAG#v} \
-            --app-version ${CURRENT_TAG#v}
+      - name: Update Helm Chart version
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          # Update Chart.yaml with correct version
+          sed -i "s/^version:.*/version: $VERSION/" helm/Chart.yaml
+          sed -i "s/^appVersion:.*/appVersion: \"$VERSION\"/" helm/Chart.yaml
+
+      - name: Package Helm Chart
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+          helm package helm
 
       - name: Push Helm Chart to GHCR
         run: |
-          CURRENT_TAG=${GITHUB_REF#refs/tags/}
-          helm push kauth-server-${CURRENT_TAG#v}.tgz oci://ghcr.io/${{ github.repository_owner }}/charts
-          echo "Helm chart pushed to oci://ghcr.io/${{ github.repository_owner }}/charts/kauth-server:${CURRENT_TAG#v}"
+          VERSION="${{ steps.version.outputs.version }}"
+          helm push kauth-server-${VERSION}.tgz oci://ghcr.io/${{ github.repository_owner }}/charts
+          echo "Helm chart pushed to oci://ghcr.io/${{ github.repository_owner }}/charts/kauth-server:${VERSION}"
 
       - name: Update changelog with Helm chart info
         run: |
-          CURRENT_TAG=${GITHUB_REF#refs/tags/}
+          VERSION="${{ steps.version.outputs.version }}"
+          TAG="${{ steps.version.outputs.tag }}"
 
           echo "" >> changelog.md
           echo "## Helm Chart" >> changelog.md
           echo "" >> changelog.md
           echo '```bash' >> changelog.md
-          echo "helm install kauth-server oci://ghcr.io/${{ github.repository_owner }}/charts/kauth-server --version ${CURRENT_TAG#v}" >> changelog.md
+          echo "helm install kauth-server oci://ghcr.io/${{ github.repository_owner }}/charts/kauth-server --version ${VERSION}" >> changelog.md
           echo '```' >> changelog.md
 
       - name: Create GitHub Release

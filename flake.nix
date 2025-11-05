@@ -22,17 +22,19 @@
           inherit system;
           overlays = [ gomod2nix.overlays.default ];
         };
-      # Extract version from git tag or use shortRev
-      # This will give us proper semver like "v1.2.3" from tags
-      version =
-        if (self ? rev) then
-          # When built from a git repo, try to extract version from the last tag
-          self.shortRev
-        else
-          "dirty";
+      # Read version from VERSION file, fallback to git info
+      versionFile = builtins.readFile ./VERSION;
+      version = nixpkgs.lib.strings.removeSuffix "\n" versionFile;
 
       # Git commit for build info
       gitCommit = self.rev or "unknown";
+
+      # Detailed version string with git info when available
+      fullVersion =
+        if (self ? rev) then
+          "${version}-${self.shortRev}"
+        else
+          "${version}-dirty";
     in
     {
       packages = forAllSystems (

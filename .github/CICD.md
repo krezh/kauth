@@ -6,9 +6,28 @@ This repository uses fully automated CI/CD pipelines for versioning, building, a
 
 The CI/CD system consists of three main workflows:
 
-1. **Auto Version** (`auto-version.yaml`) - Automatically creates version tags
-2. **Build and Push** (`build.yaml`) - Builds and pushes Docker images
+1. **Auto Version** (`auto-version.yaml`) - Automatically creates version tags and updates VERSION file
+2. **Build and Push** (`build.yaml`) - Builds and pushes Docker images with version info
 3. **Release** (`release.yaml`) - Creates GitHub releases and publishes Helm charts
+4. **Update Flake** (`update-flake.yaml`) - Keeps Nix dependencies in sync
+
+## Version Management
+
+### VERSION File
+
+The repository uses a `VERSION` file as the single source of truth for semantic versioning:
+
+- **Location**: `/VERSION` (root of repository)
+- **Format**: Plain text, semantic version without 'v' prefix (e.g., `1.2.3`)
+- **Updated**: Automatically by CI/CD after creating a new git tag
+- **Used by**: Nix flake, Docker builds, Helm charts
+
+Check current version:
+```bash
+just version
+# or
+cat VERSION
+```
 
 ## Automated Versioning
 
@@ -17,9 +36,11 @@ The CI/CD system consists of three main workflows:
 When you push to the `main` branch:
 
 1. The **Auto Version** workflow automatically analyzes your commits
-2. It determines the next version number based on conventional commits
+2. It determines the next version number based on commit message markers
 3. It creates and pushes a new git tag (e.g., `v1.2.3`)
-4. The tag triggers the **Build** and **Release** workflows
+4. It updates the `VERSION` file and commits it back to `main`
+5. The tag triggers the **Build** and **Release** workflows
+6. All artifacts (Docker, Helm, Flake) use the same semantic version
 
 ### Version Bump Rules
 
@@ -96,10 +117,11 @@ The **Release** workflow (`release.yaml`) runs when a version tag is pushed.
 
 ## Flake Versioning
 
-The Nix flake (`flake.nix`) now uses proper versioning:
+The Nix flake (`flake.nix`) reads version from the VERSION file:
 
-- **During development**: Uses git commit SHA (short)
-- **From tags**: Will use the tag name when available
+- **Source**: Reads from `/VERSION` file via `builtins.readFile`
+- **Development builds**: Appends `-<shortRev>` suffix (e.g., `1.2.3-abc1234`)
+- **Dirty builds**: Appends `-dirty` suffix when working directory has changes
 - **Version info**: Injected into binaries via `-ldflags`
 
 Build the flake:
@@ -108,9 +130,19 @@ Build the flake:
 nix build .#kauth
 nix build .#kauth-server
 
-# Build from specific tag (future feature)
+# Build from GitHub (uses VERSION from that ref)
+nix build github:krezh/kauth#kauth
 nix build github:krezh/kauth/v1.2.3#kauth
+
+# Check version in built binary
+./result/bin/kauth-server --version
 ```
+
+The flake will always use the VERSION file content, ensuring consistency across:
+- Local development builds
+- CI/CD builds
+- GitHub Flake registry builds
+- Nix binary cache
 
 ## Manual Releases (Legacy)
 

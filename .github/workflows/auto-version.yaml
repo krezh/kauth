@@ -8,6 +8,7 @@ on:
       - '**.md'
       - 'LICENSE'
       - 'justfile'
+      - 'VERSION'
 
 permissions:
   contents: write
@@ -18,9 +19,6 @@ jobs:
     runs-on: ubuntu-latest
     # Skip if commit message contains [skip ci] or [skip version]
     if: "!contains(github.event.head_commit.message, '[skip ci]') && !contains(github.event.head_commit.message, '[skip version]')"
-    outputs:
-      new_tag: ${{ steps.tag.outputs.new_tag }}
-      changelog: ${{ steps.tag.outputs.changelog }}
     steps:
       - name: Checkout
         uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
@@ -43,6 +41,31 @@ jobs:
             echo "skip=false" >> $GITHUB_OUTPUT
           fi
 
+      - name: Determine version bump
+        if: steps.check_tag.outputs.skip != 'true'
+        id: bump
+        run: |
+          # Get current version from VERSION file or last tag
+          if [ -f VERSION ]; then
+            CURRENT_VERSION=$(cat VERSION)
+          else
+            CURRENT_VERSION=$(git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo "0.1.0")
+          fi
+
+          # Parse commit message for bump type
+          COMMIT_MSG="${{ github.event.head_commit.message }}"
+
+          if echo "$COMMIT_MSG" | grep -q "#major\|BREAKING CHANGE"; then
+            BUMP="major"
+          elif echo "$COMMIT_MSG" | grep -q "#minor\|^feat"; then
+            BUMP="minor"
+          else
+            BUMP="patch"
+          fi
+
+          echo "current=$CURRENT_VERSION" >> $GITHUB_OUTPUT
+          echo "bump=$BUMP" >> $GITHUB_OUTPUT
+
       - name: Bump version and push tag
         if: steps.check_tag.outputs.skip != 'true'
         id: tag
@@ -50,7 +73,19 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           WITH_V: true
-          DEFAULT_BUMP: patch
+          DEFAULT_BUMP: ${{ steps.bump.outputs.bump }}
           INITIAL_VERSION: 0.1.0
           RELEASE_BRANCHES: main
           PRERELEASE: false
+          DRY_RUN: false
+
+      - name: Update VERSION file
+        if: steps.check_tag.outputs.skip != 'true' && steps.tag.outputs.new_tag != ''
+        run: |
+          NEW_VERSION="${{ steps.tag.outputs.new_tag }}"
+          # Remove 'v' prefix for VERSION file
+          echo "${NEW_VERSION#v}" > VERSION
+
+          git add VERSION
+          git commit -m "chore: update VERSION to ${NEW_VERSION#v} [skip ci]" || true
+          git push origin main || true

@@ -1,0 +1,20 @@
+# Ensure VERSION file always has LF line endings
+VERSION text eol=lf
+
+# Standard file handling
+*.go text eol=lf
+*.md text eol=lf
+*.yaml text eol=lf
+*.yml text eol=lf
+*.nix text eol=lf
+*.sh text eol=lf
+*.toml text eol=lf
+
+# Binary files
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.woff binary
+*.woff2 binary

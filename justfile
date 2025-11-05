@@ -4,6 +4,11 @@
 default:
     @just --list
 
+# Show current version
+version:
+    @echo "Current version: $(cat VERSION)"
+    @echo "Latest tag: $(git describe --tags --abbrev=0 2>/dev/null || echo 'none')"
+
 # Run tests
 test:
     go test ./...
