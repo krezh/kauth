@@ -137,6 +137,8 @@ jobs:
           args: release --clean
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          GITHUB_REPOSITORY_OWNER: ${{ github.repository_owner }}
 
       - name: Update Release with Helm Chart Info
         uses: softprops/action-gh-release@e7a8f85e1c67a31e6ed99a94b41bd0b71bbee6b8 # v2
