@@ -3,6 +3,8 @@
     ".": {
       "release-type": "go",
       "package-name": "kauth",
+      "include-component-in-tag": false,
+      "exclude-paths": [".github/workflows"],
       "changelog-sections": [
         { "type": "feat", "section": "Features" },
         { "type": "fix", "section": "Bug Fixes" },
@@ -16,13 +18,6 @@
         { "type": "test", "section": "Tests" },
         { "type": "build", "section": "Build System" },
         { "type": "ci", "section": "Continuous Integration" }
-      ],
-      "extra-files": [
-        {
-          "type": "plain",
-          "path": "flake.nix",
-          "glob": false
-        }
       ]
     }
   }
