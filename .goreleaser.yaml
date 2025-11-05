@@ -101,9 +101,6 @@ changelog:
       order: 999
 
 release:
-  github:
-    owner: "{{ .Env.GITHUB_REPOSITORY_OWNER }}"
-    name: "{{ .ProjectName }}"
   prerelease: auto
   mode: append
   footer: |
