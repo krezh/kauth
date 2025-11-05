@@ -115,7 +115,7 @@ jobs:
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
-          password: ${{ steps.app-token.outputs.token }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Push Helm Chart to GHCR
         uses: appany/helm-oci-chart-releaser@2e9e13a0a85e99e0c1d67bf115f77bcd04dc8040 # v0.4.2
@@ -126,7 +126,7 @@ jobs:
           path: helm
           registry: ghcr.io
           registry_username: ${{ github.actor }}
-          registry_password: ${{ steps.app-token.outputs.token }}
+          registry_password: ${{ secrets.GITHUB_TOKEN }}
           update_dependencies: true
 
       - name: Run GoReleaser
