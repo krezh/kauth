@@ -26,11 +26,20 @@ jobs:
           CURRENT_TAG=${GITHUB_REF#refs/tags/}
           VERSION=${CURRENT_TAG#v}
 
-          echo "## Changes since ${PREV_TAG}" > changelog.md
-          echo "" >> changelog.md
-
-          # Generate changelog from commits
-          git log ${PREV_TAG}..${CURRENT_TAG} --pretty=format:"- %s (%an)" --no-merges >> changelog.md
+          # Generate changelog (handle first release case)
+          if [ -n "$PREV_TAG" ]; then
+            echo "## Changes since ${PREV_TAG}" > changelog.md
+            echo "" >> changelog.md
+            git log ${PREV_TAG}..${CURRENT_TAG} --pretty=format:"- %s (%an)" --no-merges >> changelog.md
+          else
+            echo "## Initial Release" > changelog.md
+            echo "" >> changelog.md
+            echo "First release of kauth!" >> changelog.md
+            echo "" >> changelog.md
+            echo "## All Changes" >> changelog.md
+            echo "" >> changelog.md
+            git log ${CURRENT_TAG} --pretty=format:"- %s (%an)" --no-merges >> changelog.md
+          fi
 
           echo "" >> changelog.md
           echo "" >> changelog.md

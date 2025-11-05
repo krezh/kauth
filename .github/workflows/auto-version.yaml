@@ -76,7 +76,7 @@ jobs:
 
             if echo "$COMMIT_MSG" | grep -q "#major\|BREAKING CHANGE"; then
               BUMP="major"
-            elif echo "$COMMIT_MSG" | grep -q "#minor\|^feat"; then
+            elif echo "$COMMIT_MSG" | grep -q "#minor"; then
               BUMP="minor"
             else
               BUMP="patch"
@@ -94,7 +94,7 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           WITH_V: true
           DEFAULT_BUMP: ${{ steps.bump.outputs.bump }}
-          INITIAL_VERSION: 0.1.0
+          INITIAL_VERSION: 0.1.29
           RELEASE_BRANCHES: main
           PRERELEASE: false
           DRY_RUN: false
@@ -107,5 +107,16 @@ jobs:
           echo "${NEW_VERSION#v}" > VERSION
 
           git add VERSION
-          git commit -m "chore: update VERSION to ${NEW_VERSION#v} [skip ci]" || true
-          git push origin main || true
+          if git diff --cached --quiet; then
+            echo "No changes to commit"
+          else
+            git commit -m "chore: sync VERSION file with latest tag ${NEW_VERSION} [skip ci]"
+
+            # Pull with rebase to avoid conflicts, then push
+            git pull --rebase origin main || {
+              echo "::warning::Failed to pull latest changes, attempting force push"
+              git push origin main
+              exit 0
+            }
+            git push origin main
+          fi

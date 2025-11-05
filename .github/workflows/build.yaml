@@ -56,11 +56,24 @@ jobs:
       - name: Get version info
         id: version
         run: |
-          # Get version from git tag or generate from commit
-          if git describe --tags --exact-match 2>/dev/null; then
-            VERSION=$(git describe --tags --exact-match)
+          # Get version from VERSION file first (single source of truth)
+          if [ -f VERSION ]; then
+            BASE_VERSION=$(cat VERSION)
+            # Check if we're on an exact tag
+            if git describe --tags --exact-match 2>/dev/null; then
+              VERSION=$(git describe --tags --exact-match)
+            else
+              # Development build: append git info
+              SHORT_SHA=$(git rev-parse --short HEAD)
+              VERSION="${BASE_VERSION}-${SHORT_SHA}"
+            fi
           else
-            VERSION=$(git describe --tags --always --dirty)
+            # Fallback: use git describe
+            if git describe --tags --exact-match 2>/dev/null; then
+              VERSION=$(git describe --tags --exact-match)
+            else
+              VERSION=$(git describe --tags --always --dirty)
+            fi
           fi
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "commit=${GITHUB_SHA}" >> $GITHUB_OUTPUT
