@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.32](https://github.com/krezh/kauth/compare/v0.1.31...v0.1.32) (2025-11-05)
+
+
+### Miscellaneous Chores
+
+* update flake to version 0.1.31 [skip ci] ([0bde32d](https://github.com/krezh/kauth/commit/0bde32d1812a2a33fad9e3775291bd3c9766b591))
+
 ## [0.1.31](https://github.com/krezh/kauth/compare/v0.1.30...v0.1.31) (2025-11-05)
 
 
