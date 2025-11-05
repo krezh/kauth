@@ -22,7 +22,8 @@
           inherit system;
           overlays = [ gomod2nix.overlays.default ];
         };
-      version = "0.1.31";
+      releaseManifest = builtins.fromJSON (builtins.readFile ./.release-please-manifest.json);
+      version = releaseManifest.".";
     in
     {
       packages = forAllSystems (
