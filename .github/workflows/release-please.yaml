@@ -59,11 +59,6 @@ jobs:
       - name: Install Nix
         uses: cachix/install-nix-action@fd24c48048070c1be9acd18c9d369a83f0fe94d7 # v31
 
-      - name: Update flake version
-        run: |
-          VERSION="${{ needs.release-please.outputs.version }}"
-          sed -i "s/version = \".*\";/version = \"$VERSION\";/" flake.nix
-
       - name: Update gomod2nix.toml
         run: |
           nix develop --command gomod2nix
