@@ -48,7 +48,7 @@ jobs:
           nix build .#kauth-server
 
       - name: Commit changes
-        uses: stefanzweifel/git-auto-commit-action@8621497c8c39c72f3e2a999a26b4ca1b5058a842 # v5
+        uses: stefanzweifel/git-auto-commit-action@28e16e81777b558cc906c8750092100bbb34c5e3 # v7
         with:
           commit_message: "chore: update flake dependencies [skip ci]"
           file_pattern: "gomod2nix.toml flake.lock"
