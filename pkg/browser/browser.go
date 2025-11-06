@@ -15,9 +15,6 @@ func Open(url string) error {
 	case "darwin":
 		cmd = "open"
 		args = []string{url}
-	case "windows":
-		cmd = "cmd"
-		args = []string{"/c", "start", "", url}
 	case "linux":
 		// Try multiple commands as different distros have different defaults
 		for _, c := range []string{"xdg-open", "x-www-browser", "www-browser"} {
