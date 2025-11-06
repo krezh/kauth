@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.35](https://github.com/krezh/kauth/compare/v0.1.34...v0.1.35) (2025-11-06)
+
+
+### Bug Fixes
+
+* Update .goreleaser.yaml to exclude darwin and windows ([93e5f88](https://github.com/krezh/kauth/commit/93e5f889dd68e9d9e0e19292080c4bc928c74e16))
+
 ## [0.1.34](https://github.com/krezh/kauth/compare/v0.1.33...v0.1.34) (2025-11-06)
 
 
