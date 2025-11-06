@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.34](https://github.com/krezh/kauth/compare/v0.1.33...v0.1.34) (2025-11-06)
+
+
+### Bug Fixes
+
+* Remove Windows URL opening command ([4bca85b](https://github.com/krezh/kauth/commit/4bca85b2d2914dc25971757f0bb49f1295e98409))
+
 ## [0.1.33](https://github.com/krezh/kauth/compare/v0.1.32...v0.1.33) (2025-11-06)
 
 
