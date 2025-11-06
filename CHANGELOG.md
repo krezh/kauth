@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.36](https://github.com/krezh/kauth/compare/v0.1.35...v0.1.36) (2025-11-06)
+
+
+### Bug Fixes
+
+* Add darwin to supported OS in goreleaser config ([461b6a2](https://github.com/krezh/kauth/commit/461b6a21ec09b4657fc4a1bea6254e651fa598dc))
+
 ## [0.1.35](https://github.com/krezh/kauth/compare/v0.1.34...v0.1.35) (2025-11-06)
 
 
