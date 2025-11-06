@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.33](https://github.com/krezh/kauth/compare/v0.1.32...v0.1.33) (2025-11-06)
+
+
+### Bug Fixes
+
+* **docker:** Use pre-built binary from GoReleaser instead of building from source ([#29](https://github.com/krezh/kauth/issues/29)) ([9769757](https://github.com/krezh/kauth/commit/97697571ef2eee18fd3df7dccc5c9b278aad8e00))
+
 ## [0.1.32](https://github.com/krezh/kauth/compare/v0.1.31...v0.1.32) (2025-11-05)
 
 
