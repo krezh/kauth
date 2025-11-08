@@ -46,5 +46,6 @@ jobs:
 
       - name: Verify flake
         run: |
-          nix flake check .#kauth
-          nix flake check .#kauth-server
+          nix flake check
+          nix build .#kauth
+          nix build .#kauth-server
