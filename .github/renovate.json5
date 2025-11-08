@@ -1,6 +1,30 @@
 {
-  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
-  "extends": [
-    "local>krezh/renovate-config"
-  ]
+  $schema: "https://docs.renovatebot.com/renovate-schema.json",
+  nix: {
+    enabled: true,
+  },
+  postUpdateOptions: ["gomodTidy"],
+  lockFileMaintenance: {
+    enabled: true,
+    schedule: ["after 1am and before 2am"],
+    automerge: true,
+    automergeType: "pr",
+    ignoreTests: false,
+  },
+  packageRules: [
+    {
+      description: "Update gomod2nix.toml when go.mod changes",
+      matchManagers: ["gomod"],
+      postUpgradeTasks: {
+        commands: [
+          "nix run github:nix-community/gomod2nix -- --dir {{{packageFileDir}}}",
+        ],
+        fileFilters: ["**/gomod2nix.toml", "**/go.sum"],
+        executionMode: "update",
+      },
+      automerge: true,
+      automergeType: "pr",
+      ignoreTests: false,
+    },
+  ],
 }
