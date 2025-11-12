@@ -17,7 +17,7 @@
       matchManagers: ["gomod"],
       postUpgradeTasks: {
         commands: [
-          "nix run github:nix-community/gomod2nix -- --dir {{{packageFileDir}}}",
+          "nix run github:nix-community/gomod2nix",
         ],
         fileFilters: ["**/gomod2nix.toml", "**/go.sum"],
         executionMode: "update",
