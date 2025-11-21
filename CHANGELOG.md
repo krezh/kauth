@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.1.39](https://github.com/krezh/kauth/compare/v0.1.38...v0.1.39) (2025-11-21)
+
+
+### Bug Fixes
+
+* **deps:** update module github.com/coreos/go-oidc/v3 ( v3.16.0 → v3.17.0 ) ([#51](https://github.com/krezh/kauth/issues/51)) ([88118bf](https://github.com/krezh/kauth/commit/88118bfc2f34f70b8e8fea78a433b64b60ac350f))
+
+
+### Miscellaneous Chores
+
+* **nix:** lock file maintenance ([#44](https://github.com/krezh/kauth/issues/44)) ([eac1e49](https://github.com/krezh/kauth/commit/eac1e49e2d9527773bbb68b8731abf88d9044a33))
+* **nix:** lock file maintenance ([#46](https://github.com/krezh/kauth/issues/46)) ([fda0584](https://github.com/krezh/kauth/commit/fda0584ebaac8c7e53a1439325b6a95a541bd7a2))
+* **nix:** lock file maintenance ([#48](https://github.com/krezh/kauth/issues/48)) ([836319b](https://github.com/krezh/kauth/commit/836319b302942b5fbaeddf4c2d95b8fdaeda217c))
+* **nix:** lock file maintenance ([#49](https://github.com/krezh/kauth/issues/49)) ([bd8398c](https://github.com/krezh/kauth/commit/bd8398c6d5924a62c85f4598707d98dae99f6275))
+
 ## [0.1.38](https://github.com/krezh/kauth/compare/v0.1.37...v0.1.38) (2025-11-13)
 
 
