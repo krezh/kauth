@@ -2,6 +2,6 @@ apiVersion: v2
 name: kauth-server
 description: A Helm chart for kauth OAuth2/OIDC authentication server
 type: application
-version: 0.1.39
-appVersion: 0.1.39
+version: 0.1.40
+appVersion: 0.1.40
 home: https://github.com/krezh/kauth
