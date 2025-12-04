@@ -5,7 +5,7 @@ go 1.25.1
 require (
 	github.com/coreos/go-oidc/v3 v3.17.0
 	github.com/prometheus/client_golang v1.23.2
-	github.com/spf13/cobra v1.10.1
+	github.com/spf13/cobra v1.10.2
 	golang.org/x/oauth2 v0.33.0
 	golang.org/x/time v0.14.0
 	gopkg.in/yaml.v3 v3.0.1
