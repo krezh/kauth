@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.1.40](https://github.com/krezh/kauth/compare/v0.1.39...v0.1.40) (2025-12-04)
+
+
+### Bug Fixes
+
+* **deps:** update module github.com/spf13/cobra ( v1.10.1 → v1.10.2 ) ([#61](https://github.com/krezh/kauth/issues/61)) ([92838b1](https://github.com/krezh/kauth/commit/92838b14ec15b40e1cfaee482522d1f56e3ff777))
+
+
+### Miscellaneous Chores
+
+* **nix:** lock file maintenance ([#53](https://github.com/krezh/kauth/issues/53)) ([f3c3890](https://github.com/krezh/kauth/commit/f3c38905cf8e63114b5699113f37a720dfead807))
+* **nix:** lock file maintenance ([#55](https://github.com/krezh/kauth/issues/55)) ([d2fa59d](https://github.com/krezh/kauth/commit/d2fa59dbfe55b821c67d0fd092f7f4ee332e6576))
+* **nix:** lock file maintenance ([#56](https://github.com/krezh/kauth/issues/56)) ([04f4c60](https://github.com/krezh/kauth/commit/04f4c605c28f5d1592bde97514c917bcf9386f30))
+* **nix:** lock file maintenance ([#57](https://github.com/krezh/kauth/issues/57)) ([61f11b4](https://github.com/krezh/kauth/commit/61f11b458ab6d428a6d5575a691385f086c08ad5))
+* **nix:** lock file maintenance ([#59](https://github.com/krezh/kauth/issues/59)) ([f7dfc2f](https://github.com/krezh/kauth/commit/f7dfc2fd52f0aaf8ed7f9ab6aa062cb6fea3f3b5))
+* **nix:** lock file maintenance ([#62](https://github.com/krezh/kauth/issues/62)) ([c9333a8](https://github.com/krezh/kauth/commit/c9333a8499cd50ff145adf7665074f5da6c973f1))
+
 ## [0.1.39](https://github.com/krezh/kauth/compare/v0.1.38...v0.1.39) (2025-11-21)
 
 
