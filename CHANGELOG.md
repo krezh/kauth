@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.41](https://github.com/krezh/kauth/compare/v0.1.40...v0.1.41) (2025-12-08)
+
+
+### Bug Fixes
+
+* **deps:** update module golang.org/x/oauth2 ( v0.33.0 → v0.34.0 ) ([#65](https://github.com/krezh/kauth/issues/65)) ([36c522b](https://github.com/krezh/kauth/commit/36c522baea676137246db27b36443401d94cabd9))
+
+
+### Miscellaneous Chores
+
+* **nix:** lock file maintenance ([#63](https://github.com/krezh/kauth/issues/63)) ([2001321](https://github.com/krezh/kauth/commit/2001321f644c1600b4098c82c1ecec58619396b2))
+
 ## [0.1.40](https://github.com/krezh/kauth/compare/v0.1.39...v0.1.40) (2025-12-04)
 
 
