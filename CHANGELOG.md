@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.42](https://github.com/krezh/kauth/compare/v0.1.41...v0.1.42) (2025-12-10)
+
+
+### Bug Fixes
+
+* **deps:** update module k8s.io/client-go ( v0.34.2 → v0.34.3 ) ([#68](https://github.com/krezh/kauth/issues/68)) ([434aee5](https://github.com/krezh/kauth/commit/434aee565f1f01d7a2193e0db5b681303bb283e6))
+
+
+### Miscellaneous Chores
+
+* **nix:** lock file maintenance ([#66](https://github.com/krezh/kauth/issues/66)) ([676ba04](https://github.com/krezh/kauth/commit/676ba04739391aa2d0a6123c4b415c6025f29871))
+
 ## [0.1.41](https://github.com/krezh/kauth/compare/v0.1.40...v0.1.41) (2025-12-08)
 
 
