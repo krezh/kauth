@@ -95,11 +95,11 @@ schema = 3
     version = "v3.0.1"
     hash = "sha256-FqL9TKYJ0XkNwJFnq9j0VvJ5ZUU1RvH/52h/f5bkYAU="
   [mod."k8s.io/apimachinery"]
-    version = "v0.34.2"
+    version = "v0.34.3"
     hash = "sha256-y6GVugdaX81lHwVWgDgFoIi/v6K9A3YC2kKlGUritVU="
   [mod."k8s.io/client-go"]
-    version = "v0.34.2"
-    hash = "sha256-ELhaXsMrieNn0ms84n5kL9QlNDXQ2u8xpbny+bTvdZg="
+    version = "v0.34.3"
+    hash = "sha256-i1ym9HwBQOCdNdTYMoBPRNsI56RCMfi8oG0mPuf6gDI="
   [mod."k8s.io/klog/v2"]
     version = "v2.130.1"
     hash = "sha256-n5vls1o1a0V0KYv+3SULq4q3R2Is15K8iDHhFlsSH4o="
