@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.1.43](https://github.com/krezh/kauth/compare/v0.1.42...v0.1.43) (2025-12-18)
+
+
+### Bug Fixes
+
+* **deps:** update kubernetes packages ( v0.34.3 → v0.35.0 ) ([#73](https://github.com/krezh/kauth/issues/73)) ([d65ffe5](https://github.com/krezh/kauth/commit/d65ffe5bb14f9f92e659156de55ba0f8f196bdf3))
+
+
+### Miscellaneous Chores
+
+* **nix:** lock file maintenance ([#70](https://github.com/krezh/kauth/issues/70)) ([e3ded35](https://github.com/krezh/kauth/commit/e3ded35c85d50d734081b1a098c15ae8e613d363))
+* **nix:** lock file maintenance ([#72](https://github.com/krezh/kauth/issues/72)) ([4cb3ff3](https://github.com/krezh/kauth/commit/4cb3ff3e288ade6a4267ebb99d8b8ad5a54a55d2))
+
 ## [0.1.42](https://github.com/krezh/kauth/compare/v0.1.41...v0.1.42) (2025-12-10)
 
 
