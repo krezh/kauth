@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.1.45](https://github.com/krezh/kauth/compare/v0.1.44...v0.1.45) (2026-01-04)
+
+
+### Miscellaneous Chores
+
+* **nix:** lock file maintenance ([#79](https://github.com/krezh/kauth/issues/79)) ([4c33cfa](https://github.com/krezh/kauth/commit/4c33cfae9511dc5c58cc55a69d0dc6240af85699))
+* **nix:** lock file maintenance ([#81](https://github.com/krezh/kauth/issues/81)) ([6b66555](https://github.com/krezh/kauth/commit/6b6655507e0dd21576b3217feabd6b25f5d49de0))
+* **nix:** lock file maintenance ([#82](https://github.com/krezh/kauth/issues/82)) ([d0baed6](https://github.com/krezh/kauth/commit/d0baed631619362e188049cb47f3225ae411dd15))
+
 ## [0.1.44](https://github.com/krezh/kauth/compare/v0.1.43...v0.1.44) (2025-12-29)
 
 
