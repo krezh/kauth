@@ -65,7 +65,7 @@ changelog:
       - '^test:'
       - '^chore:'
       - '^ci:'
-      - '^chore(nix)'
+      - '^nix: lock file maintenance'
   groups:
     - title: Features
       regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
