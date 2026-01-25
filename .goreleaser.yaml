@@ -65,6 +65,7 @@ changelog:
       - '^test:'
       - '^chore:'
       - '^ci:'
+      - '^chore(nix)'
   groups:
     - title: Features
       regexp: '^.*?feat(\([[:word:]]+\))??!?:.+$'
