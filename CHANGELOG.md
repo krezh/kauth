@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.1.45](https://github.com/krezh/kauth/compare/v0.1.44...v0.1.45) (2026-01-25)
+
+
+### Miscellaneous Chores
+
+* **nix:** lock file maintenance ([#79](https://github.com/krezh/kauth/issues/79)) ([4c33cfa](https://github.com/krezh/kauth/commit/4c33cfae9511dc5c58cc55a69d0dc6240af85699))
+* **nix:** lock file maintenance ([#81](https://github.com/krezh/kauth/issues/81)) ([6b66555](https://github.com/krezh/kauth/commit/6b6655507e0dd21576b3217feabd6b25f5d49de0))
+* **nix:** lock file maintenance ([#82](https://github.com/krezh/kauth/issues/82)) ([d0baed6](https://github.com/krezh/kauth/commit/d0baed631619362e188049cb47f3225ae411dd15))
+* **nix:** lock file maintenance ([#83](https://github.com/krezh/kauth/issues/83)) ([3c89675](https://github.com/krezh/kauth/commit/3c8967555de617e4fc62bc72184263dcb68809bd))
+* **nix:** lock file maintenance ([#84](https://github.com/krezh/kauth/issues/84)) ([962b85a](https://github.com/krezh/kauth/commit/962b85a500e7c97dbc5d0bcc53ec380ff2fd7bbf))
+* **nix:** lock file maintenance ([#85](https://github.com/krezh/kauth/issues/85)) ([698298b](https://github.com/krezh/kauth/commit/698298b5d6b2d4bc1658020d312172c47525427b))
+* **nix:** lock file maintenance ([#86](https://github.com/krezh/kauth/issues/86)) ([03ddb4a](https://github.com/krezh/kauth/commit/03ddb4ae125943abb06691bc85ccc8099136453b))
+* **nix:** lock file maintenance ([#87](https://github.com/krezh/kauth/issues/87)) ([6e3aee2](https://github.com/krezh/kauth/commit/6e3aee2fc00beb2c78f301ab242028eb3a260b6e))
+* **nix:** lock file maintenance ([#88](https://github.com/krezh/kauth/issues/88)) ([5686e7f](https://github.com/krezh/kauth/commit/5686e7fa238294042cab40a3d4e0ed53f61ba933))
+* **nix:** lock file maintenance ([#89](https://github.com/krezh/kauth/issues/89)) ([6452dfe](https://github.com/krezh/kauth/commit/6452dfe0d592ef7b48a624a2e853a6a96721728e))
+* **nix:** lock file maintenance ([#90](https://github.com/krezh/kauth/issues/90)) ([ca1c8ae](https://github.com/krezh/kauth/commit/ca1c8ae63c3b2984b0d85b129703bb659e421ac8))
+
 ## [0.1.44](https://github.com/krezh/kauth/compare/v0.1.43...v0.1.44) (2025-12-29)
 
 
