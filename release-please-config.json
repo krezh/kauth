@@ -4,7 +4,7 @@
       "release-type": "go",
       "package-name": "kauth",
       "include-component-in-tag": false,
-      "exclude-paths": [".github/workflows"],
+      "exclude-paths": [".github/workflows", "flake.lock"],
       "extra-files": [
         {
           "type": "yaml",
