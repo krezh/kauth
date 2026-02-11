@@ -122,12 +122,12 @@ schema = 3
     hash = 'sha256-FqL9TKYJ0XkNwJFnq9j0VvJ5ZUU1RvH/52h/f5bkYAU='
 
   [mod.'k8s.io/apimachinery']
-    version = 'v0.35.0'
+    version = 'v0.35.1'
     hash = 'sha256-+dplbHUOfaCaD2E9IS4F3lnjSCr/a4LjTgdB9de92Pw='
 
   [mod.'k8s.io/client-go']
-    version = 'v0.35.0'
-    hash = 'sha256-s+o7ybLe83chueBIVvYRibI2HCk+QQoWTjfXqmzsjHs='
+    version = 'v0.35.1'
+    hash = 'sha256-QEQ7TLUviAXDbvp2s6tT3HZtXy7pLjj5qSDu89iC9ek='
 
   [mod.'k8s.io/klog/v2']
     version = 'v2.130.1'
