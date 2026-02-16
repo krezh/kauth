@@ -1,5 +1,39 @@
 # Changelog
 
+## [0.1.45](https://github.com/krezh/kauth/compare/v0.1.44...v0.1.45) (2026-02-15)
+
+
+### Bug Fixes
+
+* **deps:** update kubernetes packages ( v0.35.0 → v0.35.1 ) ([#105](https://github.com/krezh/kauth/issues/105)) ([fe167ba](https://github.com/krezh/kauth/commit/fe167baf4e52f549a6f2460e5982fefa62c95084))
+* **deps:** update module golang.org/x/oauth2 ( v0.34.0 → v0.35.0 ) ([#103](https://github.com/krezh/kauth/issues/103)) ([48eaa46](https://github.com/krezh/kauth/commit/48eaa46835d95a1b2cfe1d5b4cc06c5b4e41f744))
+
+
+### Miscellaneous Chores
+
+* **nix:** lock file maintenance ([#100](https://github.com/krezh/kauth/issues/100)) ([3ea17f4](https://github.com/krezh/kauth/commit/3ea17f43ba8121132391526f7bfa585d3f1a9407))
+* **nix:** lock file maintenance ([#101](https://github.com/krezh/kauth/issues/101)) ([979c9d9](https://github.com/krezh/kauth/commit/979c9d968fb1203d4ec6d60636f2023bc6b99742))
+* **nix:** lock file maintenance ([#102](https://github.com/krezh/kauth/issues/102)) ([3af419b](https://github.com/krezh/kauth/commit/3af419bb3cf4376875d559ce599596becb8ebf69))
+* **nix:** lock file maintenance ([#104](https://github.com/krezh/kauth/issues/104)) ([f6a11b2](https://github.com/krezh/kauth/commit/f6a11b216c983965dae1bd1f1ab94c0aafd3cc99))
+* **nix:** lock file maintenance ([#106](https://github.com/krezh/kauth/issues/106)) ([0eb2950](https://github.com/krezh/kauth/commit/0eb29504ecf57e9c5803f682c6289a7e24041a06))
+* **nix:** lock file maintenance ([#107](https://github.com/krezh/kauth/issues/107)) ([abc3bac](https://github.com/krezh/kauth/commit/abc3bac7a3667e81c2934c3c76928c7efdbb5870))
+* **nix:** lock file maintenance ([#79](https://github.com/krezh/kauth/issues/79)) ([4c33cfa](https://github.com/krezh/kauth/commit/4c33cfae9511dc5c58cc55a69d0dc6240af85699))
+* **nix:** lock file maintenance ([#81](https://github.com/krezh/kauth/issues/81)) ([6b66555](https://github.com/krezh/kauth/commit/6b6655507e0dd21576b3217feabd6b25f5d49de0))
+* **nix:** lock file maintenance ([#82](https://github.com/krezh/kauth/issues/82)) ([d0baed6](https://github.com/krezh/kauth/commit/d0baed631619362e188049cb47f3225ae411dd15))
+* **nix:** lock file maintenance ([#83](https://github.com/krezh/kauth/issues/83)) ([3c89675](https://github.com/krezh/kauth/commit/3c8967555de617e4fc62bc72184263dcb68809bd))
+* **nix:** lock file maintenance ([#84](https://github.com/krezh/kauth/issues/84)) ([962b85a](https://github.com/krezh/kauth/commit/962b85a500e7c97dbc5d0bcc53ec380ff2fd7bbf))
+* **nix:** lock file maintenance ([#85](https://github.com/krezh/kauth/issues/85)) ([698298b](https://github.com/krezh/kauth/commit/698298b5d6b2d4bc1658020d312172c47525427b))
+* **nix:** lock file maintenance ([#86](https://github.com/krezh/kauth/issues/86)) ([03ddb4a](https://github.com/krezh/kauth/commit/03ddb4ae125943abb06691bc85ccc8099136453b))
+* **nix:** lock file maintenance ([#87](https://github.com/krezh/kauth/issues/87)) ([6e3aee2](https://github.com/krezh/kauth/commit/6e3aee2fc00beb2c78f301ab242028eb3a260b6e))
+* **nix:** lock file maintenance ([#88](https://github.com/krezh/kauth/issues/88)) ([5686e7f](https://github.com/krezh/kauth/commit/5686e7fa238294042cab40a3d4e0ed53f61ba933))
+* **nix:** lock file maintenance ([#89](https://github.com/krezh/kauth/issues/89)) ([6452dfe](https://github.com/krezh/kauth/commit/6452dfe0d592ef7b48a624a2e853a6a96721728e))
+* **nix:** lock file maintenance ([#90](https://github.com/krezh/kauth/issues/90)) ([ca1c8ae](https://github.com/krezh/kauth/commit/ca1c8ae63c3b2984b0d85b129703bb659e421ac8))
+* **nix:** lock file maintenance ([#91](https://github.com/krezh/kauth/issues/91)) ([8892b9e](https://github.com/krezh/kauth/commit/8892b9e9fd102519761c99437695a9c07b89c6b0))
+* **nix:** lock file maintenance ([#96](https://github.com/krezh/kauth/issues/96)) ([5f725a8](https://github.com/krezh/kauth/commit/5f725a835895a8940da90e2b89fe87931a83260b))
+* **nix:** lock file maintenance ([#97](https://github.com/krezh/kauth/issues/97)) ([23fa829](https://github.com/krezh/kauth/commit/23fa829c488744ad412a2e73a15b16f7c7b5c6b5))
+* **nix:** lock file maintenance ([#98](https://github.com/krezh/kauth/issues/98)) ([9143789](https://github.com/krezh/kauth/commit/9143789c1c7c276b89a2ab61d8a42c58e78cd618))
+* **nix:** lock file maintenance ([#99](https://github.com/krezh/kauth/issues/99)) ([cb5ef9e](https://github.com/krezh/kauth/commit/cb5ef9e51f286c62e0f99b8b7bad8cf0065ca2ca))
+
 ## [0.1.44](https://github.com/krezh/kauth/compare/v0.1.43...v0.1.44) (2025-12-29)
 
 
