@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.1.46](https://github.com/krezh/kauth/compare/v0.1.45...v0.1.46) (2026-03-06)
+
+
+### Bug Fixes
+
+* **deps:** update kubernetes packages ( v0.35.1 → v0.35.2 ) ([#112](https://github.com/krezh/kauth/issues/112)) ([634e23d](https://github.com/krezh/kauth/commit/634e23d16d18cf38ae11577b2b3224d3ace62976))
+
+
+### Miscellaneous Chores
+
+* **nix:** lock file maintenance ([#108](https://github.com/krezh/kauth/issues/108)) ([100005b](https://github.com/krezh/kauth/commit/100005bbb56fa37b801ab66dae430d534fe96877))
+* **nix:** lock file maintenance ([#111](https://github.com/krezh/kauth/issues/111)) ([c8ea231](https://github.com/krezh/kauth/commit/c8ea231ded8284e63c82779157edfc2a211938b4))
+* **nix:** lock file maintenance ([#113](https://github.com/krezh/kauth/issues/113)) ([32ffda2](https://github.com/krezh/kauth/commit/32ffda22bcea490c572b8a68611692f574c7d90f))
+* **nix:** lock file maintenance ([#114](https://github.com/krezh/kauth/issues/114)) ([746f513](https://github.com/krezh/kauth/commit/746f51396c0bf91adf96677449d9a0b193505bea))
+* **nix:** lock file maintenance ([#116](https://github.com/krezh/kauth/issues/116)) ([9345f13](https://github.com/krezh/kauth/commit/9345f13dd0718a43275993da35c36db70b1302d4))
+* **nix:** lock file maintenance ([#119](https://github.com/krezh/kauth/issues/119)) ([bdd58a2](https://github.com/krezh/kauth/commit/bdd58a2dc242d5a3d7d3a0c6be828af69fcc8109))
+
 ## [0.1.45](https://github.com/krezh/kauth/compare/v0.1.44...v0.1.45) (2026-02-15)
 
 
