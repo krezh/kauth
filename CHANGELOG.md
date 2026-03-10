@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.1.47](https://github.com/krezh/kauth/compare/v0.1.46...v0.1.47) (2026-03-10)
+
+
+### Bug Fixes
+
+* **deps:** update module golang.org/x/oauth2 ( v0.35.0 → v0.36.0 ) ([#122](https://github.com/krezh/kauth/issues/122)) ([da881f6](https://github.com/krezh/kauth/commit/da881f6d930551df268192bf5829049d447685b8))
+* **deps:** update module golang.org/x/time ( v0.14.0 → v0.15.0 ) ([#123](https://github.com/krezh/kauth/issues/123)) ([7092537](https://github.com/krezh/kauth/commit/70925377a46a7b75535d30202c9937bdac0dfc6a))
+
+
+### Miscellaneous Chores
+
+* **nix:** lock file maintenance ([#120](https://github.com/krezh/kauth/issues/120)) ([4f6efed](https://github.com/krezh/kauth/commit/4f6efed466db2034941cfd51594e99d07570041a))
+* **nix:** lock file maintenance ([#124](https://github.com/krezh/kauth/issues/124)) ([2a0e31e](https://github.com/krezh/kauth/commit/2a0e31e9f837fa7b66e19fd99ddd9ab3fc6007e0))
+
 ## [0.1.46](https://github.com/krezh/kauth/compare/v0.1.45...v0.1.46) (2026-03-06)
 
 
