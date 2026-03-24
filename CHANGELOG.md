@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.1.49](https://github.com/krezh/kauth/compare/v0.1.48...v0.1.49) (2026-03-24)
+
+
+### Bug Fixes
+
+* **deps:** update kubernetes monorepo ( v0.35.2 → v0.35.3 ) ([#136](https://github.com/krezh/kauth/issues/136)) ([1bc27bd](https://github.com/krezh/kauth/commit/1bc27bd4ebe2ea85993e5f12dad13b70f9655503))
+
+
+### Miscellaneous Chores
+
+* **nix:** lock file maintenance ([#129](https://github.com/krezh/kauth/issues/129)) ([62d547b](https://github.com/krezh/kauth/commit/62d547bbb16424b9433b73e6b9e09fa983bff076))
+* **nix:** lock file maintenance ([#132](https://github.com/krezh/kauth/issues/132)) ([b05369e](https://github.com/krezh/kauth/commit/b05369e66c8c2fea44523b230fe3f613554eb2a2))
+* **nix:** lock file maintenance ([#134](https://github.com/krezh/kauth/issues/134)) ([b106475](https://github.com/krezh/kauth/commit/b106475952db0103f6a4323aae1ef49f254a1301))
+* **nix:** lock file maintenance ([#135](https://github.com/krezh/kauth/issues/135)) ([c2fe2c9](https://github.com/krezh/kauth/commit/c2fe2c90456cc39c9d152e86c209986b3258e8cc))
+* **nix:** lock file maintenance ([#137](https://github.com/krezh/kauth/issues/137)) ([087fedf](https://github.com/krezh/kauth/commit/087fedf8beb2a2d6f718c989287a695f159eebd0))
+* **nix:** lock file maintenance ([#139](https://github.com/krezh/kauth/issues/139)) ([464904f](https://github.com/krezh/kauth/commit/464904f1329115006f10917d97ec3de4c0f1b8a1))
+
 ## [0.1.48](https://github.com/krezh/kauth/compare/v0.1.47...v0.1.48) (2026-03-13)
 
 
