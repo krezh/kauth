@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.51](https://github.com/krezh/kauth/compare/v0.1.50...v0.1.51) (2026-04-11)
+
+
+### Bug Fixes
+
+* **deps:** update module github.com/coreos/go-oidc/v3 ( v3.17.0 → v3.18.0 ) ([#147](https://github.com/krezh/kauth/issues/147)) ([71b5738](https://github.com/krezh/kauth/commit/71b57389010d5e62adde227625360d2731d9cd3a))
+
+
+### Miscellaneous Chores
+
+* **nix:** lock file maintenance ([#150](https://github.com/krezh/kauth/issues/150)) ([3af4c98](https://github.com/krezh/kauth/commit/3af4c984c7889f9f273c78a77ec1a6c365b28f24))
+
 ## [0.1.50](https://github.com/krezh/kauth/compare/v0.1.49...v0.1.50) (2026-04-08)
 
 
