@@ -142,8 +142,8 @@ schema = 3
     hash = 'sha256-Z3gfQXu5D5U58IyV7dYamQjrLbFSB0BmlJtFWvgHIgg='
 
   [mod.'maragu.dev/gomponents']
-    version = 'v1.2.0'
-    hash = 'sha256-E9EagLFHbcloOG8K4XidGwadqNjekZzcSypEwiSRZuQ='
+    version = 'v1.3.0'
+    hash = 'sha256-Z5T0p8/y89ct366qzMd2eyJcCORWVg0zKKC1QISW5E4='
 
   [mod.'sigs.k8s.io/json']
     version = 'v0.0.0-20250730193827-2d320260d730'
