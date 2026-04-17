@@ -25,14 +25,6 @@ func init() {
 	rootCmd.AddCommand(statusCmd)
 }
 
-type tokenInfo struct {
-	ServerURL    string
-	TokenExpiry  time.Time
-	HasRefreshToken bool
-	TimeUntilExpiry time.Duration
-	Expired      bool
-}
-
 func runStatus(cmd *cobra.Command, args []string) error {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
