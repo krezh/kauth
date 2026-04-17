@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.1](https://github.com/krezh/kauth/compare/v0.2.0...v0.2.1) (2026-04-17)
+
+
+### Bug Fixes
+
+* **helm:** fix naming ([212a98a](https://github.com/krezh/kauth/commit/212a98a140212646fb7e3aa6ba6a951584392eb7))
+* **helm:** use correct labels ([69592d4](https://github.com/krezh/kauth/commit/69592d487d700dc50ff3de1a5c26fc28f3e773fc))
+
 ## [0.2.0](https://github.com/krezh/kauth/compare/v0.1.52...v0.2.0) (2026-04-17)
 
 
