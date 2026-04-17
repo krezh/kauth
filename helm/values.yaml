@@ -104,14 +104,14 @@ topologySpreadConstraints:
     whenUnsatisfiable: ScheduleAnyway
     labelSelector:
       matchLabels:
-        app.kubernetes.io/name: kauth
+        app.kubernetes.io/name: kauth-server
   # Spread across nodes with max 1 pod difference
   - maxSkew: 1
     topologyKey: kubernetes.io/hostname
     whenUnsatisfiable: ScheduleAnyway
     labelSelector:
       matchLabels:
-        app.kubernetes.io/name: kauth
+        app.kubernetes.io/name: kauth-server
 
 # PodDisruptionBudget for HA
 # Prevents all pods from being evicted during maintenance
