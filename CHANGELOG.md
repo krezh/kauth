@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.0](https://github.com/krezh/kauth/compare/v0.1.52...v0.2.0) (2026-04-17)
+
+
+### Features
+
+* **kauth:** big changes ([fc2b52b](https://github.com/krezh/kauth/commit/fc2b52bea2a114bdd64186b8c29d55ee26c5318f))
+
+
+### Bug Fixes
+
+* **linting:** linter errors ([4a25868](https://github.com/krezh/kauth/commit/4a2586806f0a3a76759b42dd16c3a0d57395116a))
+
 ## [0.1.52](https://github.com/krezh/kauth/compare/v0.1.51...v0.1.52) (2026-04-16)
 
 
