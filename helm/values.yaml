@@ -95,15 +95,11 @@ nodeSelector: {}
 #       topologyKey: kubernetes.io/hostname
 affinity: {}
 
-# Topology spread constraints for multi-zone HA
-# Enforces pod spreading across zones and nodes for better availability
+# Topology spread constraints for HA
+# Enforces pod spreading across nodes for better availability
 # Uses DoNotSchedule to enforce hard constraints (vs ScheduleAnyway for soft constraints)
 # labelSelector is automatically injected from the deployment's selector labels
 topologySpreadConstraints:
-  # Spread across zones with max 1 pod difference
-  - maxSkew: 1
-    topologyKey: topology.kubernetes.io/zone
-    whenUnsatisfiable: DoNotSchedule
   # Spread across nodes with max 1 pod difference
   - maxSkew: 1
     topologyKey: kubernetes.io/hostname
