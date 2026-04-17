@@ -185,7 +185,7 @@ monitoring:
         grafana.internal/instance: grafana
     # Datasource mappings
     datasources:
-      - datasourceName: Prometheus
+      - datasourceName: prometheus
         inputName: DS_PROMETHEUS
     # Grafana folder to place dashboard in
     # folder: "Authentication"
