@@ -2,9 +2,9 @@
 apiVersion: grafana.integreatly.org/v1beta1
 kind: GrafanaDashboard
 metadata:
-  name: {{ include "kauth-server.fullname" . }}
+  name: {{ include "kauth.fullname" . }}
   labels:
-    {{- include "kauth-server.labels" . | nindent 4 }}
+    {{- include "kauth.labels" . | nindent 4 }}
     {{- with .Values.monitoring.grafanaDashboard.labels }}
     {{- toYaml . | nindent 4 }}
     {{- end }}
@@ -739,6 +739,163 @@ spec:
           ],
           "title": "Rate Limit Hits",
           "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "palette-classic"
+              },
+              "custom": {
+                "axisCenteredZero": false,
+                "axisColorMode": "text",
+                "axisLabel": "",
+                "axisPlacement": "auto",
+                "barAlignment": 0,
+                "drawStyle": "line",
+                "fillOpacity": 10,
+                "gradientMode": "none",
+                "hideFrom": {
+                  "tooltip": false,
+                  "viz": false,
+                  "legend": false
+                },
+                "lineInterpolation": "linear",
+                "lineWidth": 1,
+                "pointSize": 5,
+                "scaleDistribution": {
+                  "type": "linear"
+                },
+                "showPoints": "never",
+                "spanNulls": false,
+                "stacking": {
+                  "group": "A",
+                  "mode": "none"
+                },
+                "thresholdsStyle": {
+                  "mode": "off"
+                }
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 1
+                  }
+                ]
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 0,
+            "y": 32
+          },
+          "id": 9,
+          "options": {
+            "legend": {
+              "calcs": ["last", "sum"],
+              "displayMode": "table",
+              "placement": "bottom",
+              "showLegend": true
+            },
+            "tooltip": {
+              "mode": "multi",
+              "sort": "desc"
+            }
+          },
+          "pluginVersion": "10.0.0",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "expr": "rate(kauth_oidc_provider_errors_total{job=\"$job\"}[5m])",
+              "legendFormat": "{{`{{operation}}`}} - HTTP {{`{{status_code}}`}}",
+              "refId": "A"
+            }
+          ],
+          "title": "OIDC Provider Errors by Status Code",
+          "type": "timeseries"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "fieldConfig": {
+            "defaults": {
+              "color": {
+                "mode": "thresholds"
+              },
+              "mappings": [],
+              "thresholds": {
+                "mode": "absolute",
+                "steps": [
+                  {
+                    "color": "green",
+                    "value": null
+                  },
+                  {
+                    "color": "red",
+                    "value": 1
+                  }
+                ]
+              },
+              "unit": "short"
+            },
+            "overrides": []
+          },
+          "gridPos": {
+            "h": 8,
+            "w": 12,
+            "x": 12,
+            "y": 32
+          },
+          "id": 10,
+          "options": {
+            "displayMode": "gradient",
+            "minVizHeight": 10,
+            "minVizWidth": 0,
+            "orientation": "horizontal",
+            "reduceOptions": {
+              "values": false,
+              "calcs": [
+                "sum"
+              ],
+              "fields": ""
+            },
+            "showUnfilled": true,
+            "text": {}
+          },
+          "pluginVersion": "10.0.0",
+          "targets": [
+            {
+              "datasource": {
+                "type": "prometheus",
+                "uid": "${datasource}"
+              },
+              "expr": "sum by (status_code) (kauth_oidc_provider_errors_total{job=\"$job\"})",
+              "legendFormat": "HTTP {{`{{status_code}}`}}",
+              "refId": "A"
+            }
+          ],
+          "title": "OIDC Errors by Status Code (Total)",
+          "type": "barchart"
         }
       ],
       "refresh": "30s",
@@ -769,8 +926,8 @@ spec:
           {
             "current": {
               "selected": false,
-              "text": "kauth-server",
-              "value": "kauth-server"
+              "text": "kauth",
+              "value": "kauth"
             },
             "datasource": {
               "type": "prometheus",

@@ -3,11 +3,13 @@ package main
 import (
 	"context"
 	"encoding/base64"
-	"log"
+	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"kauth/pkg/handlers"
@@ -24,27 +26,40 @@ import (
 )
 
 func main() {
+	// Initialize structured logger
+	logger := slog.New(slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{
+		Level: slog.LevelInfo,
+	}))
+	slog.SetDefault(logger)
+
+	slog.Info("Starting kauth-server")
+
 	// Load JWT keys from environment (REQUIRED)
 	jwtSigningKey := getEnvBytes("JWT_SIGNING_KEY")
 	jwtEncryptionKey := getEnvBytes("JWT_ENCRYPTION_KEY")
 
 	if len(jwtSigningKey) == 0 || len(jwtEncryptionKey) == 0 {
-		log.Fatal("JWT_SIGNING_KEY and JWT_ENCRYPTION_KEY are required environment variables.\n" +
-			"Generate secure keys with: openssl rand -base64 32")
+		slog.Error("JWT keys are required",
+			"error", "JWT_SIGNING_KEY and JWT_ENCRYPTION_KEY must be set",
+			"hint", "Generate with: openssl rand -base64 32")
+		os.Exit(1)
 	}
 
 	if len(jwtSigningKey) < 32 {
-		log.Fatal("JWT_SIGNING_KEY must be at least 32 bytes")
+		slog.Error("JWT_SIGNING_KEY too short", "min_bytes", 32, "actual_bytes", len(jwtSigningKey))
+		os.Exit(1)
 	}
 
 	if len(jwtEncryptionKey) != 32 {
-		log.Fatal("JWT_ENCRYPTION_KEY must be exactly 32 bytes")
+		slog.Error("JWT_ENCRYPTION_KEY wrong size", "required_bytes", 32, "actual_bytes", len(jwtEncryptionKey))
+		os.Exit(1)
 	}
 
 	// Validate cluster name
 	clusterName := getEnv("CLUSTER_NAME", "kubernetes")
 	if err := validation.ValidateResourceName(clusterName); err != nil {
-		log.Fatalf("Invalid CLUSTER_NAME: %v\nCluster name must be lowercase alphanumeric with hyphens or dots (RFC 1123), max 63 characters", err)
+		slog.Error("Invalid CLUSTER_NAME", "error", err, "hint", "Cluster name must be lowercase alphanumeric with hyphens or dots (RFC 1123), max 63 characters")
+		os.Exit(1)
 	}
 
 	cfg := server.Config{
@@ -68,58 +83,90 @@ func main() {
 	}
 
 	if cfg.IssuerURL == "" || cfg.ClientID == "" || cfg.ClientSecret == "" {
-		log.Fatal("OIDC_ISSUER_URL, OIDC_CLIENT_ID, and OIDC_CLIENT_SECRET are required")
+		slog.Error("Required OIDC configuration missing", "error", "OIDC_ISSUER_URL, OIDC_CLIENT_ID, and OIDC_CLIENT_SECRET are required")
+		os.Exit(1)
 	}
 
 	if cfg.BaseURL == "" {
-		log.Fatal("BASE_URL is required (e.g. https://kauth.example.com)")
+		slog.Error("BASE_URL is required", "hint", "e.g. https://kauth.example.com")
+		os.Exit(1)
 	}
 
 	// Get cluster API endpoint URL (must be set manually)
 	clusterServer := getEnv("KUBERNETES_API_URL", "")
 	if clusterServer == "" {
-		log.Fatal("KUBERNETES_API_URL is required (e.g. https://kubernetes.example.com:6443)")
+		slog.Error("KUBERNETES_API_URL is required", "hint", "e.g. https://kubernetes.example.com:6443")
+		os.Exit(1)
 	}
-	log.Printf("Cluster API URL: %s", clusterServer)
+	slog.Info("Cluster API URL", "url", clusterServer)
 
 	// Auto-detect cluster CA (from env or in-cluster mount)
 	clusterCA, err := server.GetClusterCA()
 	if err != nil {
-		log.Fatalf("Failed to get cluster CA: %v", err)
+		slog.Error("Failed to get cluster CA", "error", err)
+		os.Exit(1)
 	}
-	log.Printf("Cluster CA: loaded successfully")
+	slog.Info("Cluster CA loaded successfully")
 
 	// Initialize JWT manager
 	jwtManager, err := jwt.NewManager(cfg.JWTSigningKey, cfg.JWTEncryptionKey)
 	if err != nil {
-		log.Fatalf("Failed to initialize JWT manager: %v", err)
+		slog.Error("Failed to initialize JWT manager", "error", err)
+		os.Exit(1)
 	}
-	log.Printf("JWT manager initialized")
+	slog.Info("JWT manager initialized")
 
 	ctx := context.Background()
 
 	// Initialize Kubernetes client
 	k8sConfig, err := getK8sConfig()
 	if err != nil {
-		log.Fatalf("Failed to get Kubernetes config: %v", err)
+		slog.Error("Failed to get Kubernetes config", "error", err)
+		os.Exit(1)
 	}
 
 	// Create session client for managing OAuthSession CRDs
 	namespace := getEnv("KAUTH_NAMESPACE", "default")
 	sessionClient, err := session.NewClient(k8sConfig, namespace)
 	if err != nil {
-		log.Fatalf("Failed to create session client: %v", err)
+		slog.Error("Failed to create session client", "error", err)
+		os.Exit(1)
 	}
-	log.Printf("Session client initialized (namespace: %s)", namespace)
+	slog.Info("Session client initialized", "namespace", namespace)
 
-	provider, err := oauth.NewProvider(ctx, oauth.Config{
-		IssuerURL:    cfg.IssuerURL,
-		ClientID:     cfg.ClientID,
-		ClientSecret: cfg.ClientSecret,
-		RedirectURL:  cfg.BaseURL + "/callback",
-	})
-	if err != nil {
-		log.Fatalf("Failed to setup OIDC provider: %v", err)
+	// Initialize OIDC provider with retries
+	var provider *oauth.Provider
+	maxRetries := 60
+	retryDelay := 5 * time.Second
+	maxRetryDelay := 2 * time.Minute
+
+	for attempt := 1; attempt <= maxRetries; attempt++ {
+		provider, err = oauth.NewProvider(ctx, oauth.Config{
+			IssuerURL:    cfg.IssuerURL,
+			ClientID:     cfg.ClientID,
+			ClientSecret: cfg.ClientSecret,
+			RedirectURL:  cfg.BaseURL + "/callback",
+		})
+		if err == nil {
+			slog.Info("Successfully connected to OIDC provider", "url", cfg.IssuerURL)
+			break
+		}
+
+		slog.Warn("Failed to connect to OIDC provider", "attempt", attempt, "max_attempts", maxRetries, "error", err)
+
+		if attempt == maxRetries {
+			slog.Error("Failed to setup OIDC provider, giving up", "attempts", maxRetries)
+			os.Exit(1)
+		}
+
+		// Exponential backoff with max delay
+		currentDelay := retryDelay * time.Duration(attempt)
+		if currentDelay > maxRetryDelay {
+			currentDelay = maxRetryDelay
+		}
+
+		slog.Info("Retrying OIDC connection", "delay", currentDelay)
+		time.Sleep(currentDelay)
 	}
 
 	loginHandler := handlers.NewLoginHandler(
@@ -165,6 +212,9 @@ func main() {
 	// Apply middleware
 	var handler http.Handler = mux
 
+	// Request ID (must be first to ensure all logs have request ID)
+	handler = middleware.RequestID(handler)
+
 	// Request logging
 	handler = middleware.RequestLogger(handler)
 
@@ -185,27 +235,69 @@ func main() {
 	rateLimiter := middleware.NewRateLimiter(cfg.RateLimitRPS, cfg.RateLimitBurst, 5*time.Minute)
 	handler = rateLimiter.Middleware(handler)
 
-	log.Printf("Starting kauth server on %s", cfg.ListenAddr)
-	log.Printf("Base URL: %s", cfg.BaseURL)
-	log.Printf("Cluster: %s", cfg.ClusterName)
-	log.Printf("Session TTL: %s", cfg.SessionTTL)
-	log.Printf("Refresh Token TTL: %s", cfg.RefreshTokenTTL)
-	log.Printf("Rate Limit: %.1f req/s, burst %d", cfg.RateLimitRPS, cfg.RateLimitBurst)
+	slog.Info("Starting kauth server",
+		"listen_addr", cfg.ListenAddr,
+		"base_url", cfg.BaseURL,
+		"cluster", cfg.ClusterName,
+		"session_ttl", cfg.SessionTTL,
+		"refresh_token_ttl", cfg.RefreshTokenTTL,
+		"rate_limit_rps", cfg.RateLimitRPS,
+		"rate_limit_burst", cfg.RateLimitBurst,
+	)
+
 	if len(cfg.AllowedOrigins) > 0 {
-		log.Printf("CORS Enabled for origins: %v", cfg.AllowedOrigins)
+		slog.Info("CORS enabled", "origins", cfg.AllowedOrigins)
 	}
 	if len(cfg.AllowedGroups) > 0 {
-		log.Printf("Group Authorization: Allowed groups: %v", cfg.AllowedGroups)
+		slog.Info("Group authorization enabled", "allowed_groups", cfg.AllowedGroups)
 	} else {
-		log.Printf("Group Authorization: Disabled (all OIDC users allowed)")
+		slog.Info("Group authorization disabled - all OIDC users allowed")
 	}
 
-	if cfg.TLSCertFile != "" && cfg.TLSKeyFile != "" {
-		log.Printf("Starting with TLS")
-		log.Fatal(http.ListenAndServeTLS(cfg.ListenAddr, cfg.TLSCertFile, cfg.TLSKeyFile, handler))
-	} else {
-		log.Printf("Starting without TLS (use TLS_CERT_FILE and TLS_KEY_FILE for HTTPS)")
-		log.Fatal(http.ListenAndServe(cfg.ListenAddr, handler))
+	// Create HTTP server
+	server := &http.Server{
+		Addr:    cfg.ListenAddr,
+		Handler: handler,
+	}
+
+	// Channel to listen for errors from server
+	serverErrors := make(chan error, 1)
+
+	// Start server in goroutine
+	go func() {
+		if cfg.TLSCertFile != "" && cfg.TLSKeyFile != "" {
+			slog.Info("Starting server with TLS")
+			serverErrors <- server.ListenAndServeTLS(cfg.TLSCertFile, cfg.TLSKeyFile)
+		} else {
+			slog.Info("Starting server without TLS", "hint", "Use TLS_CERT_FILE and TLS_KEY_FILE for HTTPS")
+			serverErrors <- server.ListenAndServe()
+		}
+	}()
+
+	// Setup signal handling for graceful shutdown
+	stop := make(chan os.Signal, 1)
+	signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+
+	// Wait for shutdown signal or server error
+	select {
+	case err := <-serverErrors:
+		slog.Error("Server failed to start", "error", err)
+		os.Exit(1)
+	case sig := <-stop:
+		slog.Info("Shutdown signal received", "signal", sig.String())
+
+		// Create shutdown context with timeout
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		// Attempt graceful shutdown
+		slog.Info("Shutting down server gracefully...")
+		if err := server.Shutdown(shutdownCtx); err != nil {
+			slog.Error("Server forced to shutdown", "error", err)
+			os.Exit(1)
+		}
+
+		slog.Info("Server stopped gracefully")
 	}
 }
 
@@ -237,7 +329,7 @@ func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
 	}
 	duration, err := time.ParseDuration(value)
 	if err != nil {
-		log.Printf("Invalid duration for %s: %s, using default", key, value)
+		slog.Info("Invalid duration for %s: %s, using default", key, value)
 		return defaultValue
 	}
 	return duration
@@ -250,7 +342,7 @@ func getEnvInt(key string, defaultValue int) int {
 	}
 	intVal, err := strconv.Atoi(value)
 	if err != nil {
-		log.Printf("Invalid int for %s: %s, using default", key, value)
+		slog.Info("Invalid int for %s: %s, using default", key, value)
 		return defaultValue
 	}
 	return intVal
@@ -263,7 +355,7 @@ func getEnvFloat(key string, defaultValue float64) float64 {
 	}
 	floatVal, err := strconv.ParseFloat(value, 64)
 	if err != nil {
-		log.Printf("Invalid float for %s: %s, using default", key, value)
+		slog.Info("Invalid float for %s: %s, using default", key, value)
 		return defaultValue
 	}
 	return floatVal
@@ -282,7 +374,7 @@ func getK8sConfig() (*rest.Config, error) {
 	// Try in-cluster config first (for pods running in Kubernetes)
 	config, err := rest.InClusterConfig()
 	if err == nil {
-		log.Println("Using in-cluster Kubernetes config")
+		slog.Info("Using in-cluster Kubernetes config")
 		return config, nil
 	}
 
@@ -297,6 +389,6 @@ func getK8sConfig() (*rest.Config, error) {
 		return nil, err
 	}
 
-	log.Printf("Using kubeconfig: %s", kubeconfigPath)
+	slog.Info("Using kubeconfig", "path", kubeconfigPath)
 	return config, nil
 }

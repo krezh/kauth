@@ -113,6 +113,15 @@ var (
 		[]string{"operation", "result"},
 	)
 
+	// OIDCProviderErrors tracks OIDC provider errors with HTTP status codes
+	OIDCProviderErrors = promauto.NewCounterVec(
+		prometheus.CounterOpts{
+			Name: "kauth_oidc_provider_errors_total",
+			Help: "Total number of OIDC provider errors by operation and HTTP status code",
+		},
+		[]string{"operation", "status_code"},
+	)
+
 	// OIDCProviderDuration tracks OIDC provider request duration
 	OIDCProviderDuration = promauto.NewHistogramVec(
 		prometheus.HistogramOpts{
@@ -186,4 +195,9 @@ func RecordKubeconfigGenerationFailure() {
 // RecordOIDCRequest records an OIDC provider request
 func RecordOIDCRequest(operation, result string) {
 	OIDCProviderRequests.WithLabelValues(operation, result).Inc()
+}
+
+// RecordOIDCError records an OIDC provider error with HTTP status code
+func RecordOIDCError(operation, statusCode string) {
+	OIDCProviderErrors.WithLabelValues(operation, statusCode).Inc()
 }

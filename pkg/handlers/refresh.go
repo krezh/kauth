@@ -110,8 +110,12 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 		RefreshToken: refreshToken.OIDCRefreshToken,
 	}
 
+	// Use custom HTTP client for metrics
+	httpClient := oauth.NewMetricsHTTPClient("token_refresh")
+	ctxWithClient := context.WithValue(ctx, oauth2.HTTPClient, httpClient)
+
 	// Use the provider to refresh
-	newToken, err := h.provider.OAuth2Config.TokenSource(ctx, oldToken).Token()
+	newToken, err := h.provider.OAuth2Config.TokenSource(ctxWithClient, oldToken).Token()
 	if err != nil {
 		log.Printf("REFRESH_FAILURE: user=%q reason=oidc_refresh_failed error=%q", refreshToken.UserEmail, err)
 		metrics.RecordTokenRefreshFailure("oidc_refresh_failed")

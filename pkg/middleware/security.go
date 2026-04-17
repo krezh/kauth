@@ -1,14 +1,24 @@
 package middleware
 
 import (
-	"log"
+	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"log/slog"
 	"net/http"
 	"slices"
+	"strconv"
 	"sync"
 	"time"
 
+	"kauth/pkg/metrics"
+
 	"golang.org/x/time/rate"
 )
+
+type contextKey string
+
+const RequestIDKey contextKey = "request_id"
 
 // SecurityHeaders adds security headers to responses
 func SecurityHeaders(next http.Handler) http.Handler {
@@ -129,6 +139,7 @@ func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 
 		limiter := rl.getVisitor(ip)
 		if !limiter.Allow() {
+			metrics.RateLimitHits.Inc()
 			http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
 			return
 		}
@@ -151,26 +162,74 @@ func (rl *RateLimiter) cleanupLoop() {
 	}
 }
 
-// RequestLogger logs HTTP requests
+// RequestID adds a unique request ID to each request
+func RequestID(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// Check if request ID already exists (from proxy/load balancer)
+		requestID := r.Header.Get("X-Request-ID")
+		if requestID == "" {
+			// Generate new request ID
+			requestID = generateRequestID()
+		}
+
+		// Add to response headers
+		w.Header().Set("X-Request-ID", requestID)
+
+		// Add to context
+		ctx := context.WithValue(r.Context(), RequestIDKey, requestID)
+
+		next.ServeHTTP(w, r.WithContext(ctx))
+	})
+}
+
+// RequestLogger logs HTTP requests and records metrics
 func RequestLogger(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		start := time.Now()
+
+		// Track in-flight requests
+		metrics.HTTPRequestsInFlight.Inc()
+		defer metrics.HTTPRequestsInFlight.Dec()
+
+		// Get request ID from context
+		requestID, _ := r.Context().Value(RequestIDKey).(string)
 
 		// Create a response wrapper to capture status code
 		rw := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
 
 		next.ServeHTTP(rw, r)
 
+		duration := time.Since(start)
+
+		// Record metrics for all endpoints
+		metrics.HTTPRequestDuration.WithLabelValues(
+			r.URL.Path,
+			r.Method,
+			strconv.Itoa(rw.statusCode),
+		).Observe(duration.Seconds())
+
 		// Skip logging for health check endpoint to reduce noise
 		if r.URL.Path == "/health" {
 			return
 		}
 
-		duration := time.Since(start)
-
-		// Log in consistent format
-		log.Printf("%s %s %d %s", r.Method, r.URL.Path, rw.statusCode, duration)
+		// Log with structured fields
+		slog.Info("HTTP request",
+			"request_id", requestID,
+			"method", r.Method,
+			"path", r.URL.Path,
+			"status", rw.statusCode,
+			"duration_ms", duration.Milliseconds(),
+			"remote_addr", r.RemoteAddr,
+		)
 	})
+}
+
+// generateRequestID generates a unique request ID
+func generateRequestID() string {
+	b := make([]byte, 16)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
 }
 
 type responseWriter struct {

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
+        "log/slog"
 	"net/http"
 	"slices"
 	"sync"
@@ -14,6 +15,7 @@ import (
 
 	v1alpha1 "kauth/pkg/apis/kauth.io/v1alpha1"
 	"kauth/pkg/jwt"
+        "kauth/pkg/audit"
 	"kauth/pkg/metrics"
 	"kauth/pkg/oauth"
 	"kauth/pkg/session"
@@ -314,8 +316,12 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Use custom HTTP client for metrics
+	httpClient := oauth.NewMetricsHTTPClient("token_exchange")
+	ctxWithClient := context.WithValue(ctx, oauth2.HTTPClient, httpClient)
+
 	token, err := h.provider.OAuth2Config.Exchange(
-		ctx,
+		ctxWithClient,
 		code,
 		oauth2.VerifierOption(verifier),
 	)
@@ -359,8 +365,7 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	// Validate group membership if required
 	if len(h.allowedGroups) > 0 {
 		if !h.isUserAuthorized(claims.Groups) {
-			log.Printf("AUTH_DENIED: user=%q groups=%v allowed_groups=%v reason=group_not_allowed",
-				claims.Email, claims.Groups, h.allowedGroups)
+			audit.AuthorizationDeny(ctx, r, claims.Email, claims.Groups, h.allowedGroups)
 			metrics.RecordCallbackFailure()
 			metrics.RecordLoginFailure("group_authorization_denied")
 			metrics.RecordGroupAuthorizationFailure()
@@ -371,12 +376,19 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Forbidden: user not in allowed groups", http.StatusForbidden)
 			return
 		}
+		audit.AuthorizationAllow(ctx, r, claims.Email, claims.Groups)
 		metrics.RecordGroupAuthorizationSuccess()
 	}
 
-	// Log successful authentication with details
-	log.Printf("AUTH_SUCCESS: user=%q name=%q sub=%q groups=%v cluster=%q",
-		claims.Email, claims.Name, claims.Sub, claims.Groups, h.kubeconfigGen.ClusterName)
+	// Log successful authentication
+	audit.LoginSuccess(ctx, r, claims.Email, h.kubeconfigGen.ClusterName, claims.Groups)
+	slog.InfoContext(ctx, "Authentication successful",
+		"user", claims.Email,
+		"name", claims.Name,
+		"sub", claims.Sub,
+		"groups", claims.Groups,
+		"cluster", h.kubeconfigGen.ClusterName,
+	)
 
 	metrics.RecordCallbackSuccess()
 	metrics.RecordLoginSuccess()

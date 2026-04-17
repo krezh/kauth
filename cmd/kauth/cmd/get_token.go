@@ -79,9 +79,9 @@ func runGetToken(cmd *cobra.Command, args []string) error {
 	serverURLBytes, err := os.ReadFile(serverURLPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Errorf("no authentication found. Please run 'kauth login --url <server-url>' first")
+			return fmt.Errorf("❌ Not authenticated.\n\nTo authenticate, run:\n  kauth login --url <server-url>\n\nExample:\n  kauth login --url https://kauth.example.com")
 		}
-		return fmt.Errorf("failed to read server URL: %w", err)
+		return fmt.Errorf("❌ Failed to read server URL: %w", err)
 	}
 	serverURL := string(serverURLBytes)
 
@@ -99,19 +99,19 @@ func runGetToken(cmd *cobra.Command, args []string) error {
 	refreshToken, err := os.ReadFile(refreshTokenPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return fmt.Errorf("no authentication found. Please run 'kauth login --url <server-url>' first")
+			return fmt.Errorf("❌ No refresh token found.\n\nYour authentication session may have expired.\nTo re-authenticate, run:\n  kauth login")
 		}
-		return fmt.Errorf("failed to read refresh token: %w", err)
+		return fmt.Errorf("❌ Failed to read refresh token: %w", err)
 	}
 
 	if len(refreshToken) == 0 {
-		return fmt.Errorf("refresh token is empty. Please run 'kauth login --url <server-url>' first")
+		return fmt.Errorf("❌ Refresh token is empty.\n\nTo re-authenticate, run:\n  kauth login")
 	}
 
 	// Refresh the token
 	refreshResp, err := refreshTokenFromServer(serverURL, string(refreshToken))
 	if err != nil {
-		return fmt.Errorf("failed to refresh token: %w. Please run 'kauth login --url <server-url>' again", err)
+		return fmt.Errorf("❌ Failed to refresh token: %w\n\nYour refresh token may have expired.\nTo re-authenticate, run:\n  kauth login", err)
 	}
 
 	// Save new refresh token

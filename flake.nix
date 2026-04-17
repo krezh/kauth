@@ -2,8 +2,9 @@
   description = "kauth - Kubernetes OIDC authentication system";
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-    gomod2nix = {
-      url = "github:nix-community/gomod2nix";
+
+    go-overlay = {
+      url = "git+https://github.com/purpleclay/go-overlay?shallow=1";
       inputs.nixpkgs.follows = "nixpkgs";
     };
   };
@@ -11,7 +12,7 @@
     {
       self,
       nixpkgs,
-      gomod2nix,
+      go-overlay,
     }:
     let
       systems = [ "x86_64-linux" ];
@@ -20,7 +21,7 @@
         system:
         import nixpkgs {
           inherit system;
-          overlays = [ gomod2nix.overlays.default ];
+          overlays = [ go-overlay.overlays.default ];
         };
       releaseManifest = builtins.fromJSON (builtins.readFile ./.release-please-manifest.json);
       version = releaseManifest.".";
@@ -36,8 +37,12 @@
           kauth = pkgs.buildGoApplication {
             pname = "kauth";
             inherit version;
-            src = ./.;
-            modules = ./gomod2nix.toml;
+            src = builtins.path {
+              path = ./.;
+              name = "kauth-src";
+            };
+            go = pkgs.go-bin.fromGoMod ./go.mod;
+            modules = ./govendor.toml;
             subPackages = [ "cmd/kauth" ];
             ldflags = [
               "-s"
@@ -49,8 +54,12 @@
           kauth-server = pkgs.buildGoApplication {
             pname = "kauth-server";
             inherit version;
-            src = ./.;
-            modules = ./gomod2nix.toml;
+            src = builtins.path {
+              path = ./.;
+              name = "kauth-server-src";
+            };
+            modules = ./govendor.toml;
+            go = pkgs.go-bin.fromGoMod ./go.mod;
             subPackages = [ "cmd/kauth-server" ];
             ldflags = [
               "-s"
@@ -73,7 +82,8 @@
               gopls
               gotools
               golangci-lint
-              gomod2nix.packages.${system}.default
+              govulncheck
+              go-overlay.packages.${system}.govendor
             ];
           };
         }

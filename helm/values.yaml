@@ -1,15 +1,27 @@
+# Number of kauth-server replicas
+# For HA, run at least 3 replicas across different zones
 replicaCount: 3
 
+# Container image configuration
 image:
   repository: ghcr.io/krezh/kauth-server
   pullPolicy: IfNotPresent
+  # Overrides the image tag whose default is the chart appVersion
   tag: ""
 
+# ServiceAccount configuration
 serviceAccount:
+  # Specifies whether a service account should be created
   create: true
+  # Annotations to add to the service account
   annotations: {}
+  # The name of the service account to use (auto-generated if not set and create is true)
+  name: ""
 
+# Annotations to add to pods
 podAnnotations: {}
+
+# Labels to add to pods
 podLabels: {}
 
 podSecurityContext:
@@ -66,53 +78,116 @@ readinessProbe:
   timeoutSeconds: 2
   failureThreshold: 2
 
+# Node selector for pod assignment
+# Example: { disktype: ssd }
 nodeSelector: {}
 
+# Affinity rules for pod scheduling
+# Example:
+#   podAntiAffinity:
+#     requiredDuringSchedulingIgnoredDuringExecution:
+#     - labelSelector:
+#         matchExpressions:
+#         - key: app.kubernetes.io/name
+#           operator: In
+#           values:
+#           - kauth
+#       topologyKey: kubernetes.io/hostname
 affinity: {}
 
-# Environment variables
+# Topology spread constraints for multi-zone HA
+# Spreads pods across zones and nodes for better availability
+topologySpreadConstraints:
+  # Spread across zones with max 1 pod difference
+  - maxSkew: 1
+    topologyKey: topology.kubernetes.io/zone
+    whenUnsatisfiable: ScheduleAnyway
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: kauth
+  # Spread across nodes with max 1 pod difference
+  - maxSkew: 1
+    topologyKey: kubernetes.io/hostname
+    whenUnsatisfiable: ScheduleAnyway
+    labelSelector:
+      matchLabels:
+        app.kubernetes.io/name: kauth
+
+# PodDisruptionBudget for HA
+# Prevents all pods from being evicted during maintenance
+podDisruptionBudget:
+  enabled: true
+  # minAvailable: 1  # Minimum pods that must be available
+  maxUnavailable: 1 # Maximum pods that can be unavailable
+
+# Additional environment variables
+# Non-sensitive configuration values
 env: []
   # - name: CLUSTER_NAME
   #   value: "production"
   # - name: BASE_URL
   #   value: "https://kauth.example.com"
   # - name: SESSION_TTL
-  #   value: "15m"
+  #   value: "15m"           # Session token lifetime (default: 15m)
   # - name: REFRESH_TOKEN_TTL
-  #   value: "168h"
+  #   value: "168h"          # Refresh token lifetime (default: 7 days)
+  # - name: ALLOWED_ORIGINS
+  #   value: "https://app1.example.com,https://app2.example.com"  # CORS origins (comma-separated)
+  # - name: ALLOWED_GROUPS
+  #   value: "admins,developers"  # Restrict access to specific OIDC groups (comma-separated)
+  # - name: RATE_LIMIT_RPS
+  #   value: "10"            # Requests per second per IP (default: 10)
+  # - name: RATE_LIMIT_BURST
+  #   value: "20"            # Burst capacity (default: 20)
+  # - name: ROTATION_WINDOW
+  #   value: "2"             # Refresh token rotation window (default: 2)
 
-# Environment from ConfigMaps/Secrets
+# Environment variables from ConfigMaps/Secrets
+# Use for sensitive configuration
 envFrom: []
   # - secretRef:
   #     name: kauth-secrets
-  # Required environment variables in secret:
-  #   OIDC_ISSUER_URL
-  #   OIDC_CLIENT_ID
-  #   OIDC_CLIENT_SECRET
-  #   JWT_SIGNING_KEY
-  #   JWT_ENCRYPTION_KEY
-  #   KUBERNETES_API_URL
+  #
+  # Required environment variables:
+  #   OIDC_ISSUER_URL       - Your OIDC provider URL (e.g., https://auth.example.com)
+  #   OIDC_CLIENT_ID        - OAuth2 client ID
+  #   OIDC_CLIENT_SECRET    - OAuth2 client secret
+  #   JWT_SIGNING_KEY       - Base64 encoded, 32+ bytes (openssl rand -base64 32)
+  #   JWT_ENCRYPTION_KEY    - Base64 encoded, exactly 32 bytes
+  #   KUBERNETES_API_URL    - Your K8s API server URL (e.g., https://k8s.example.com:6443)
 
 rbac:
   create: true
 
 # Prometheus monitoring configuration
 monitoring:
-  enabled: false  # Set to true to enable ServiceMonitor for Prometheus
+  # Enable ServiceMonitor for Prometheus Operator
+  enabled: false
+  # How often to scrape metrics
   interval: 30s
+  # Timeout for each scrape
   scrapeTimeout: 10s
-  labels: {}  # Additional labels for ServiceMonitor (e.g., release: prometheus)
+  # Additional labels for ServiceMonitor (e.g., release: prometheus-stack)
+  # Must match your Prometheus serviceMonitorSelector
+  labels: {}
+  # Relabeling rules for metrics
   relabelings: []
 
-  # Grafana dashboard configuration
+  # Grafana dashboard configuration (requires Grafana Operator)
   grafanaDashboard:
-    enabled: false  # Set to true to create GrafanaDashboard CRD
-    allowCrossNamespaceImport: true  # Allow importing dashboards from other namespaces
-    instanceSelector:  # Selector for Grafana instance to use
+    # Enable GrafanaDashboard CRD creation
+    enabled: false
+    # Allow dashboard to be imported from other namespaces
+    allowCrossNamespaceImport: true
+    # Selector to match Grafana instance
+    instanceSelector:
       matchLabels:
         grafana.internal/instance: grafana
-    datasources:  # Datasource mappings for the dashboard
-      - datasourceName: prometheus
+    # Datasource mappings
+    datasources:
+      - datasourceName: Prometheus
         inputName: DS_PROMETHEUS
-    folder: ""  # Optional: folder name in Grafana
-    labels: {}  # Additional labels for GrafanaDashboard
+    # Grafana folder to place dashboard in
+    # folder: "Authentication"
+    # Additional labels for GrafanaDashboard resource
+    labels: {}

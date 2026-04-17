@@ -1,14 +1,14 @@
 {{/*
 Expand the name of the chart.
 */}}
-{{- define "kauth-server.name" -}}
+{{- define "kauth.name" -}}
 {{- default .Chart.Name .Values.nameOverride | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
 {{/*
 Create a default fully qualified app name.
 */}}
-{{- define "kauth-server.fullname" -}}
+{{- define "kauth.fullname" -}}
 {{- if .Values.fullnameOverride }}
 {{- .Values.fullnameOverride | trunc 63 | trimSuffix "-" }}
 {{- else }}
@@ -24,16 +24,16 @@ Create a default fully qualified app name.
 {{/*
 Create chart name and version as used by the chart label.
 */}}
-{{- define "kauth-server.chart" -}}
+{{- define "kauth.chart" -}}
 {{- printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" | trunc 63 | trimSuffix "-" }}
 {{- end }}
 
 {{/*
 Common labels
 */}}
-{{- define "kauth-server.labels" -}}
-helm.sh/chart: {{ include "kauth-server.chart" . }}
-{{ include "kauth-server.selectorLabels" . }}
+{{- define "kauth.labels" -}}
+helm.sh/chart: {{ include "kauth.chart" . }}
+{{ include "kauth.selectorLabels" . }}
 {{- if .Chart.AppVersion }}
 app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 {{- end }}
@@ -43,17 +43,17 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{/*
 Selector labels
 */}}
-{{- define "kauth-server.selectorLabels" -}}
-app.kubernetes.io/name: {{ include "kauth-server.name" . }}
+{{- define "kauth.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "kauth.name" . }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end }}
 
 {{/*
 Create the name of the service account to use
 */}}
-{{- define "kauth-server.serviceAccountName" -}}
+{{- define "kauth.serviceAccountName" -}}
 {{- if .Values.serviceAccount.create }}
-{{- default (include "kauth-server.fullname" .) .Values.serviceAccount.name }}
+{{- default (include "kauth.fullname" .) .Values.serviceAccount.name }}
 {{- else }}
 {{- default "default" .Values.serviceAccount.name }}
 {{- end }}
@@ -62,6 +62,6 @@ Create the name of the service account to use
 {{/*
 Get the kauth namespace
 */}}
-{{- define "kauth-server.namespace" -}}
+{{- define "kauth.namespace" -}}
 {{- default .Release.Namespace .Values.kauth.namespace }}
 {{- end }}

@@ -3,9 +3,9 @@
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
-  name: {{ include "kauth-server.fullname" . }}
+  name: {{ include "kauth.fullname" . }}
   labels:
-    {{- include "kauth-server.labels" . | nindent 4 }}
+    {{- include "kauth.labels" . | nindent 4 }}
 rules:
   # OAuthSession CRD operations
   - apiGroups: ["kauth.io"]
@@ -20,16 +20,16 @@ rules:
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
-  name: {{ include "kauth-server.fullname" . }}
+  name: {{ include "kauth.fullname" . }}
   labels:
-    {{- include "kauth-server.labels" . | nindent 4 }}
+    {{- include "kauth.labels" . | nindent 4 }}
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
-  name: {{ include "kauth-server.fullname" . }}
+  name: {{ include "kauth.fullname" . }}
 subjects:
   - kind: ServiceAccount
-    name: {{ include "kauth-server.serviceAccountName" . }}
+    name: {{ include "kauth.serviceAccountName" . }}
     namespace: {{ .Release.Namespace }}
 
 {{- end }}
