@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.4](https://github.com/krezh/kauth/compare/v0.2.3...v0.2.4) (2026-04-17)
+
+
+### Bug Fixes
+
+* **helm:** fix again ([e9accfb](https://github.com/krezh/kauth/commit/e9accfbcaeee59e7bd2bc77400425a9483b6fba6))
+
 ## [0.2.3](https://github.com/krezh/kauth/compare/v0.2.2...v0.2.3) (2026-04-17)
 
 
