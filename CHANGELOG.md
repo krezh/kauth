@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.2](https://github.com/krezh/kauth/compare/v0.2.1...v0.2.2) (2026-04-17)
+
+
+### Bug Fixes
+
+* **grafanadashboard:** fix datasourcename ([40e3256](https://github.com/krezh/kauth/commit/40e3256708d92d9b90f298481d7a2bed660bd48a))
+
 ## [0.2.1](https://github.com/krezh/kauth/compare/v0.2.0...v0.2.1) (2026-04-17)
 
 
