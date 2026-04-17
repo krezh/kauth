@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.3](https://github.com/krezh/kauth/compare/v0.2.2...v0.2.3) (2026-04-17)
+
+
+### Bug Fixes
+
+* **helm:** fix topologySpreadConstraints ([f41f3af](https://github.com/krezh/kauth/commit/f41f3afd459b299d9a4538acf7dbe0a0af4fa836))
+
 ## [0.2.2](https://github.com/krezh/kauth/compare/v0.2.1...v0.2.2) (2026-04-17)
 
 
