@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.5](https://github.com/krezh/kauth/compare/v0.2.4...v0.2.5) (2026-04-19)
+
+
+### Bug Fixes
+
+* **server:** prevent pod crash when SSO unavailable ([56a5ee6](https://github.com/krezh/kauth/commit/56a5ee6dd42fabf3e7439ead46c265841ecb4e3e))
+
+
+### Miscellaneous Chores
+
+* **nix:** lock file maintenance ([#165](https://github.com/krezh/kauth/issues/165)) ([32e15d2](https://github.com/krezh/kauth/commit/32e15d2b29492a2c742297cf8f00946140eb308c))
+
 ## [0.2.4](https://github.com/krezh/kauth/compare/v0.2.3...v0.2.4) (2026-04-17)
 
 
