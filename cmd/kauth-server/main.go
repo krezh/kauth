@@ -134,64 +134,100 @@ func main() {
 	}
 	slog.Info("Session client initialized", "namespace", namespace)
 
-	// Initialize OIDC provider with retries
+	// Initialize OIDC provider in background with retries
 	var provider *oauth.Provider
-	maxRetries := 60
-	retryDelay := 5 * time.Second
-	maxRetryDelay := 2 * time.Minute
+	providerReady := make(chan struct{})
 
-	for attempt := 1; attempt <= maxRetries; attempt++ {
-		provider, err = oauth.NewProvider(ctx, oauth.Config{
-			IssuerURL:    cfg.IssuerURL,
-			ClientID:     cfg.ClientID,
-			ClientSecret: cfg.ClientSecret,
-			RedirectURL:  cfg.BaseURL + "/callback",
-		})
-		if err == nil {
-			slog.Info("Successfully connected to OIDC provider", "url", cfg.IssuerURL)
-			break
+	go func() {
+		maxRetries := 60
+		retryDelay := 5 * time.Second
+		maxRetryDelay := 2 * time.Minute
+
+		for attempt := 1; attempt <= maxRetries; attempt++ {
+			p, err := oauth.NewProvider(ctx, oauth.Config{
+				IssuerURL:    cfg.IssuerURL,
+				ClientID:     cfg.ClientID,
+				ClientSecret: cfg.ClientSecret,
+				RedirectURL:  cfg.BaseURL + "/callback",
+			})
+			if err == nil {
+				provider = p
+				close(providerReady)
+				slog.Info("Successfully connected to OIDC provider", "url", cfg.IssuerURL)
+				return
+			}
+
+			slog.Warn("Failed to connect to OIDC provider", "attempt", attempt, "max_attempts", maxRetries, "error", err)
+
+			if attempt == maxRetries {
+				slog.Error("Failed to setup OIDC provider after all retries", "attempts", maxRetries)
+				return
+			}
+
+			// Exponential backoff with max delay
+			currentDelay := retryDelay * time.Duration(attempt)
+			if currentDelay > maxRetryDelay {
+				currentDelay = maxRetryDelay
+			}
+
+			slog.Info("Retrying OIDC connection", "delay", currentDelay)
+			time.Sleep(currentDelay)
 		}
-
-		slog.Warn("Failed to connect to OIDC provider", "attempt", attempt, "max_attempts", maxRetries, "error", err)
-
-		if attempt == maxRetries {
-			slog.Error("Failed to setup OIDC provider, giving up", "attempts", maxRetries)
-			os.Exit(1)
-		}
-
-		// Exponential backoff with max delay
-		currentDelay := retryDelay * time.Duration(attempt)
-		if currentDelay > maxRetryDelay {
-			currentDelay = maxRetryDelay
-		}
-
-		slog.Info("Retrying OIDC connection", "delay", currentDelay)
-		time.Sleep(currentDelay)
-	}
-
-	loginHandler := handlers.NewLoginHandler(
-		provider,
-		jwtManager,
-		cfg.ClusterName,
-		clusterServer,
-		clusterCA,
-		cfg.SessionTTL,
-		cfg.RefreshTokenTTL,
-		cfg.AllowedGroups,
-		sessionClient,
-	)
-
-	refreshHandler := handlers.NewRefreshHandler(
-		provider,
-		jwtManager,
-		cfg.ClusterName,
-		clusterServer,
-		clusterCA,
-		cfg.RefreshTokenTTL,
-		cfg.RotationWindow,
-	)
+	}()
 
 	mux := http.NewServeMux()
+
+	// Middleware to check if OIDC provider is ready
+	requireProvider := func(next http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			select {
+			case <-providerReady:
+				// Provider is ready, proceed
+				next(w, r)
+			default:
+				// Provider not ready yet
+				http.Error(w, "Service temporarily unavailable: OIDC provider initializing", http.StatusServiceUnavailable)
+			}
+		}
+	}
+
+	// Create handlers that will use the provider once it's ready
+	var loginHandler *handlers.LoginHandler
+	var refreshHandler *handlers.RefreshHandler
+
+	// Lazy initialization of handlers once provider is ready
+	getLoginHandler := func() *handlers.LoginHandler {
+		if loginHandler == nil && provider != nil {
+			loginHandler = handlers.NewLoginHandler(
+				provider,
+				jwtManager,
+				cfg.ClusterName,
+				clusterServer,
+				clusterCA,
+				cfg.SessionTTL,
+				cfg.RefreshTokenTTL,
+				cfg.AllowedGroups,
+				sessionClient,
+			)
+		}
+		return loginHandler
+	}
+
+	getRefreshHandler := func() *handlers.RefreshHandler {
+		if refreshHandler == nil && provider != nil {
+			refreshHandler = handlers.NewRefreshHandler(
+				provider,
+				jwtManager,
+				cfg.ClusterName,
+				clusterServer,
+				clusterCA,
+				cfg.RefreshTokenTTL,
+				cfg.RotationWindow,
+			)
+		}
+		return refreshHandler
+	}
+
 	mux.HandleFunc("/info", handlers.HandleInfo(
 		cfg.ClusterName,
 		clusterServer,
@@ -199,10 +235,18 @@ func main() {
 		cfg.ClientID,
 		cfg.BaseURL,
 	))
-	mux.HandleFunc("/start-login", loginHandler.HandleStartLogin)
-	mux.HandleFunc("/watch", loginHandler.HandleWatch)
-	mux.HandleFunc("/callback", loginHandler.HandleCallback)
-	mux.HandleFunc("/refresh", refreshHandler.HandleRefresh)
+	mux.HandleFunc("/start-login", requireProvider(func(w http.ResponseWriter, r *http.Request) {
+		getLoginHandler().HandleStartLogin(w, r)
+	}))
+	mux.HandleFunc("/watch", requireProvider(func(w http.ResponseWriter, r *http.Request) {
+		getLoginHandler().HandleWatch(w, r)
+	}))
+	mux.HandleFunc("/callback", requireProvider(func(w http.ResponseWriter, r *http.Request) {
+		getLoginHandler().HandleCallback(w, r)
+	}))
+	mux.HandleFunc("/refresh", requireProvider(func(w http.ResponseWriter, r *http.Request) {
+		getRefreshHandler().HandleRefresh(w, r)
+	}))
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("OK"))
