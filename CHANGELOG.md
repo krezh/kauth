@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.2.6](https://github.com/krezh/kauth/compare/v0.2.5...v0.2.6) (2026-04-24)
+
+
+### Bug Fixes
+
+* **deps:** update kubernetes monorepo ( v0.35.4 → v0.36.0 ) ([#172](https://github.com/krezh/kauth/issues/172)) ([ffea0a9](https://github.com/krezh/kauth/commit/ffea0a91924bcd55f4a005b6e396064a0785cd2a))
+
+
+### Miscellaneous Chores
+
+* **nix:** lock file maintenance ([#167](https://github.com/krezh/kauth/issues/167)) ([90e0376](https://github.com/krezh/kauth/commit/90e03763e93bf642a37d9b1641a83b3ffb44bfdf))
+* **nix:** lock file maintenance ([#169](https://github.com/krezh/kauth/issues/169)) ([5e2e434](https://github.com/krezh/kauth/commit/5e2e434c7fa7082c3d2930951484d93b3ee63fa8))
+* **nix:** lock file maintenance ([#170](https://github.com/krezh/kauth/issues/170)) ([787f08a](https://github.com/krezh/kauth/commit/787f08ade02d5a98a413673483fe03ae517f78d2))
+* **nix:** lock file maintenance ([#173](https://github.com/krezh/kauth/issues/173)) ([4b1df2c](https://github.com/krezh/kauth/commit/4b1df2cd4e43b60aa749dd0a2604979e7eb923b2))
+
 ## [0.2.5](https://github.com/krezh/kauth/compare/v0.2.4...v0.2.5) (2026-04-19)
 
 
