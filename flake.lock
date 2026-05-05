@@ -88,10 +88,10 @@
         ]
       },
       "locked": {
-        "lastModified": 1777835412,
-        "narHash": "sha256-bNd8ZYXlo0IXik1DyEOxL3aS01HaDoNc5AqSj1MAGY8=",
+        "lastModified": 1777925836,
+        "narHash": "sha256-FwX/SdIutotOKn3XFHCAuqpZ7otM9h6au2UEKDTG648=",
         "ref": "refs/heads/main",
-        "rev": "8dc99d1095203caca2e6feab611eb83ca9bdd07b",
+        "rev": "71afac31371296adbd0537f8a306b90615375391",
         "shallow": true,
         "type": "git",
         "url": "https://github.com/purpleclay/go-overlay"
