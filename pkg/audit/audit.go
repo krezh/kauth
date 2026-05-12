@@ -10,12 +10,12 @@ import (
 
 // Event types
 const (
-	EventLoginSuccess    = "login_success"
-	EventLoginFailure    = "login_failure"
-	EventRefreshSuccess  = "refresh_success"
-	EventRefreshFailure  = "refresh_failure"
-	EventAuthzAllow      = "authorization_allow"
-	EventAuthzDeny       = "authorization_deny"
+	EventLoginSuccess   = "login_success"
+	EventLoginFailure   = "login_failure"
+	EventRefreshSuccess = "refresh_success"
+	EventRefreshFailure = "refresh_failure"
+	EventAuthzAllow     = "authorization_allow"
+	EventAuthzDeny      = "authorization_deny"
 )
 
 // Log logs an audit event with structured fields
@@ -27,7 +27,7 @@ func Log(ctx context.Context, r *http.Request, event string, attrs ...any) {
 	baseAttrs := []any{
 		"audit_event", event,
 		"request_id", requestID,
-		"remote_addr", r.RemoteAddr,
+		"remote_addr", middleware.GetClientIP(r),
 		"user_agent", r.UserAgent(),
 	}
 

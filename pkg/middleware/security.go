@@ -5,9 +5,11 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"log/slog"
+	"net"
 	"net/http"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -125,17 +127,29 @@ func (rl *RateLimiter) getVisitor(ip string) *rate.Limiter {
 	return limiter
 }
 
+func GetClientIP(r *http.Request) string {
+	if xri := r.Header.Get("X-Real-IP"); xri != "" {
+		return xri
+	}
+
+	if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+		parts := strings.Split(xff, ",")
+		if len(parts) > 0 {
+			return strings.TrimSpace(parts[0])
+		}
+		return xff
+	}
+
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
+	}
+	return r.RemoteAddr
+}
+
 // Middleware returns a rate limiting middleware
 func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Get real IP (handle proxies)
-		ip := r.Header.Get("X-Real-IP")
-		if ip == "" {
-			ip = r.Header.Get("X-Forwarded-For")
-		}
-		if ip == "" {
-			ip = r.RemoteAddr
-		}
+		ip := GetClientIP(r)
 
 		limiter := rl.getVisitor(ip)
 		if !limiter.Allow() {
@@ -208,8 +222,9 @@ func RequestLogger(next http.Handler) http.Handler {
 			strconv.Itoa(rw.statusCode),
 		).Observe(duration.Seconds())
 
-		// Skip logging for health check endpoint to reduce noise
-		if r.URL.Path == "/health" {
+		// Skip logging for health and metrics endpoints to reduce noise
+		switch r.URL.Path {
+		case "/health", "/metrics":
 			return
 		}
 
@@ -220,7 +235,7 @@ func RequestLogger(next http.Handler) http.Handler {
 			"path", r.URL.Path,
 			"status", rw.statusCode,
 			"duration_ms", duration.Milliseconds(),
-			"remote_addr", r.RemoteAddr,
+			"remote_addr", GetClientIP(r),
 		)
 	})
 }
