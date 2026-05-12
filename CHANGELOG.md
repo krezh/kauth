@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.8](https://github.com/krezh/kauth/compare/v0.2.7...v0.2.8) (2026-05-12)
+
+
+### Bug Fixes
+
+* **server:** fix ip handling ([04f7ca1](https://github.com/krezh/kauth/commit/04f7ca197391b6d8faca9f997ae8dccc6319f383))
+
+
+### Miscellaneous Chores
+
+* **nix:** lock file maintenance ([#197](https://github.com/krezh/kauth/issues/197)) ([a57086a](https://github.com/krezh/kauth/commit/a57086a083b1cfcf293e94fe0f0caef7830dee3a))
+
 ## [0.2.7](https://github.com/krezh/kauth/compare/v0.2.6...v0.2.7) (2026-05-10)
 
 
