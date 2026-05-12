@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/netip"
 	"slices"
 	"strconv"
 	"strings"
@@ -88,23 +89,26 @@ func CORS(allowedOrigins []string) func(http.Handler) http.Handler {
 
 // RateLimiter provides per-IP rate limiting
 type RateLimiter struct {
-	visitors map[string]*rate.Limiter
-	mu       sync.RWMutex
-	rate     rate.Limit
-	burst    int
-	cleanup  time.Duration
+	visitors   map[string]*rate.Limiter
+	mu         sync.RWMutex
+	rate       rate.Limit
+	burst      int
+	cleanup    time.Duration
+	ipExtractor *ClientIPExtractor
 }
 
 // NewRateLimiter creates a new rate limiter
 // rps: requests per second
 // burst: maximum burst size
 // cleanup: interval to clean up old entries
-func NewRateLimiter(rps float64, burst int, cleanup time.Duration) *RateLimiter {
+// trustedProxies: CIDR blocks for trusted reverse proxies (e.g., "10.0.0.0/8")
+func NewRateLimiter(rps float64, burst int, cleanup time.Duration, trustedProxies []string) *RateLimiter {
 	rl := &RateLimiter{
-		visitors: make(map[string]*rate.Limiter),
-		rate:     rate.Limit(rps),
-		burst:    burst,
-		cleanup:  cleanup,
+		visitors:   make(map[string]*rate.Limiter),
+		rate:       rate.Limit(rps),
+		burst:      burst,
+		cleanup:    cleanup,
+		ipExtractor: NewClientIPExtractor(trustedProxies),
 	}
 
 	// Start cleanup goroutine
@@ -127,6 +131,20 @@ func (rl *RateLimiter) getVisitor(ip string) *rate.Limiter {
 	return limiter
 }
 
+type ClientIPExtractor struct {
+	trustedProxies []netip.Prefix
+}
+
+func NewClientIPExtractor(trustedProxies []string) *ClientIPExtractor {
+	prefixes := make([]netip.Prefix, 0, len(trustedProxies))
+	for _, cidr := range trustedProxies {
+		if prefix, err := netip.ParsePrefix(cidr); err == nil {
+			prefixes = append(prefixes, prefix)
+		}
+	}
+	return &ClientIPExtractor{trustedProxies: prefixes}
+}
+
 func GetClientIP(r *http.Request) string {
 	if xri := r.Header.Get("X-Real-IP"); xri != "" {
 		return xri
@@ -146,10 +164,54 @@ func GetClientIP(r *http.Request) string {
 	return r.RemoteAddr
 }
 
+func (e *ClientIPExtractor) isTrustedProxy(r *http.Request) bool {
+	if len(e.trustedProxies) == 0 {
+		return false
+	}
+
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = r.RemoteAddr
+	}
+
+	ip, err := netip.ParseAddr(host)
+	if err != nil {
+		return false
+	}
+
+	for _, prefix := range e.trustedProxies {
+		if prefix.Contains(ip) {
+			return true
+		}
+	}
+	return false
+}
+
+func (e *ClientIPExtractor) GetClientIP(r *http.Request) string {
+	if e.isTrustedProxy(r) {
+		if xri := r.Header.Get("X-Real-IP"); xri != "" {
+			return xri
+		}
+
+		if xff := r.Header.Get("X-Forwarded-For"); xff != "" {
+			parts := strings.Split(xff, ",")
+			if len(parts) > 0 {
+				return strings.TrimSpace(parts[0])
+			}
+			return xff
+		}
+	}
+
+	if host, _, err := net.SplitHostPort(r.RemoteAddr); err == nil {
+		return host
+	}
+	return r.RemoteAddr
+}
+
 // Middleware returns a rate limiting middleware
 func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		ip := GetClientIP(r)
+		ip := rl.ipExtractor.GetClientIP(r)
 
 		limiter := rl.getVisitor(ip)
 		if !limiter.Allow() {
@@ -197,47 +259,49 @@ func RequestID(next http.Handler) http.Handler {
 }
 
 // RequestLogger logs HTTP requests and records metrics
-func RequestLogger(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		start := time.Now()
+func RequestLogger(ipExtractor *ClientIPExtractor) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			start := time.Now()
 
-		// Track in-flight requests
-		metrics.HTTPRequestsInFlight.Inc()
-		defer metrics.HTTPRequestsInFlight.Dec()
+			// Track in-flight requests
+			metrics.HTTPRequestsInFlight.Inc()
+			defer metrics.HTTPRequestsInFlight.Dec()
 
-		// Get request ID from context
-		requestID, _ := r.Context().Value(RequestIDKey).(string)
+			// Get request ID from context
+			requestID, _ := r.Context().Value(RequestIDKey).(string)
 
-		// Create a response wrapper to capture status code
-		rw := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
+			// Create a response wrapper to capture status code
+			rw := &responseWriter{ResponseWriter: w, statusCode: http.StatusOK}
 
-		next.ServeHTTP(rw, r)
+			next.ServeHTTP(rw, r)
 
-		duration := time.Since(start)
+			duration := time.Since(start)
 
-		// Record metrics for all endpoints
-		metrics.HTTPRequestDuration.WithLabelValues(
-			r.URL.Path,
-			r.Method,
-			strconv.Itoa(rw.statusCode),
-		).Observe(duration.Seconds())
+			// Record metrics for all endpoints
+			metrics.HTTPRequestDuration.WithLabelValues(
+				r.URL.Path,
+				r.Method,
+				strconv.Itoa(rw.statusCode),
+			).Observe(duration.Seconds())
 
-		// Skip logging for health and metrics endpoints to reduce noise
-		switch r.URL.Path {
-		case "/health", "/metrics":
-			return
-		}
+			// Skip logging for health and metrics endpoints to reduce noise
+			switch r.URL.Path {
+			case "/health", "/metrics":
+				return
+			}
 
-		// Log with structured fields
-		slog.Info("HTTP request",
-			"request_id", requestID,
-			"method", r.Method,
-			"path", r.URL.Path,
-			"status", rw.statusCode,
-			"duration_ms", duration.Milliseconds(),
-			"remote_addr", GetClientIP(r),
-		)
-	})
+			// Log with structured fields
+			slog.Info("HTTP request",
+				"request_id", requestID,
+				"method", r.Method,
+				"path", r.URL.Path,
+				"status", rw.statusCode,
+				"duration_ms", duration.Milliseconds(),
+				"remote_addr", ipExtractor.GetClientIP(r),
+			)
+		})
+	}
 }
 
 // generateRequestID generates a unique request ID

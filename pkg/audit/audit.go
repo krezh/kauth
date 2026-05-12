@@ -8,6 +8,12 @@ import (
 	"kauth/pkg/middleware"
 )
 
+var ipExtractor *middleware.ClientIPExtractor
+
+func SetIPExtractor(extractor *middleware.ClientIPExtractor) {
+	ipExtractor = extractor
+}
+
 // Event types
 const (
 	EventLoginSuccess   = "login_success"
@@ -23,11 +29,18 @@ func Log(ctx context.Context, r *http.Request, event string, attrs ...any) {
 	// Get request ID from context
 	requestID, _ := ctx.Value(middleware.RequestIDKey).(string)
 
+	var remoteAddr string
+	if ipExtractor != nil {
+		remoteAddr = ipExtractor.GetClientIP(r)
+	} else {
+		remoteAddr = middleware.GetClientIP(r)
+	}
+
 	// Build base attributes
 	baseAttrs := []any{
 		"audit_event", event,
 		"request_id", requestID,
-		"remote_addr", middleware.GetClientIP(r),
+		"remote_addr", remoteAddr,
 		"user_agent", r.UserAgent(),
 	}
 

@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"kauth/pkg/audit"
 	"kauth/pkg/handlers"
 	"kauth/pkg/jwt"
 	"kauth/pkg/middleware"
@@ -77,9 +78,10 @@ func main() {
 		RefreshTokenTTL:  getEnvDuration("REFRESH_TOKEN_TTL", 7*24*time.Hour),
 		AllowedOrigins:   getEnvStringSlice("ALLOWED_ORIGINS", []string{}),
 		AllowedGroups:    getEnvStringSlice("ALLOWED_GROUPS", []string{}),
-		RateLimitRPS:     getEnvFloat("RATE_LIMIT_RPS", 10.0),
-		RateLimitBurst:   getEnvInt("RATE_LIMIT_BURST", 20),
-		RotationWindow:   getEnvInt("ROTATION_WINDOW", 2),
+		RateLimitRPS:        getEnvFloat("RATE_LIMIT_RPS", 10.0),
+		RateLimitBurst:    getEnvInt("RATE_LIMIT_BURST", 20),
+		RotationWindow:    getEnvInt("ROTATION_WINDOW", 2),
+		TrustedProxyCIDRs: getEnvStringSlice("TRUSTED_PROXY_CIDRS", []string{}),
 	}
 
 	if cfg.IssuerURL == "" || cfg.ClientID == "" || cfg.ClientSecret == "" {
@@ -259,8 +261,14 @@ func main() {
 	// Request ID (must be first to ensure all logs have request ID)
 	handler = middleware.RequestID(handler)
 
+	// IP extraction with trusted proxy support
+	ipExtractor := middleware.NewClientIPExtractor(cfg.TrustedProxyCIDRs)
+
 	// Request logging
-	handler = middleware.RequestLogger(handler)
+	handler = middleware.RequestLogger(ipExtractor)(handler)
+
+	// Audit logging
+	audit.SetIPExtractor(ipExtractor)
 
 	// Security headers
 	handler = middleware.SecurityHeaders(handler)
@@ -276,7 +284,7 @@ func main() {
 	}
 
 	// Rate limiting
-	rateLimiter := middleware.NewRateLimiter(cfg.RateLimitRPS, cfg.RateLimitBurst, 5*time.Minute)
+	rateLimiter := middleware.NewRateLimiter(cfg.RateLimitRPS, cfg.RateLimitBurst, 5*time.Minute, cfg.TrustedProxyCIDRs)
 	handler = rateLimiter.Middleware(handler)
 
 	slog.Info("Starting kauth server",

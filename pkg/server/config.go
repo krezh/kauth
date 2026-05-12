@@ -31,6 +31,7 @@ type Config struct {
 	RateLimitRPS   float64  // Rate limit requests per second (default: 10)
 	RateLimitBurst int      // Rate limit burst size (default: 20)
 	RotationWindow int      // Number of previous refresh tokens to accept (default: 2)
+	TrustedProxyCIDRs []string // CIDR blocks for trusted reverse proxies (e.g., "10.0.0.0/8,172.16.0.0/12")
 
 	// Authorization Configuration
 	AllowedGroups []string // OIDC groups allowed to authenticate (empty = allow all)
