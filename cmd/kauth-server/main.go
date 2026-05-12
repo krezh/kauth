@@ -258,14 +258,14 @@ func main() {
 	// Apply middleware
 	var handler http.Handler = mux
 
-	// Request ID (must be first to ensure all logs have request ID)
-	handler = middleware.RequestID(handler)
-
 	// IP extraction with trusted proxy support
 	ipExtractor := middleware.NewClientIPExtractor(cfg.TrustedProxyCIDRs)
 
 	// Request logging
 	handler = middleware.RequestLogger(ipExtractor)(handler)
+
+	// Request ID (applied last, runs first to set context for all other middleware)
+	handler = middleware.RequestID(handler)
 
 	// Audit logging
 	audit.SetIPExtractor(ipExtractor)

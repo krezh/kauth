@@ -21,7 +21,7 @@ import (
 
 type contextKey string
 
-const RequestIDKey contextKey = "request_id"
+const RequestIDKey = contextKey("request_id")
 
 // SecurityHeaders adds security headers to responses
 func SecurityHeaders(next http.Handler) http.Handler {
@@ -89,11 +89,11 @@ func CORS(allowedOrigins []string) func(http.Handler) http.Handler {
 
 // RateLimiter provides per-IP rate limiting
 type RateLimiter struct {
-	visitors   map[string]*rate.Limiter
-	mu         sync.RWMutex
-	rate       rate.Limit
-	burst      int
-	cleanup    time.Duration
+	visitors    map[string]*rate.Limiter
+	mu          sync.RWMutex
+	rate        rate.Limit
+	burst       int
+	cleanup     time.Duration
 	ipExtractor *ClientIPExtractor
 }
 
@@ -104,10 +104,10 @@ type RateLimiter struct {
 // trustedProxies: CIDR blocks for trusted reverse proxies (e.g., "10.0.0.0/8")
 func NewRateLimiter(rps float64, burst int, cleanup time.Duration, trustedProxies []string) *RateLimiter {
 	rl := &RateLimiter{
-		visitors:   make(map[string]*rate.Limiter),
-		rate:       rate.Limit(rps),
-		burst:      burst,
-		cleanup:    cleanup,
+		visitors:    make(map[string]*rate.Limiter),
+		rate:        rate.Limit(rps),
+		burst:       burst,
+		cleanup:     cleanup,
 		ipExtractor: NewClientIPExtractor(trustedProxies),
 	}
 
