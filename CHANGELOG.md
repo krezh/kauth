@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.2.9](https://github.com/krezh/kauth/compare/v0.2.8...v0.2.9) (2026-05-12)
+
+
+### Bug Fixes
+
+* **middleware:** fix request ID context propagation ([601ee26](https://github.com/krezh/kauth/commit/601ee260e30add4b0171b75017bc5aeaaf5d7e70))
+* **security:** add TRUSTED_PROXY_CIDRS ([a389db0](https://github.com/krezh/kauth/commit/a389db0047c1e29ac72082ba6446f3fa5b92a4ab))
+
 ## [0.2.8](https://github.com/krezh/kauth/compare/v0.2.7...v0.2.8) (2026-05-12)
 
 
