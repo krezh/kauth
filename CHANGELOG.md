@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.11](https://github.com/krezh/kauth/compare/v0.2.10...v0.2.11) (2026-05-14)
+
+
+### Bug Fixes
+
+* **metrics:** remove metrics ([7d3b948](https://github.com/krezh/kauth/commit/7d3b948474098bc74a19ef7a69c369b941fca6c2))
+
 ## [0.2.10](https://github.com/krezh/kauth/compare/v0.2.9...v0.2.10) (2026-05-13)
 
 
