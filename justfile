@@ -7,9 +7,15 @@ default:
 # Run go mod tidy
 tidy:
     go mod tidy
+
 # Run tests
 test:
     go test ./...
+
+# Run tests with coverage
+coverage:
+    go test -coverprofile=coverage.out ./...
+    go tool cover -html=coverage.out -o coverage.html
 
 fmt:
     go fmt ./...
@@ -24,8 +30,16 @@ build:
     go build ./cmd/kauth
     go build ./cmd/kauth-server
 
-# Format and lint
-check: fmt test lint
+# Build docker image for kauth-server
+docker-build: build
+    docker build -t ghcr.io/krezh/kauth-server:latest .
+
+# Validate Helm chart
+helm-lint:
+    helm lint helm/
+
+# Format, vet, test, lint
+check: fmt vet test lint
 
 # Update flake
 update:
