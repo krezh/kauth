@@ -14,53 +14,53 @@ func TestRateLimiter_IPExtraction(t *testing.T) {
 	}))
 
 	tests := []struct {
-		name           string
-		xRealIP        string
-		xForwardedFor  string
-		remoteAddr     string
-		expectedIP     string
+		name          string
+		xRealIP       string
+		xForwardedFor string
+		remoteAddr    string
+		expectedIP    string
 	}{
 		{
-			name:           "X-Real-IP takes precedence",
-			xRealIP:        "192.168.1.100",
-			xForwardedFor:  "10.0.0.1",
-			remoteAddr:     "127.0.0.1:12345",
-			expectedIP:     "192.168.1.100",
+			name:          "X-Real-IP takes precedence",
+			xRealIP:       "192.168.1.100",
+			xForwardedFor: "10.0.0.1",
+			remoteAddr:    "127.0.0.1:12345",
+			expectedIP:    "192.168.1.100",
 		},
 		{
-			name:           "X-Forwarded-For when no X-Real-IP",
-			xRealIP:        "",
-			xForwardedFor:  "203.0.113.50, 10.0.0.1",
-			remoteAddr:     "127.0.0.1:12345",
-			expectedIP:     "203.0.113.50",
+			name:          "X-Forwarded-For when no X-Real-IP",
+			xRealIP:       "",
+			xForwardedFor: "203.0.113.50, 10.0.0.1",
+			remoteAddr:    "127.0.0.1:12345",
+			expectedIP:    "203.0.113.50",
 		},
 		{
-			name:           "X-Forwarded-For single IP",
-			xRealIP:        "",
-			xForwardedFor:  "203.0.113.50",
-			remoteAddr:     "127.0.0.1:12345",
-			expectedIP:     "203.0.113.50",
+			name:          "X-Forwarded-For single IP",
+			xRealIP:       "",
+			xForwardedFor: "203.0.113.50",
+			remoteAddr:    "127.0.0.1:12345",
+			expectedIP:    "203.0.113.50",
 		},
 		{
-			name:           "RemoteAddr fallback",
-			xRealIP:        "",
-			xForwardedFor:  "",
-			remoteAddr:     "192.168.1.1:8080",
-			expectedIP:     "192.168.1.1",
+			name:          "RemoteAddr fallback",
+			xRealIP:       "",
+			xForwardedFor: "",
+			remoteAddr:    "192.168.1.1:8080",
+			expectedIP:    "192.168.1.1",
 		},
 		{
-			name:           "RemoteAddr without port",
-			xRealIP:        "",
-			xForwardedFor:  "",
-			remoteAddr:     "192.168.1.1",
-			expectedIP:     "192.168.1.1",
+			name:          "RemoteAddr without port",
+			xRealIP:       "",
+			xForwardedFor: "",
+			remoteAddr:    "192.168.1.1",
+			expectedIP:    "192.168.1.1",
 		},
 		{
-			name:           "X-Forwarded-For with extra spaces",
-			xRealIP:        "",
-			xForwardedFor:  "  203.0.113.50  ,  10.0.0.1  ",
-			remoteAddr:     "127.0.0.1:12345",
-			expectedIP:     "203.0.113.50",
+			name:          "X-Forwarded-For with extra spaces",
+			xRealIP:       "",
+			xForwardedFor: "  203.0.113.50  ,  10.0.0.1  ",
+			remoteAddr:    "127.0.0.1:12345",
+			expectedIP:    "203.0.113.50",
 		},
 	}
 
@@ -104,60 +104,60 @@ func TestRateLimiter_AllowsRequests(t *testing.T) {
 
 func TestGetClientIP(t *testing.T) {
 	tests := []struct {
-		name           string
-		xRealIP        string
-		xForwardedFor  string
-		remoteAddr     string
-		expectedIP     string
+		name          string
+		xRealIP       string
+		xForwardedFor string
+		remoteAddr    string
+		expectedIP    string
 	}{
 		{
-			name:           "X-Real-IP takes precedence",
-			xRealIP:        "192.168.1.100",
-			xForwardedFor:  "10.0.0.1",
-			remoteAddr:     "127.0.0.1:12345",
-			expectedIP:     "192.168.1.100",
+			name:          "X-Real-IP takes precedence",
+			xRealIP:       "192.168.1.100",
+			xForwardedFor: "10.0.0.1",
+			remoteAddr:    "127.0.0.1:12345",
+			expectedIP:    "192.168.1.100",
 		},
 		{
-			name:           "X-Forwarded-For when no X-Real-IP",
-			xRealIP:        "",
-			xForwardedFor:  "203.0.113.50, 10.0.0.1",
-			remoteAddr:     "127.0.0.1:12345",
-			expectedIP:     "203.0.113.50",
+			name:          "X-Forwarded-For when no X-Real-IP",
+			xRealIP:       "",
+			xForwardedFor: "203.0.113.50, 10.0.0.1",
+			remoteAddr:    "127.0.0.1:12345",
+			expectedIP:    "203.0.113.50",
 		},
 		{
-			name:           "X-Forwarded-For single IP",
-			xRealIP:        "",
-			xForwardedFor:  "203.0.113.50",
-			remoteAddr:     "127.0.0.1:12345",
-			expectedIP:     "203.0.113.50",
+			name:          "X-Forwarded-For single IP",
+			xRealIP:       "",
+			xForwardedFor: "203.0.113.50",
+			remoteAddr:    "127.0.0.1:12345",
+			expectedIP:    "203.0.113.50",
 		},
 		{
-			name:           "RemoteAddr fallback with port",
-			xRealIP:        "",
-			xForwardedFor:  "",
-			remoteAddr:     "192.168.1.1:8080",
-			expectedIP:     "192.168.1.1",
+			name:          "RemoteAddr fallback with port",
+			xRealIP:       "",
+			xForwardedFor: "",
+			remoteAddr:    "192.168.1.1:8080",
+			expectedIP:    "192.168.1.1",
 		},
 		{
-			name:           "RemoteAddr without port",
-			xRealIP:        "",
-			xForwardedFor:  "",
-			remoteAddr:     "192.168.1.1",
-			expectedIP:     "192.168.1.1",
+			name:          "RemoteAddr without port",
+			xRealIP:       "",
+			xForwardedFor: "",
+			remoteAddr:    "192.168.1.1",
+			expectedIP:    "192.168.1.1",
 		},
 		{
-			name:           "X-Forwarded-For with extra spaces",
-			xRealIP:        "",
-			xForwardedFor:  "  203.0.113.50  ,  10.0.0.1  ",
-			remoteAddr:     "127.0.0.1:12345",
-			expectedIP:     "203.0.113.50",
+			name:          "X-Forwarded-For with extra spaces",
+			xRealIP:       "",
+			xForwardedFor: "  203.0.113.50  ,  10.0.0.1  ",
+			remoteAddr:    "127.0.0.1:12345",
+			expectedIP:    "203.0.113.50",
 		},
 		{
-			name:           "IPv6 localhost",
-			xRealIP:        "",
-			xForwardedFor:  "",
-			remoteAddr:     "[::1]:8080",
-			expectedIP:     "::1",
+			name:          "IPv6 localhost",
+			xRealIP:       "",
+			xForwardedFor: "",
+			remoteAddr:    "[::1]:8080",
+			expectedIP:    "::1",
 		},
 	}
 

@@ -9,12 +9,9 @@ import (
 	"net/http"
 	"net/netip"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
-
-	"kauth/pkg/metrics"
 
 	"golang.org/x/time/rate"
 )
@@ -215,7 +212,6 @@ func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 
 		limiter := rl.getVisitor(ip)
 		if !limiter.Allow() {
-			metrics.RateLimitHits.Inc()
 			http.Error(w, "Rate limit exceeded", http.StatusTooManyRequests)
 			return
 		}
@@ -258,15 +254,11 @@ func RequestID(next http.Handler) http.Handler {
 	})
 }
 
-// RequestLogger logs HTTP requests and records metrics
+// RequestLogger logs HTTP requests
 func RequestLogger(ipExtractor *ClientIPExtractor) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			start := time.Now()
-
-			// Track in-flight requests
-			metrics.HTTPRequestsInFlight.Inc()
-			defer metrics.HTTPRequestsInFlight.Dec()
 
 			// Get request ID from context
 			requestID, _ := r.Context().Value(RequestIDKey).(string)
@@ -278,16 +270,9 @@ func RequestLogger(ipExtractor *ClientIPExtractor) func(http.Handler) http.Handl
 
 			duration := time.Since(start)
 
-			// Record metrics for all endpoints
-			metrics.HTTPRequestDuration.WithLabelValues(
-				r.URL.Path,
-				r.Method,
-				strconv.Itoa(rw.statusCode),
-			).Observe(duration.Seconds())
-
-			// Skip logging for health and metrics endpoints to reduce noise
+			// Skip logging for health endpoint to reduce noise
 			switch r.URL.Path {
-			case "/health", "/metrics":
+			case "/health":
 				return
 			}
 

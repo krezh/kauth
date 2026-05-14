@@ -151,35 +151,4 @@ envFrom: []
 rbac:
   create: true
 
-# Prometheus monitoring configuration
-monitoring:
-  # Enable ServiceMonitor for Prometheus Operator
-  enabled: false
-  # How often to scrape metrics
-  interval: 30s
-  # Timeout for each scrape
-  scrapeTimeout: 10s
-  # Additional labels for ServiceMonitor (e.g., release: prometheus-stack)
-  # Must match your Prometheus serviceMonitorSelector
-  labels: {}
-  # Relabeling rules for metrics
-  relabelings: []
 
-  # Grafana dashboard configuration (requires Grafana Operator)
-  grafanaDashboard:
-    # Enable GrafanaDashboard CRD creation
-    enabled: false
-    # Allow dashboard to be imported from other namespaces
-    allowCrossNamespaceImport: true
-    # Selector to match Grafana instance
-    instanceSelector:
-      matchLabels:
-        grafana.internal/instance: grafana
-    # Datasource mappings
-    datasources:
-      - datasourceName: prometheus
-        inputName: DS_PROMETHEUS
-    # Grafana folder to place dashboard in
-    # folder: "Authentication"
-    # Additional labels for GrafanaDashboard resource
-    labels: {}

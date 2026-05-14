@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"log"
 
-	"kauth/pkg/metrics"
 	"kauth/pkg/oauth"
 
 	"github.com/coreos/go-oidc/v3/oidc"
@@ -60,10 +59,8 @@ current-context: %s
 func VerifyAndExtractClaims(ctx context.Context, provider *oauth.Provider, idToken string) (*OIDCClaims, *oidc.IDToken, error) {
 	verified, err := provider.VerifyIDToken(ctx, idToken)
 	if err != nil {
-		metrics.RecordOIDCRequest("verify_id_token", "failure")
 		return nil, nil, fmt.Errorf("ID token verification failed: %w", err)
 	}
-	metrics.RecordOIDCRequest("verify_id_token", "success")
 
 	var claims OIDCClaims
 	if err := verified.Claims(&claims); err != nil {

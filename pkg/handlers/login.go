@@ -7,16 +7,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"log"
-        "log/slog"
+	"log/slog"
 	"net/http"
 	"slices"
 	"sync"
 	"time"
 
 	v1alpha1 "kauth/pkg/apis/kauth.io/v1alpha1"
+	"kauth/pkg/audit"
 	"kauth/pkg/jwt"
-        "kauth/pkg/audit"
-	"kauth/pkg/metrics"
 	"kauth/pkg/oauth"
 	"kauth/pkg/session"
 
@@ -88,11 +87,6 @@ func NewLoginHandler(
 }
 
 func (h *LoginHandler) HandleStartLogin(w http.ResponseWriter, r *http.Request) {
-	startTime := time.Now()
-	defer func() {
-		metrics.LoginDuration.WithLabelValues("start_login").Observe(time.Since(startTime).Seconds())
-	}()
-
 	// Generate state and PKCE verifier
 	state := generateRandomString(32)
 	verifier := oauth2.GenerateVerifier()
@@ -112,8 +106,6 @@ func (h *LoginHandler) HandleStartLogin(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "Failed to create session", http.StatusInternalServerError)
 		return
 	}
-
-	metrics.ActiveSessions.Inc()
 
 	// Create OAuth URL with state
 	authURL := h.provider.OAuth2Config.AuthCodeURL(
@@ -173,7 +165,6 @@ func (h *LoginHandler) HandleWatch(w http.ResponseWriter, r *http.Request) {
 	if crdSession.Status.Ready {
 		// Generate kubeconfig on-demand from stored email
 		kubeconfig := h.kubeconfigGen.Generate(crdSession.Status.Email)
-		metrics.RecordKubeconfigGenerationSuccess()
 
 		status := StatusResponse{
 			Ready:        true,
@@ -250,14 +241,8 @@ func (h *LoginHandler) sendFinalStatus(w http.ResponseWriter, status *StatusResp
 }
 
 func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
-	startTime := time.Now()
-	defer func() {
-		metrics.LoginDuration.WithLabelValues("callback").Observe(time.Since(startTime).Seconds())
-	}()
-
 	state := r.URL.Query().Get("state")
 	if state == "" {
-		metrics.RecordCallbackFailure()
 		http.Error(w, "Missing state", http.StatusBadRequest)
 		return
 	}
@@ -265,13 +250,9 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	// Decrement active sessions when done (success or failure)
-	defer metrics.ActiveSessions.Dec()
-
 	// Get session from CRD to retrieve verifier
 	crdSession, err := h.sessionClient.Get(ctx, state)
 	if err != nil {
-		metrics.RecordCallbackFailure()
 		if apierrors.IsNotFound(err) {
 			http.Error(w, "Session not found or expired", http.StatusBadRequest)
 		} else {
@@ -282,7 +263,6 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 
 	verifier := crdSession.Spec.Verifier
 	if verifier == "" {
-		metrics.RecordCallbackFailure()
 		_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
 			Ready: false,
 			Error: "Invalid session",
@@ -293,8 +273,6 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 
 	// Handle OAuth errors
 	if errParam := r.URL.Query().Get("error"); errParam != "" {
-		metrics.RecordCallbackFailure()
-		metrics.RecordLoginFailure("oauth_error_" + errParam)
 		errDesc := r.URL.Query().Get("error_description")
 		_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
 			Ready: false,
@@ -306,8 +284,6 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 
 	code := r.URL.Query().Get("code")
 	if code == "" {
-		metrics.RecordCallbackFailure()
-		metrics.RecordLoginFailure("no_code")
 		_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
 			Ready: false,
 			Error: "No authorization code returned",
@@ -316,7 +292,6 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Use custom HTTP client for metrics
 	httpClient := oauth.NewMetricsHTTPClient("token_exchange")
 	ctxWithClient := context.WithValue(ctx, oauth2.HTTPClient, httpClient)
 
@@ -326,9 +301,6 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		oauth2.VerifierOption(verifier),
 	)
 	if err != nil {
-		metrics.RecordCallbackFailure()
-		metrics.RecordLoginFailure("token_exchange_failed")
-		metrics.RecordOIDCRequest("token_exchange", "failure")
 		_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
 			Ready: false,
 			Error: fmt.Sprintf("Token exchange failed: %v", err),
@@ -336,12 +308,9 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	metrics.RecordOIDCRequest("token_exchange", "success")
 
 	idToken, ok := token.Extra("id_token").(string)
 	if !ok {
-		metrics.RecordCallbackFailure()
-		metrics.RecordLoginFailure("no_id_token")
 		_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
 			Ready: false,
 			Error: "No ID token returned",
@@ -352,8 +321,6 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 
 	claims, _, err := VerifyAndExtractClaims(ctx, h.provider, idToken)
 	if err != nil {
-		metrics.RecordCallbackFailure()
-		metrics.RecordLoginFailure("id_token_verification_failed")
 		_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
 			Ready: false,
 			Error: err.Error(),
@@ -366,9 +333,6 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	if len(h.allowedGroups) > 0 {
 		if !h.isUserAuthorized(claims.Groups) {
 			audit.AuthorizationDeny(ctx, r, claims.Email, claims.Groups, h.allowedGroups)
-			metrics.RecordCallbackFailure()
-			metrics.RecordLoginFailure("group_authorization_denied")
-			metrics.RecordGroupAuthorizationFailure()
 			_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
 				Ready: false,
 				Error: "User is not a member of allowed groups",
@@ -377,7 +341,6 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		audit.AuthorizationAllow(ctx, r, claims.Email, claims.Groups)
-		metrics.RecordGroupAuthorizationSuccess()
 	}
 
 	// Log successful authentication
@@ -389,9 +352,6 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		"groups", claims.Groups,
 		"cluster", h.kubeconfigGen.ClusterName,
 	)
-
-	metrics.RecordCallbackSuccess()
-	metrics.RecordLoginSuccess()
 
 	// Create refresh token (contains OIDC refresh token encrypted)
 	oidcRefreshToken := ""
@@ -406,7 +366,6 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		h.refreshTokenTTL,
 	)
 	if err != nil {
-		metrics.RecordLoginFailure("refresh_token_creation_failed")
 		_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
 			Ready: false,
 			Error: "Failed to create refresh token",
@@ -424,7 +383,6 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		log.Printf("Failed to update session status: %v", err)
-		metrics.RecordLoginFailure("session_update_failed")
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}

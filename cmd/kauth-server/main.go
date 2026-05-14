@@ -21,7 +21,6 @@ import (
 	"kauth/pkg/session"
 	"kauth/pkg/validation"
 
-	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 )
@@ -64,21 +63,21 @@ func main() {
 	}
 
 	cfg := server.Config{
-		IssuerURL:        getEnv("OIDC_ISSUER_URL", ""),
-		ClientID:         getEnv("OIDC_CLIENT_ID", ""),
-		ClientSecret:     getEnv("OIDC_CLIENT_SECRET", ""),
-		ClusterName:      clusterName,
-		BaseURL:          getEnv("BASE_URL", ""),
-		ListenAddr:       getEnv("LISTEN_ADDR", ":8080"),
-		TLSCertFile:      getEnv("TLS_CERT_FILE", ""),
-		TLSKeyFile:       getEnv("TLS_KEY_FILE", ""),
-		JWTSigningKey:    jwtSigningKey,
-		JWTEncryptionKey: jwtEncryptionKey,
-		SessionTTL:       getEnvDuration("SESSION_TTL", 15*time.Minute),
-		RefreshTokenTTL:  getEnvDuration("REFRESH_TOKEN_TTL", 7*24*time.Hour),
-		AllowedOrigins:   getEnvStringSlice("ALLOWED_ORIGINS", []string{}),
-		AllowedGroups:    getEnvStringSlice("ALLOWED_GROUPS", []string{}),
-		RateLimitRPS:        getEnvFloat("RATE_LIMIT_RPS", 10.0),
+		IssuerURL:         getEnv("OIDC_ISSUER_URL", ""),
+		ClientID:          getEnv("OIDC_CLIENT_ID", ""),
+		ClientSecret:      getEnv("OIDC_CLIENT_SECRET", ""),
+		ClusterName:       clusterName,
+		BaseURL:           getEnv("BASE_URL", ""),
+		ListenAddr:        getEnv("LISTEN_ADDR", ":8080"),
+		TLSCertFile:       getEnv("TLS_CERT_FILE", ""),
+		TLSKeyFile:        getEnv("TLS_KEY_FILE", ""),
+		JWTSigningKey:     jwtSigningKey,
+		JWTEncryptionKey:  jwtEncryptionKey,
+		SessionTTL:        getEnvDuration("SESSION_TTL", 15*time.Minute),
+		RefreshTokenTTL:   getEnvDuration("REFRESH_TOKEN_TTL", 7*24*time.Hour),
+		AllowedOrigins:    getEnvStringSlice("ALLOWED_ORIGINS", []string{}),
+		AllowedGroups:     getEnvStringSlice("ALLOWED_GROUPS", []string{}),
+		RateLimitRPS:      getEnvFloat("RATE_LIMIT_RPS", 10.0),
 		RateLimitBurst:    getEnvInt("RATE_LIMIT_BURST", 20),
 		RotationWindow:    getEnvInt("ROTATION_WINDOW", 2),
 		TrustedProxyCIDRs: getEnvStringSlice("TRUSTED_PROXY_CIDRS", []string{}),
@@ -253,7 +252,6 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("OK"))
 	})
-	mux.Handle("/metrics", promhttp.Handler())
 
 	// Apply middleware
 	var handler http.Handler = mux

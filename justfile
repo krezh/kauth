@@ -4,6 +4,9 @@
 default:
     @just --list
 
+# Run go mod tidy
+tidy:
+    go mod tidy
 # Run tests
 test:
     go test ./...
@@ -33,9 +36,9 @@ flake-build:
     nix build .#kauth-server
 
 vendor:
-    gomod2nix
+    govendor
 
-pre-commit: update vet vendor check flake-build
+pre-commit: update tidy vet vendor check flake-build
 
 # Clean artifacts
 clean:

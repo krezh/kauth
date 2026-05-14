@@ -9,7 +9,6 @@ import (
 	"time"
 
 	"kauth/pkg/jwt"
-	"kauth/pkg/metrics"
 	"kauth/pkg/oauth"
 
 	"golang.org/x/oauth2"
@@ -56,11 +55,6 @@ func NewRefreshHandler(
 }
 
 func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
-	startTime := time.Now()
-	defer func() {
-		metrics.TokenRefreshDuration.Observe(time.Since(startTime).Seconds())
-	}()
-
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -68,13 +62,11 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 
 	var req RefreshRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		metrics.RecordTokenRefreshFailure("invalid_request")
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
 
 	if req.RefreshToken == "" {
-		metrics.RecordTokenRefreshFailure("missing_token")
 		http.Error(w, "Missing refresh_token", http.StatusBadRequest)
 		return
 	}
@@ -85,15 +77,12 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 		switch err {
 		case jwt.ErrExpiredToken:
 			log.Printf("REFRESH_FAILURE: reason=token_expired")
-			metrics.RecordTokenRefreshFailure("token_expired")
 			http.Error(w, "Refresh token expired", http.StatusUnauthorized)
 		case jwt.ErrInvalidSignature:
 			log.Printf("REFRESH_FAILURE: reason=invalid_signature")
-			metrics.RecordTokenRefreshFailure("invalid_signature")
 			http.Error(w, "Invalid refresh token", http.StatusUnauthorized)
 		default:
 			log.Printf("REFRESH_FAILURE: reason=invalid_token error=%q", err)
-			metrics.RecordTokenRefreshFailure("invalid_token")
 			http.Error(w, "Invalid refresh token", http.StatusUnauthorized)
 		}
 		return
@@ -110,7 +99,6 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 		RefreshToken: refreshToken.OIDCRefreshToken,
 	}
 
-	// Use custom HTTP client for metrics
 	httpClient := oauth.NewMetricsHTTPClient("token_refresh")
 	ctxWithClient := context.WithValue(ctx, oauth2.HTTPClient, httpClient)
 
@@ -118,18 +106,14 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 	newToken, err := h.provider.OAuth2Config.TokenSource(ctxWithClient, oldToken).Token()
 	if err != nil {
 		log.Printf("REFRESH_FAILURE: user=%q reason=oidc_refresh_failed error=%q", refreshToken.UserEmail, err)
-		metrics.RecordTokenRefreshFailure("oidc_refresh_failed")
-		metrics.RecordOIDCRequest("token_refresh", "failure")
 		http.Error(w, fmt.Sprintf("Failed to refresh token: %v", err), http.StatusUnauthorized)
 		return
 	}
-	metrics.RecordOIDCRequest("token_refresh", "success")
 
 	// Extract new ID token
 	idToken, ok := newToken.Extra("id_token").(string)
 	if !ok {
 		log.Printf("REFRESH_FAILURE: user=%q reason=no_id_token", refreshToken.UserEmail)
-		metrics.RecordTokenRefreshFailure("no_id_token")
 		http.Error(w, "No ID token in refresh response", http.StatusInternalServerError)
 		return
 	}
@@ -138,7 +122,6 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 	claims, _, err := VerifyAndExtractClaims(ctx, h.provider, idToken)
 	if err != nil {
 		log.Printf("REFRESH_FAILURE: user=%q reason=id_token_verification_failed error=%q", refreshToken.UserEmail, err)
-		metrics.RecordTokenRefreshFailure("id_token_verification_failed")
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -146,7 +129,6 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 	// Verify the user email matches (security check)
 	if claims.Email != refreshToken.UserEmail {
 		log.Printf("REFRESH_FAILURE: user=%q reason=user_mismatch claimed_email=%q", refreshToken.UserEmail, claims.Email)
-		metrics.RecordTokenRefreshFailure("user_mismatch")
 		http.Error(w, "Token user mismatch", http.StatusUnauthorized)
 		return
 	}
@@ -160,7 +142,6 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 	)
 	if err != nil {
 		log.Printf("REFRESH_FAILURE: user=%q reason=create_refresh_token_failed error=%q", claims.Email, err)
-		metrics.RecordTokenRefreshFailure("create_refresh_token_failed")
 		http.Error(w, "Failed to create new refresh token", http.StatusInternalServerError)
 		return
 	}
@@ -175,11 +156,8 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 	log.Printf("REFRESH_SUCCESS: user=%q name=%q sub=%q groups=%v rotation_counter=%d cluster=%q expires_in=%ds",
 		claims.Email, claims.Name, claims.Sub, claims.Groups, refreshToken.RotationCounter+1, h.kubeconfigGen.ClusterName, expiresIn)
 
-	metrics.RecordTokenRefreshSuccess()
-
 	// Generate updated kubeconfig
 	kubeconfig := h.kubeconfigGen.Generate(claims.Email)
-	metrics.RecordKubeconfigGenerationSuccess()
 
 	resp := RefreshResponse{
 		IDToken:      idToken,
