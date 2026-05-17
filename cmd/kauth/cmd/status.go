@@ -28,7 +28,7 @@ func init() {
 func runStatus(cmd *cobra.Command, args []string) error {
 	homeDir, err := os.UserHomeDir()
 	if err != nil {
-		return fmt.Errorf("❌ Failed to get home directory: %w", err)
+		return fmt.Errorf("failed to get home directory: %w", err)
 	}
 
 	cacheDir := filepath.Join(homeDir, ".kube", "cache")
@@ -38,7 +38,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 
 	// Check if authenticated
 	if _, err := os.Stat(tokenCachePath); os.IsNotExist(err) {
-		fmt.Println("❌ Not authenticated")
+		fmt.Println("Not authenticated")
 		fmt.Println("\nTo authenticate, run:")
 		fmt.Println("  kauth login --url <server-url>")
 		return nil
@@ -54,11 +54,11 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	var cache TokenCache
 	data, err := os.ReadFile(tokenCachePath)
 	if err != nil {
-		return fmt.Errorf("❌ Failed to read token cache: %w", err)
+		return fmt.Errorf("failed to read token cache: %w", err)
 	}
 
 	if err := json.Unmarshal(data, &cache); err != nil {
-		return fmt.Errorf("❌ Failed to parse token cache: %w", err)
+		return fmt.Errorf("failed to parse token cache: %w", err)
 	}
 
 	// Check refresh token
@@ -73,36 +73,36 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	expired := timeUntilExpiry <= 0
 
 	// Display status
-	fmt.Println("🔐 Authentication Status")
-	fmt.Println("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
-	fmt.Printf("\n📍 Server:           %s\n", serverURL)
+	fmt.Println("Authentication Status")
+	fmt.Println("-----------------------------------------------")
+	fmt.Printf("\nServer:           %s\n", serverURL)
 
 	if expired {
-		fmt.Println("⏰ Token Status:      ❌ EXPIRED")
+		fmt.Println("Token Status:      EXPIRED")
 		fmt.Printf("   Expired:          %v ago\n", -timeUntilExpiry.Round(time.Second))
 	} else {
-		fmt.Println("⏰ Token Status:      ✅ Valid")
+		fmt.Println("Token Status:      Valid")
 		fmt.Printf("   Expires At:       %s\n", cache.ExpiresAt.Local().Format(time.RFC1123))
 		fmt.Printf("   Time Remaining:   %s\n", formatDuration(timeUntilExpiry))
 	}
 
 	if hasRefreshToken {
-		fmt.Println("🔄 Refresh Token:    ✅ Available")
+		fmt.Println("Refresh Token:    Available")
 		fmt.Println("   Auto-refresh:     Enabled")
 	} else {
-		fmt.Println("🔄 Refresh Token:    ❌ Not available")
+		fmt.Println("Refresh Token:    Not available")
 	}
 
 	fmt.Println()
 
 	if expired && !hasRefreshToken {
-		fmt.Println("⚠️  Your token has expired and no refresh token is available.")
+		fmt.Println("Your token has expired and no refresh token is available.")
 		fmt.Println("\nTo re-authenticate, run:")
 		fmt.Println("  kauth login")
 	} else if expired {
-		fmt.Println("ℹ️  Your token has expired but will be automatically refreshed on next kubectl use.")
+		fmt.Println("Your token has expired but will be automatically refreshed on next kubectl use.")
 	} else if timeUntilExpiry < 5*time.Minute {
-		fmt.Println("⚠️  Your token will expire soon!")
+		fmt.Println("Your token will expire soon!")
 	}
 
 	return nil

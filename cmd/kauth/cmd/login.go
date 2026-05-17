@@ -58,19 +58,19 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	if serverURL == "" {
 		homeDir, err := os.UserHomeDir()
 		if err != nil {
-			return fmt.Errorf("❌ Failed to get home directory: %w", err)
+			return fmt.Errorf("failed to get home directory: %w", err)
 		}
 		serverURLPath := filepath.Join(homeDir, ".kube", "cache", "kauth-server-url")
 		serverURLBytes, err := os.ReadFile(serverURLPath)
 		if err != nil {
 			if os.IsNotExist(err) {
-				return fmt.Errorf("❌ No server URL specified.\n\nTo authenticate, run:\n  kauth login --url <server-url>\n\nExample:\n  kauth login --url https://kauth.example.com")
+				return fmt.Errorf("no server URL specified.\n\nTo authenticate, run:\n  kauth login --url <server-url>\n\nExample:\n  kauth login --url https://kauth.example.com")
 			}
-			return fmt.Errorf("❌ Failed to read cached server URL: %w", err)
+			return fmt.Errorf("failed to read cached server URL: %w", err)
 		}
 		serverURL = strings.TrimSpace(string(serverURLBytes))
 		if serverURL == "" {
-			return fmt.Errorf("❌ Cached server URL is empty.\n\nTo re-authenticate, run:\n  kauth login --url <server-url>")
+			return fmt.Errorf("cached server URL is empty.\n\nTo re-authenticate, run:\n  kauth login --url <server-url>")
 		}
 	}
 	// Create HTTP client with cookie jar for session affinity
@@ -83,36 +83,36 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	}
 
 	// Fetch service info
-	fmt.Printf("🔗 Connecting to %s...\n", serverURL)
+	fmt.Printf("Connecting to %s...\n", serverURL)
 
 	resp, err := client.Get(serverURL + "/info")
 	if err != nil {
-		return fmt.Errorf("❌ Failed to connect to kauth service.\n\nError: %w\n\nPlease check:\n  - Is the URL correct? (%s)\n  - Is the service running?\n  - Can you reach it from your network?", err, serverURL)
+		return fmt.Errorf("failed to connect to kauth service.\n\nError: %w\n\nPlease check:\n  - Is the URL correct? (%s)\n  - Is the service running?\n  - Can you reach it from your network?", err, serverURL)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("❌ Service returned error: %s\n\nThe kauth service at %s is not responding correctly", resp.Status, serverURL)
+		return fmt.Errorf("service returned error: %s\n\nThe kauth service at %s is not responding correctly", resp.Status, serverURL)
 	}
 
 	var info InfoResponse
 	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
-		return fmt.Errorf("❌ Failed to parse service response: %w\n\nThe service may be misconfigured or running an incompatible version", err)
+		return fmt.Errorf("failed to parse service response: %w\n\nThe service may be misconfigured or running an incompatible version", err)
 	}
 
-	fmt.Printf("📦 Cluster: %s\n", info.ClusterName)
-	fmt.Printf("🔐 Opening browser for authentication...\n\n")
+	fmt.Printf("Cluster: %s\n", info.ClusterName)
+	fmt.Printf("Opening browser for authentication...\n\n")
 
 	// Start login flow
 	loginResp, err := client.Get(serverURL + "/start-login")
 	if err != nil {
-		return fmt.Errorf("❌ Failed to start login flow: %w\n\nThe service may be temporarily unavailable", err)
+		return fmt.Errorf("failed to start login flow: %w\n\nThe service may be temporarily unavailable", err)
 	}
 	defer func() { _ = loginResp.Body.Close() }()
 
 	var loginData StartLoginResponse
 	if err := json.NewDecoder(loginResp.Body).Decode(&loginData); err != nil {
-		return fmt.Errorf("❌ Failed to parse login response: %w\n\nThe service may be misconfigured", err)
+		return fmt.Errorf("failed to parse login response: %w\n\nThe service may be misconfigured", err)
 	}
 
 	// Open browser
@@ -123,7 +123,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		fmt.Printf("If browser doesn't open, visit:\n%s\n\n", loginData.LoginURL)
 	}
 
-	fmt.Printf("⏳ Waiting for authentication to complete...\n")
+	fmt.Printf("Waiting for authentication to complete...\n")
 
 	// Watch for completion via SSE
 	status, err := watchForCompletion(client, serverURL, loginData.SessionToken)
@@ -135,14 +135,14 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	kubeconfigPath := filepath.Join(os.Getenv("HOME"), ".kube", "config")
 
 	if err := os.MkdirAll(filepath.Dir(kubeconfigPath), 0755); err != nil {
-		return fmt.Errorf("❌ Failed to create .kube directory: %w\n\nPlease check file permissions in your home directory", err)
+		return fmt.Errorf("failed to create .kube directory: %w\n\nPlease check file permissions in your home directory", err)
 	}
 
 	// Check if kubeconfig already exists and has content
 	shouldMerge := false
 	if existingData, err := os.ReadFile(kubeconfigPath); err == nil && len(existingData) > 0 {
 		// Existing kubeconfig found, ask user what to do
-		fmt.Printf("\n⚠️  Existing kubeconfig found at: %s\n", kubeconfigPath)
+		fmt.Printf("\nExisting kubeconfig found at: %s\n", kubeconfigPath)
 		fmt.Println("\nWhat would you like to do?")
 		fmt.Println("  [m] Merge - Add new cluster alongside existing configs (recommended)")
 		fmt.Println("  [o] Overwrite - Replace entire kubeconfig file")
@@ -152,7 +152,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		reader := bufio.NewReader(os.Stdin)
 		choice, err := reader.ReadString('\n')
 		if err != nil {
-			return fmt.Errorf("❌ Failed to read input: %w", err)
+			return fmt.Errorf("failed to read input: %w", err)
 		}
 		choice = strings.TrimSpace(strings.ToLower(choice))
 
@@ -162,31 +162,31 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		case "o", "overwrite":
 			shouldMerge = false
 		case "c", "cancel":
-			fmt.Println("\n❌ Cancelled. Kubeconfig not saved")
+			fmt.Println("\nCancelled. Kubeconfig not saved")
 			return nil
 		default:
-			return fmt.Errorf("❌ Invalid choice: '%s'\n\nPlease choose 'm' (merge), 'o' (overwrite), or 'c' (cancel)", choice)
+			return fmt.Errorf("invalid choice: '%s'\n\nPlease choose 'm' (merge), 'o' (overwrite), or 'c' (cancel)", choice)
 		}
 	}
 
 	if shouldMerge {
 		// Merge with existing kubeconfig
 		if err := mergeKubeconfig(kubeconfigPath, status.Kubeconfig); err != nil {
-			return fmt.Errorf("❌ Failed to merge kubeconfig: %w\n\nYour existing kubeconfig has not been modified", err)
+			return fmt.Errorf("failed to merge kubeconfig: %w\n\nYour existing kubeconfig has not been modified", err)
 		}
-		fmt.Printf("\n✅ Kubeconfig merged successfully!\n")
+		fmt.Printf("\nKubeconfig merged successfully!\n")
 	} else {
 		// Overwrite entire file
 		if err := os.WriteFile(kubeconfigPath, []byte(status.Kubeconfig), 0600); err != nil {
-			return fmt.Errorf("❌ Failed to save kubeconfig: %w\n\nPlease check file permissions", err)
+			return fmt.Errorf("failed to save kubeconfig: %w\n\nPlease check file permissions", err)
 		}
-		fmt.Printf("\n✅ Kubeconfig saved!\n")
+		fmt.Printf("\nKubeconfig saved!\n")
 	}
 
 	// Save refresh token and server URL
 	cacheDir := filepath.Join(os.Getenv("HOME"), ".kube", "cache")
 	if err := os.MkdirAll(cacheDir, 0700); err != nil {
-		return fmt.Errorf("❌ Failed to create cache directory: %w\n\nPlease check file permissions", err)
+		return fmt.Errorf("failed to create cache directory: %w\n\nPlease check file permissions", err)
 	}
 
 	if status.RefreshToken != "" {
@@ -202,8 +202,8 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "Warning: failed to save server URL: %v\n", err)
 	}
 
-	fmt.Printf("✅ Kubeconfig location: %s\n", kubeconfigPath)
-	fmt.Printf("✅ Authentication successful!\n")
+	fmt.Printf("Kubeconfig location: %s\n", kubeconfigPath)
+	fmt.Printf("Authentication successful!\n")
 
 	return nil
 }
@@ -211,12 +211,12 @@ func runLogin(cmd *cobra.Command, args []string) error {
 func watchForCompletion(client *http.Client, baseURL, sessionToken string) (*StatusResponse, error) {
 	resp, err := client.Get(fmt.Sprintf("%s/watch?session_token=%s", baseURL, sessionToken))
 	if err != nil {
-		return nil, fmt.Errorf("❌ Failed to connect to watch endpoint: %w\n\nThe service may have become unavailable", err)
+		return nil, fmt.Errorf("failed to connect to watch endpoint: %w\n\nThe service may have become unavailable", err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("❌ Watch endpoint returned error: %s\n\nYour session may have expired. Please try logging in again", resp.Status)
+		return nil, fmt.Errorf("watch endpoint returned error: %s\n\nYour session may have expired. Please try logging in again", resp.Status)
 	}
 
 	// Read SSE stream
@@ -232,7 +232,7 @@ func watchForCompletion(client *http.Client, baseURL, sessionToken string) (*Sta
 			}
 
 			if status.Error != "" {
-				return nil, fmt.Errorf("❌ Authentication failed: %s\n\nPlease try logging in again", status.Error)
+				return nil, fmt.Errorf("authentication failed: %s\n\nPlease try logging in again", status.Error)
 			}
 
 			if status.Ready && status.Kubeconfig != "" {
@@ -242,10 +242,10 @@ func watchForCompletion(client *http.Client, baseURL, sessionToken string) (*Sta
 	}
 
 	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("❌ Error reading authentication stream: %w\n\nThe connection may have been interrupted", err)
+		return nil, fmt.Errorf("error reading authentication stream: %w\n\nThe connection may have been interrupted", err)
 	}
 
-	return nil, fmt.Errorf("❌ Authentication stream ended unexpectedly.\n\nThe service may have restarted. Please try logging in again")
+	return nil, fmt.Errorf("authentication stream ended unexpectedly.\n\nThe service may have restarted. Please try logging in again")
 }
 
 func openBrowser(url string) error {
