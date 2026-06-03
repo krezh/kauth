@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.13](https://github.com/krezh/kauth/compare/0.2.12...0.2.13) (2026-06-03)
+
+
+### Miscellaneous Chores
+
+* **deps:** lock file maintenance ([#216](https://github.com/krezh/kauth/issues/216)) ([5d656bb](https://github.com/krezh/kauth/commit/5d656bbf731996bdc32d8c2f6c5546e3b79a47d6))
+* **deps:** lock file maintenance ([#217](https://github.com/krezh/kauth/issues/217)) ([d3ba9f0](https://github.com/krezh/kauth/commit/d3ba9f06e574ec85c2f3f94f7a7058c3057d8cd8))
+* **nix:** lock file maintenance ([#212](https://github.com/krezh/kauth/issues/212)) ([6f50966](https://github.com/krezh/kauth/commit/6f509660234e16f5d45b16dc7d75e42ce1d29d95))
+* **nix:** lock file maintenance ([#214](https://github.com/krezh/kauth/issues/214)) ([5148d28](https://github.com/krezh/kauth/commit/5148d289945885fad6f6a50f38deade9b9157a3a))
+* **nix:** lock file maintenance ([#215](https://github.com/krezh/kauth/issues/215)) ([8841681](https://github.com/krezh/kauth/commit/88416811be0b061990fbcd38e7bf1f17f4d6b4b8))
+* rename renovate config to .renovaterc.json5 ([fa42e52](https://github.com/krezh/kauth/commit/fa42e52a73f1ce91d754c26ec45a856f622ce5f1))
+
 ## [0.2.12](https://github.com/krezh/kauth/compare/v0.2.11...0.2.12) (2026-05-20)
 
 
