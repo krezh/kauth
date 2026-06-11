@@ -10,7 +10,9 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -23,13 +25,14 @@ var loginCmd = &cobra.Command{
 	Short: "Authenticate with Kubernetes cluster",
 	Long: `Authenticate with your Kubernetes cluster.
 
-Just provide the service URL and everything else is automatic.`,
+Clusters are discovered automatically via DNS TXT records at _kauth.<domain>.
+If no DNS records are found, the previously used server URL is tried.`,
 	RunE: runLogin,
 }
 
 func init() {
 	rootCmd.AddCommand(loginCmd)
-	loginCmd.Flags().StringVar(&serverURL, "url", "", "kauth service URL (e.g. https://kauth.example.com)")
+	loginCmd.Flags().StringVar(&serverURL, "url", "", "kauth server URL (skips DNS discovery)")
 }
 
 type InfoResponse struct {
@@ -54,158 +57,197 @@ type StatusResponse struct {
 }
 
 func runLogin(cmd *cobra.Command, args []string) error {
-	// Determine server URL
-	if serverURL == "" {
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			return fmt.Errorf("failed to get home directory: %w", err)
-		}
-		serverURLPath := filepath.Join(homeDir, ".kube", "cache", "kauth-server-url")
-		serverURLBytes, err := os.ReadFile(serverURLPath)
-		if err != nil {
-			if os.IsNotExist(err) {
-				return fmt.Errorf("no server URL specified.\n\nTo authenticate, run:\n  kauth login --url <server-url>\n\nExample:\n  kauth login --url https://kauth.example.com")
-			}
-			return fmt.Errorf("failed to read cached server URL: %w", err)
-		}
-		serverURL = strings.TrimSpace(string(serverURLBytes))
-		if serverURL == "" {
-			return fmt.Errorf("cached server URL is empty.\n\nTo re-authenticate, run:\n  kauth login --url <server-url>")
-		}
+	serverURL, err := resolveServerURL()
+	if err != nil {
+		return err
 	}
-	// Create HTTP client with cookie jar for session affinity
+
 	jar, err := cookiejar.New(nil)
 	if err != nil {
 		return fmt.Errorf("failed to create cookie jar: %w", err)
 	}
-	client := &http.Client{
-		Jar: jar,
-	}
-
-	// Fetch service info
-	fmt.Printf("Connecting to %s...\n", serverURL)
+	client := &http.Client{Jar: jar}
 
 	resp, err := client.Get(serverURL + "/info")
 	if err != nil {
-		return fmt.Errorf("failed to connect to kauth service.\n\nError: %w\n\nPlease check:\n  - Is the URL correct? (%s)\n  - Is the service running?\n  - Can you reach it from your network?", err, serverURL)
+		return fmt.Errorf("could not reach kauth at %s: %w", serverURL, err)
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("service returned error: %s\n\nThe kauth service at %s is not responding correctly", resp.Status, serverURL)
+		return fmt.Errorf("server returned %s", resp.Status)
 	}
 
 	var info InfoResponse
 	if err := json.NewDecoder(resp.Body).Decode(&info); err != nil {
-		return fmt.Errorf("failed to parse service response: %w\n\nThe service may be misconfigured or running an incompatible version", err)
+		return fmt.Errorf("invalid response from server: %w", err)
 	}
 
-	fmt.Printf("Cluster: %s\n", info.ClusterName)
-	fmt.Printf("Opening browser for authentication...\n\n")
+	serverLink := hyperlink(muted.Render(urlHost(serverURL)), serverURL)
+	fmt.Printf("\n  %s %s %s\n\n", accent.Render("◆"), accent.Render(info.ClusterName), serverLink)
 
-	// Start login flow
 	loginResp, err := client.Get(serverURL + "/start-login")
 	if err != nil {
-		return fmt.Errorf("failed to start login flow: %w\n\nThe service may be temporarily unavailable", err)
+		return fmt.Errorf("failed to start login: %w", err)
 	}
 	defer func() { _ = loginResp.Body.Close() }()
 
 	var loginData StartLoginResponse
 	if err := json.NewDecoder(loginResp.Body).Decode(&loginData); err != nil {
-		return fmt.Errorf("failed to parse login response: %w\n\nThe service may be misconfigured", err)
+		return fmt.Errorf("invalid login response: %w", err)
 	}
 
-	// Open browser
+	loginLink := hyperlink(link.Render("login page"), loginData.LoginURL)
 	if err := openBrowser(loginData.LoginURL); err != nil {
-		fmt.Fprintf(os.Stderr, "Could not open browser: %v\n", err)
-		fmt.Printf("\nPlease visit this URL manually:\n%s\n\n", loginData.LoginURL)
+		fmt.Printf("  %s %s %s\n\n", accent.Render("◐"), muted.Render("Open"), loginLink)
 	} else {
-		fmt.Printf("If browser doesn't open, visit:\n%s\n\n", loginData.LoginURL)
+		fmt.Printf("  %s %s %s\n", accent.Render("◐"), muted.Render("Opening browser… didn't open?"), loginLink)
 	}
 
-	fmt.Printf("Waiting for authentication to complete...\n")
+	fmt.Printf("  %s %s\n", accent.Render("◌"), muted.Render("Waiting for authentication…"))
 
-	// Watch for completion via SSE
 	status, err := watchForCompletion(client, serverURL, loginData.SessionToken)
 	if err != nil {
 		return err
 	}
 
-	// Save kubeconfig
 	kubeconfigPath := filepath.Join(os.Getenv("HOME"), ".kube", "config")
-
 	if err := os.MkdirAll(filepath.Dir(kubeconfigPath), 0755); err != nil {
-		return fmt.Errorf("failed to create .kube directory: %w\n\nPlease check file permissions in your home directory", err)
+		return fmt.Errorf("failed to create .kube directory: %w", err)
 	}
 
-	// Check if kubeconfig already exists and has content
+	fileExists := false
 	shouldMerge := false
 	if existingData, err := os.ReadFile(kubeconfigPath); err == nil && len(existingData) > 0 {
-		// Existing kubeconfig found, ask user what to do
-		fmt.Printf("\nExisting kubeconfig found at: %s\n", kubeconfigPath)
-		fmt.Println("\nWhat would you like to do?")
-		fmt.Println("  [m] Merge - Add new cluster alongside existing configs (recommended)")
-		fmt.Println("  [o] Overwrite - Replace entire kubeconfig file")
-		fmt.Println("  [c] Cancel - Abort without saving")
-		fmt.Print("\nChoice (m/o/c): ")
-
-		reader := bufio.NewReader(os.Stdin)
-		choice, err := reader.ReadString('\n')
-		if err != nil {
-			return fmt.Errorf("failed to read input: %w", err)
-		}
-		choice = strings.TrimSpace(strings.ToLower(choice))
-
-		switch choice {
-		case "m", "merge", "":
+		fileExists = true
+		if hasConflict(existingData, info.ClusterName) {
+			fmt.Printf("\n  %s %s\n", warningIcon, muted.Render(fmt.Sprintf("Context %q already exists", info.ClusterName)))
+			choice, err := promptMenu([]promptOption{
+				{key: "m", label: "merge"},
+				{key: "o", label: "overwrite"},
+				{key: "c", label: "cancel"},
+			}, "  ")
+			if err != nil {
+				if err.Error() == "interrupted" {
+					return nil
+				}
+				return err
+			}
+			switch choice {
+			case "m":
+				shouldMerge = true
+			case "o":
+				shouldMerge = false
+			case "c":
+				return nil
+			}
+		} else {
 			shouldMerge = true
-		case "o", "overwrite":
-			shouldMerge = false
-		case "c", "cancel":
-			fmt.Println("\nCancelled. Kubeconfig not saved")
-			return nil
-		default:
-			return fmt.Errorf("invalid choice: '%s'\n\nPlease choose 'm' (merge), 'o' (overwrite), or 'c' (cancel)", choice)
 		}
 	}
 
-	if shouldMerge {
-		// Merge with existing kubeconfig
+	if shouldMerge && fileExists {
 		if err := mergeKubeconfig(kubeconfigPath, status.Kubeconfig); err != nil {
-			return fmt.Errorf("failed to merge kubeconfig: %w\n\nYour existing kubeconfig has not been modified", err)
+			return fmt.Errorf("failed to merge kubeconfig: %w", err)
 		}
-		fmt.Printf("\nKubeconfig merged successfully!\n")
 	} else {
-		// Overwrite entire file
 		if err := os.WriteFile(kubeconfigPath, []byte(status.Kubeconfig), 0600); err != nil {
-			return fmt.Errorf("failed to save kubeconfig: %w\n\nPlease check file permissions", err)
+			return fmt.Errorf("failed to save kubeconfig: %w", err)
 		}
-		fmt.Printf("\nKubeconfig saved!\n")
 	}
 
-	// Save refresh token and server URL
 	cacheDir := filepath.Join(os.Getenv("HOME"), ".kube", "cache")
 	if err := os.MkdirAll(cacheDir, 0700); err != nil {
-		return fmt.Errorf("failed to create cache directory: %w\n\nPlease check file permissions", err)
+		return fmt.Errorf("failed to create cache directory: %w", err)
 	}
 
 	if status.RefreshToken != "" {
 		refreshTokenPath := filepath.Join(cacheDir, "kauth-refresh-token")
 		if err := os.WriteFile(refreshTokenPath, []byte(status.RefreshToken), 0600); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: failed to save refresh token: %v\n", err)
+			fmt.Fprintf(os.Stderr, "warning: failed to save refresh token: %v\n", err)
+		}
+
+		refreshResp, err := refreshTokenFromServer(serverURL, status.RefreshToken)
+		if err == nil {
+			tokenCachePath := filepath.Join(cacheDir, "kauth-token-cache.json")
+			expiresAt := time.Now().Add(time.Duration(refreshResp.ExpiresIn) * time.Second)
+			newCache := TokenCache{
+				IDToken:           refreshResp.IDToken,
+				KauthRefreshToken: refreshResp.RefreshToken,
+				ExpiresAt:         expiresAt,
+			}
+			if err := saveTokenCache(tokenCachePath, &newCache); err != nil {
+				fmt.Fprintf(os.Stderr, "warning: failed to cache token: %v\n", err)
+			}
 		}
 	}
 
-	// Save server URL so we can reuse it later
 	serverURLPath := filepath.Join(cacheDir, "kauth-server-url")
 	if err := os.WriteFile(serverURLPath, []byte(serverURL), 0600); err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to save server URL: %v\n", err)
+		fmt.Fprintf(os.Stderr, "warning: failed to save server URL: %v\n", err)
 	}
 
-	fmt.Printf("Kubeconfig location: %s\n", kubeconfigPath)
-	fmt.Printf("Authentication successful!\n")
+	fmt.Printf("\n  %s %s %s\n", successIcon, green.Render("Logged in to "+info.ClusterName), muted.Render(kubeconfigPath))
 
 	return nil
+}
+
+func resolveServerURL() (string, error) {
+	if serverURL != "" {
+		return serverURL, nil
+	}
+
+	if domain, err := detectDomain(); err == nil {
+		for d := domain; strings.Contains(d, "."); d = d[strings.Index(d, ".")+1:] {
+			if servers := discoverDNS(d); len(servers) > 0 {
+				return selectServer(servers)
+			}
+		}
+	}
+
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("failed to get home directory: %w", err)
+	}
+	cached := filepath.Join(homeDir, ".kube", "cache", "kauth-server-url")
+	data, err := os.ReadFile(cached)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", fmt.Errorf("no kauth servers found.\n\nConfigure DNS TXT records at _kauth.<domain> or re-run with a cached session.")
+		}
+		return "", fmt.Errorf("failed to read cached server URL: %w", err)
+	}
+	url := strings.TrimSpace(string(data))
+	if url == "" {
+		return "", fmt.Errorf("cached server URL is empty")
+	}
+	return url, nil
+}
+
+func selectServer(servers []discoveredServer) (string, error) {
+	if len(servers) == 1 {
+		return servers[0].URL, nil
+	}
+
+	fmt.Printf("\n  %s\n", muted.Render("Multiple kauth servers found"))
+	opts := make([]promptOption, len(servers))
+	for i, s := range servers {
+		name := s.Name
+		if name == "" {
+			name = urlHost(s.URL)
+		}
+		opts[i] = promptOption{
+			key:   fmt.Sprintf("%d", i+1),
+			label: name,
+		}
+	}
+
+	choice, err := promptMenu(opts, "  ")
+	if err != nil {
+		return "", err
+	}
+	n, _ := strconv.Atoi(choice)
+	return servers[n-1].URL, nil
 }
 
 func watchForCompletion(client *http.Client, baseURL, sessionToken string) (*StatusResponse, error) {
@@ -334,6 +376,30 @@ type envVar struct {
 type authProviderConfig struct {
 	Name   string            `yaml:"name"`
 	Config map[string]string `yaml:"config,omitempty"`
+}
+
+func hasConflict(data []byte, clusterName string) bool {
+	var kc kubeconfig
+	if err := yaml.Unmarshal(data, &kc); err != nil {
+		return false
+	}
+	suffix := "@" + clusterName
+	for _, c := range kc.Contexts {
+		if c.Name == clusterName || strings.HasSuffix(c.Name, suffix) {
+			return true
+		}
+	}
+	for _, c := range kc.Clusters {
+		if c.Name == clusterName {
+			return true
+		}
+	}
+	for _, u := range kc.Users {
+		if u.Name == clusterName {
+			return true
+		}
+	}
+	return false
 }
 
 func mergeKubeconfig(existingPath, newConfigYAML string) error {

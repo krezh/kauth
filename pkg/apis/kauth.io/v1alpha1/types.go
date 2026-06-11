@@ -36,6 +36,9 @@ type OAuthSessionStatus struct {
 	// Email is the authenticated user's email address
 	Email string `json:"email,omitempty"`
 
+	// Username is the authenticated user's username
+	Username string `json:"username,omitempty"`
+
 	// RefreshToken is the JWT refresh token for token rotation
 	RefreshToken string `json:"refreshToken,omitempty"`
 

@@ -163,8 +163,8 @@ func (h *LoginHandler) HandleWatch(w http.ResponseWriter, r *http.Request) {
 
 	// If already ready, send immediately
 	if crdSession.Status.Ready {
-		// Generate kubeconfig on-demand from stored email
-		kubeconfig := h.kubeconfigGen.Generate(crdSession.Status.Email)
+		// Generate kubeconfig on-demand from stored email and username
+		kubeconfig := h.kubeconfigGen.Generate(crdSession.Status.Email, crdSession.Status.Username)
 
 		status := StatusResponse{
 			Ready:        true,
@@ -375,10 +375,11 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Update session status in CRD (triggers watch on all pods)
-	// Store only email and refresh token, kubeconfig will be generated on-demand
+	// Store only email, username and refresh token, kubeconfig will be generated on-demand
 	err = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
 		Ready:        true,
 		Email:        claims.Email,
+		Username:     claims.PreferredUsername,
 		RefreshToken: refreshToken,
 	})
 	if err != nil {

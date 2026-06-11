@@ -157,7 +157,7 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 		claims.Email, claims.Name, claims.Sub, claims.Groups, refreshToken.RotationCounter+1, h.kubeconfigGen.ClusterName, expiresIn)
 
 	// Generate updated kubeconfig
-	kubeconfig := h.kubeconfigGen.Generate(claims.Email)
+	kubeconfig := h.kubeconfigGen.Generate(claims.Email, claims.PreferredUsername)
 
 	resp := RefreshResponse{
 		IDToken:      idToken,

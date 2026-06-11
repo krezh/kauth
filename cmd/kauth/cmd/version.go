@@ -15,8 +15,7 @@ var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print version information",
 	Run: func(cmd *cobra.Command, args []string) {
-		fmt.Printf("kauth version %s\n", Version)
-		fmt.Printf("Git commit: %s\n", GitCommit)
+		fmt.Printf("  kauth %s  %s\n", accent.Render("v"+Version), muted.Render("("+GitCommit+")"))
 	},
 }
 

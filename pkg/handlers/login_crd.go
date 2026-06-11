@@ -48,12 +48,12 @@ func (h *LoginHandler) watchSessions() {
 					listeners := h.sseListeners[state]
 					h.sseMutex.Unlock()
 
-					if len(listeners) > 0 {
-						// Generate kubeconfig on-demand from stored email
-						var kubeconfig string
-						if session.Status.Ready && session.Status.Email != "" {
-							kubeconfig = h.kubeconfigGen.Generate(session.Status.Email)
-						}
+				if len(listeners) > 0 {
+					// Generate kubeconfig on-demand from stored email and username
+					var kubeconfig string
+					if session.Status.Ready && session.Status.Email != "" {
+						kubeconfig = h.kubeconfigGen.Generate(session.Status.Email, session.Status.Username)
+					}
 
 						status := StatusResponse{
 							Ready:        session.Status.Ready,

@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"strings"
 
 	"kauth/pkg/oauth"
 
@@ -12,10 +13,11 @@ import (
 
 // OIDCClaims represents the common claims structure from OIDC tokens
 type OIDCClaims struct {
-	Email  string   `json:"email"`
-	Groups []string `json:"groups"`
-	Name   string   `json:"name"`
-	Sub    string   `json:"sub"`
+	Email             string   `json:"email"`
+	Groups            []string `json:"groups"`
+	Name              string   `json:"name"`
+	Sub               string   `json:"sub"`
+	PreferredUsername string   `json:"preferred_username"`
 }
 
 // KubeconfigGenerator generates kubeconfig YAML
@@ -25,8 +27,16 @@ type KubeconfigGenerator struct {
 	ClusterCA     string
 }
 
-// Generate creates a kubeconfig for the given user email
-func (kg *KubeconfigGenerator) Generate(email string) string {
+// Generate creates a kubeconfig for the given user
+func (kg *KubeconfigGenerator) Generate(email, username string) string {
+	if username == "" {
+		if idx := strings.Index(email, "@"); idx != -1 {
+			username = email[:idx]
+		} else {
+			username = email
+		}
+	}
+	contextName := fmt.Sprintf("%s@%s", username, kg.ClusterName)
 	return fmt.Sprintf(`apiVersion: v1
 kind: Config
 clusters:
@@ -51,8 +61,8 @@ contexts:
 current-context: %s
 `, kg.ClusterName, kg.ClusterServer, kg.ClusterCA,
 		email,
-		kg.ClusterName, kg.ClusterName, email,
-		kg.ClusterName)
+		contextName, kg.ClusterName, email,
+		contextName)
 }
 
 // VerifyAndExtractClaims verifies an ID token and extracts claims

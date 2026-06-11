@@ -10,9 +10,12 @@ var rootCmd = &cobra.Command{
 	Long: `kauth provides simple OIDC authentication for Kubernetes clusters.
 
 Just run:
-  kauth login --url https://kauth.example.com
+  kauth login
 
-Your browser will open, you'll authenticate, and kubectl will be configured automatically.`,
+Clusters are discovered automatically via DNS. Your browser will open,
+you'll authenticate, and kubectl will be configured automatically.`,
+	SilenceErrors: true,
+	SilenceUsage:  true,
 }
 
 func Execute() error {
