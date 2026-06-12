@@ -220,7 +220,6 @@ func getClusterRoles(apiServer, token string, userEmail string, userGroups []str
 	if err != nil {
 		return nil
 	}
-	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusOK {
 		var result struct {
@@ -253,6 +252,7 @@ func getClusterRoles(apiServer, token string, userEmail string, userGroups []str
 			}
 		}
 	}
+	_ = resp.Body.Close()
 
 	return roles
 }
@@ -317,7 +317,7 @@ func checkServerReachable(serverURL string) (bool, time.Duration) {
 	if err != nil {
 		return false, elapsed
 	}
-	defer resp.Body.Close()
-
-	return resp.StatusCode == http.StatusOK, elapsed
+	ok := resp.StatusCode == http.StatusOK
+	_ = resp.Body.Close()
+	return ok, elapsed
 }

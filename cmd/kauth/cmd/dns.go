@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bufio"
 	"fmt"
 	"net"
 	"os"
@@ -76,23 +75,17 @@ func detectDomain() (string, error) {
 }
 
 func domainFromResolvConf() (string, error) {
-	f, err := os.Open("/etc/resolv.conf")
+	data, err := os.ReadFile("/etc/resolv.conf")
 	if err != nil {
 		return "", fmt.Errorf("could not determine DNS search domain: %w", err)
 	}
-	defer f.Close()
-
-	scanner := bufio.NewScanner(f)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
+	for _, line := range strings.Split(string(data), "\n") {
+		line = strings.TrimSpace(line)
 		if strings.HasPrefix(line, "domain ") || strings.HasPrefix(line, "search ") {
 			if parts := strings.Fields(line); len(parts) >= 2 {
 				return parts[1], nil
 			}
 		}
-	}
-	if err := scanner.Err(); err != nil {
-		return "", fmt.Errorf("error reading /etc/resolv.conf: %w", err)
 	}
 	return "", fmt.Errorf("no DNS search domain found in /etc/resolv.conf")
 }
