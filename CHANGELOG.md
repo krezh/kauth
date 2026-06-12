@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.2.14](https://github.com/krezh/kauth/compare/0.2.13...0.2.14) (2026-06-12)
+
+
+### Features
+
+* **cli:** modernize CLI appearance and add username-based contexts ([e3f011e](https://github.com/krezh/kauth/commit/e3f011e0af7e1ef0da381f47146a7452885a7f68))
+
+
+### Bug Fixes
+
+* **lint:** resolve errcheck and staticcheck violations ([#224](https://github.com/krezh/kauth/issues/224)) ([54671f4](https://github.com/krezh/kauth/commit/54671f4e5ce3aee60ec2f5f15c7dba9bafbcf0b7))
+
+
+### Miscellaneous Chores
+
+* **deps:** lock file maintenance ([#219](https://github.com/krezh/kauth/issues/219)) ([9474ab9](https://github.com/krezh/kauth/commit/9474ab9af39c4d764c06a214b715953e348c499b))
+* **deps:** lock file maintenance ([#221](https://github.com/krezh/kauth/issues/221)) ([4b0bfee](https://github.com/krezh/kauth/commit/4b0bfee77e2da708f33ed6c5f985766211a24e49))
+* **deps:** lock file maintenance ([#222](https://github.com/krezh/kauth/issues/222)) ([670e323](https://github.com/krezh/kauth/commit/670e323484b41dd4ea8cfe3eed6d2ed0ade6d8db))
+* **deps:** update module github.com/charmbracelet/lipgloss to v2 ([#223](https://github.com/krezh/kauth/issues/223)) ([fd1e19c](https://github.com/krezh/kauth/commit/fd1e19c44a27d203f6b96662264fd88c5638f565))
+* **deps:** update module golang.org/x/term to v0.44.0 ([#225](https://github.com/krezh/kauth/issues/225)) ([e4e6f55](https://github.com/krezh/kauth/commit/e4e6f559ac0f93e5f2cd30796ac831fce6f0d075))
+
 ## [0.2.13](https://github.com/krezh/kauth/compare/0.2.12...0.2.13) (2026-06-03)
 
 
