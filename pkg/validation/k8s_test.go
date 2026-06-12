@@ -197,6 +197,8 @@ func BenchmarkSanitizeToResourceName(b *testing.B) {
 func BenchmarkValidateResourceName(b *testing.B) {
 	input := "valid-resource-name"
 	for b.Loop() {
-		ValidateResourceName(input)
+		if err := ValidateResourceName(input); err != nil {
+			b.Fatal(err)
+		}
 	}
 }

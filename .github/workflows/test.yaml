@@ -33,7 +33,6 @@ jobs:
         uses: golangci/golangci-lint-action@82606bf257cbaff209d206a39f5134f0cfbfd2ee # v9.2.1
         with:
           version: latest
-          args: --tests=false
 
   nix-test:
     runs-on: ubuntu-latest

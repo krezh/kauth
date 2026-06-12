@@ -97,12 +97,13 @@ func TestOutputCredential(t *testing.T) {
 			oldStdout := os.Stdout
 			r, w, _ := os.Pipe()
 			os.Stdout = w
+			defer func() { os.Stdout = oldStdout }()
 
 			err := OutputCredential(tt.token)
 
-			// Restore stdout
-			w.Close()
-			os.Stdout = oldStdout
+			if err := w.Close(); err != nil {
+				t.Fatal(err)
+			}
 
 			if tt.wantErr {
 				if err == nil {
@@ -122,7 +123,9 @@ func TestOutputCredential(t *testing.T) {
 
 			// Read captured output
 			var buf bytes.Buffer
-			io.Copy(&buf, r)
+			if _, err := io.Copy(&buf, r); err != nil {
+				t.Fatal(err)
+			}
 
 			// Parse the JSON output
 			var cred clientauthv1.ExecCredential
@@ -361,20 +364,21 @@ func TestOutputCredentialFormat(t *testing.T) {
 	oldStdout := os.Stdout
 	r, w, _ := os.Pipe()
 	os.Stdout = w
+	defer func() { os.Stdout = oldStdout }()
 
 	err := OutputCredential(token)
 	if err != nil {
 		t.Fatalf("OutputCredential() error = %v", err)
 	}
 
-	w.Close()
-	if err != nil {
-		t.Error(err)
+	if err := w.Close(); err != nil {
+		t.Fatal(err)
 	}
-	os.Stdout = oldStdout
 
 	var buf bytes.Buffer
-	io.Copy(&buf, r)
+	if _, err := io.Copy(&buf, r); err != nil {
+		t.Fatal(err)
+	}
 
 	// Verify it's properly formatted JSON with indentation
 	output := buf.String()

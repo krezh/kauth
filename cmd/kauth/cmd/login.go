@@ -213,7 +213,7 @@ func resolveServerURL() (string, error) {
 	data, err := os.ReadFile(cached)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return "", fmt.Errorf("no kauth servers found.\n\nConfigure DNS TXT records at _kauth.<domain> or re-run with a cached session.")
+			return "", fmt.Errorf("no kauth servers found.\n\nConfigure DNS TXT records at _kauth.<domain> or re-run with a cached session")
 		}
 		return "", fmt.Errorf("failed to read cached server URL: %w", err)
 	}
