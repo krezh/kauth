@@ -10,8 +10,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/spf13/cobra"
+	"kauth/pkg/token"
+
 	"gopkg.in/yaml.v3"
+
+	"github.com/spf13/cobra"
 )
 
 var statusCmd = &cobra.Command{
@@ -31,11 +34,12 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	cacheDir := filepath.Join(homeDir, ".kube", "cache")
-	tokenCachePath := filepath.Join(cacheDir, "kauth-token-cache.json")
-	refreshTokenPath := filepath.Join(cacheDir, "kauth-refresh-token")
 	serverURLPath := filepath.Join(cacheDir, "kauth-server-url")
 
-	if _, err := os.Stat(refreshTokenPath); os.IsNotExist(err) {
+	storage := token.NewStorage(token.DefaultCachePath())
+
+	cachedToken, _ := storage.Load()
+	if cachedToken == nil || cachedToken.RefreshToken == "" {
 		fmt.Printf("\n  %s %s\n", errorIcon, muted.Render("Not authenticated"))
 		fmt.Printf("\n  Run %s to authenticate.\n\n", accent.Render("kauth login"))
 		return nil
@@ -48,18 +52,10 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		serverURL = urlHost(serverURLFull)
 	}
 
-	var cache *TokenCache
-	if data, err := os.ReadFile(tokenCachePath); err == nil {
-		cache = &TokenCache{}
-		if err := json.Unmarshal(data, cache); err != nil {
-			cache = nil
-		}
-	}
-
 	fmt.Printf("\n  %s %s\n\n", accent.Render("●"), bold.Render("Authentication Status"))
 
-	if cache != nil {
-		user := getUserFromToken(cache.IDToken)
+	if cachedToken != nil {
+		user := getUserFromToken(cachedToken.IDToken)
 		fmt.Printf("  %s %s\n", accent.Render("User"), orange.Render(user))
 	}
 
@@ -70,10 +66,10 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  %s %s\n", accent.Render("API Server"), orange.Render(kubeInfo.apiServer))
 	}
 
-	if cache != nil && kubeInfo != nil {
-		user := getUserFromToken(cache.IDToken)
-		groups := getGroupsFromToken(cache.IDToken)
-		roles := getClusterRoles(kubeInfo.apiServer, cache.IDToken, user, groups)
+	if cachedToken != nil && kubeInfo != nil {
+		user := getUserFromToken(cachedToken.IDToken)
+		groups := getGroupsFromToken(cachedToken.IDToken)
+		roles := getClusterRoles(kubeInfo.apiServer, cachedToken.IDToken, user, groups)
 		if len(roles) > 0 {
 			fmt.Printf("  %s %s\n", accent.Render("Roles"), orange.Render(strings.Join(roles, ", ")))
 		}
@@ -88,11 +84,11 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  %s %s %s\n", accent.Render("Health"), errorIcon, red.Render("Unreachable"))
 	}
 
-	if cache == nil {
+	if cachedToken == nil {
 		fmt.Printf("  %s %s\n", accent.Render("Token"), muted.Render("Not yet fetched"))
 	} else {
 		now := time.Now()
-		timeUntilExpiry := cache.ExpiresAt.Sub(now)
+		timeUntilExpiry := cachedToken.Expiry.Sub(now)
 		expired := timeUntilExpiry <= 0
 
 		if expired {
@@ -112,11 +108,11 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  %s %s\n", successIcon, green.Render("kubectl ready."))
 	}
 
-	if cache == nil {
+	if cachedToken == nil {
 		fmt.Printf("  %s %s\n", infoIcon, orange.Render("Token will be fetched on next kubectl use."))
 	} else {
 		now := time.Now()
-		timeUntilExpiry := cache.ExpiresAt.Sub(now)
+		timeUntilExpiry := cachedToken.Expiry.Sub(now)
 		expired := timeUntilExpiry <= 0
 
 		if expired {

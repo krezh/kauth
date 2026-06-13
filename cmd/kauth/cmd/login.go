@@ -14,8 +14,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/spf13/cobra"
+	"kauth/pkg/token"
+
 	"gopkg.in/yaml.v3"
+
+	"github.com/spf13/cobra"
 )
 
 var serverURL string
@@ -162,21 +165,16 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	}
 
 	if status.RefreshToken != "" {
-		refreshTokenPath := filepath.Join(cacheDir, "kauth-refresh-token")
-		if err := os.WriteFile(refreshTokenPath, []byte(status.RefreshToken), 0600); err != nil {
-			fmt.Fprintf(os.Stderr, "warning: failed to save refresh token: %v\n", err)
-		}
-
 		refreshResp, err := refreshTokenFromServer(serverURL, status.RefreshToken)
 		if err == nil {
-			tokenCachePath := filepath.Join(cacheDir, "kauth-token-cache.json")
+			storage := token.NewStorage(token.DefaultCachePath())
 			expiresAt := time.Now().Add(time.Duration(refreshResp.ExpiresIn) * time.Second)
-			newCache := TokenCache{
-				IDToken:           refreshResp.IDToken,
-				KauthRefreshToken: refreshResp.RefreshToken,
-				ExpiresAt:         expiresAt,
+			newCache := &token.Cache{
+				IDToken:      refreshResp.IDToken,
+				RefreshToken: refreshResp.RefreshToken,
+				Expiry:       expiresAt,
 			}
-			if err := saveTokenCache(tokenCachePath, &newCache); err != nil {
+			if err := storage.Save(newCache); err != nil {
 				fmt.Fprintf(os.Stderr, "warning: failed to cache token: %v\n", err)
 			}
 		}

@@ -6,18 +6,13 @@ import (
 	"os"
 	"path/filepath"
 	"time"
-
-	"golang.org/x/oauth2"
 )
 
 // Cache represents the token cache structure
 type Cache struct {
-	AccessToken       string    `json:"access_token"`
-	RefreshToken      string    `json:"refresh_token"`       // OIDC provider refresh token
-	KauthRefreshToken string    `json:"kauth_refresh_token"` // kauth server refresh token (new)
-	IDToken           string    `json:"id_token"`
-	TokenType         string    `json:"token_type"`
-	Expiry            time.Time `json:"expiry"`
+	IDToken      string    `json:"id_token"`
+	RefreshToken string    `json:"refresh_token"`
+	Expiry       time.Time `json:"expiry"`
 }
 
 // Storage handles token persistence
@@ -41,51 +36,12 @@ func DefaultCachePath() string {
 	return filepath.Join(homeDir, ".kube", "cache", "kauth-token.json")
 }
 
-// Save saves a token to the cache with secure permissions
-func (s *Storage) Save(token *oauth2.Token) error {
-	if token == nil {
-		return fmt.Errorf("cannot save nil token")
-	}
-
-	// Create cache directory with 0700 permissions (rwx for owner only)
-	dir := filepath.Dir(s.cachePath)
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return fmt.Errorf("failed to create cache directory: %w", err)
-	}
-
-	// Build cache structure
-	cache := Cache{
-		AccessToken:  token.AccessToken,
-		RefreshToken: token.RefreshToken,
-		TokenType:    token.TokenType,
-		Expiry:       token.Expiry,
-	}
-
-	// Extract ID token from extras
-	if idToken, ok := token.Extra("id_token").(string); ok {
-		cache.IDToken = idToken
-	}
-
-	// Marshal to JSON
-	data, err := json.MarshalIndent(cache, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal token: %w", err)
-	}
-
-	// Write with 0600 permissions (rw- for owner only)
-	if err := os.WriteFile(s.cachePath, data, 0600); err != nil {
-		return fmt.Errorf("failed to write token cache: %w", err)
-	}
-
-	return nil
-}
-
 // Load loads a token from the cache
-func (s *Storage) Load() (*oauth2.Token, error) {
+func (s *Storage) Load() (*Cache, error) {
 	data, err := os.ReadFile(s.cachePath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil // No cache exists
+			return nil, nil
 		}
 		return nil, fmt.Errorf("failed to read token cache: %w", err)
 	}
@@ -95,29 +51,37 @@ func (s *Storage) Load() (*oauth2.Token, error) {
 		return nil, fmt.Errorf("failed to unmarshal token cache: %w", err)
 	}
 
-	// Build oauth2.Token
-	token := &oauth2.Token{
-		AccessToken:  cache.AccessToken,
-		RefreshToken: cache.RefreshToken,
-		TokenType:    cache.TokenType,
-		Expiry:       cache.Expiry,
+	return &cache, nil
+}
+
+// Save saves a token to the cache with secure permissions
+func (s *Storage) Save(cache *Cache) error {
+	if cache == nil {
+		return fmt.Errorf("cannot save nil cache")
 	}
 
-	// Add ID token to extras if present
-	if cache.IDToken != "" {
-		token = token.WithExtra(map[string]any{
-			"id_token": cache.IDToken,
-		})
+	dir := filepath.Dir(s.cachePath)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return fmt.Errorf("failed to create cache directory: %w", err)
 	}
 
-	return token, nil
+	data, err := json.MarshalIndent(cache, "", "  ")
+	if err != nil {
+		return fmt.Errorf("failed to marshal token: %w", err)
+	}
+
+	if err := os.WriteFile(s.cachePath, data, 0600); err != nil {
+		return fmt.Errorf("failed to write token cache: %w", err)
+	}
+
+	return nil
 }
 
 // Delete removes the token cache file
 func (s *Storage) Delete() error {
 	if err := os.Remove(s.cachePath); err != nil {
 		if os.IsNotExist(err) {
-			return nil // Already deleted
+			return nil
 		}
 		return fmt.Errorf("failed to delete token cache: %w", err)
 	}
@@ -128,76 +92,4 @@ func (s *Storage) Delete() error {
 func (s *Storage) Exists() bool {
 	_, err := os.Stat(s.cachePath)
 	return err == nil
-}
-
-// GetIDToken extracts the ID token from an oauth2.Token
-func GetIDToken(token *oauth2.Token) (string, error) {
-	if token == nil {
-		return "", fmt.Errorf("token is nil")
-	}
-
-	idToken, ok := token.Extra("id_token").(string)
-	if !ok || idToken == "" {
-		return "", fmt.Errorf("no id_token found in token")
-	}
-
-	return idToken, nil
-}
-
-// SaveWithKauthToken saves a token with kauth refresh token
-func (s *Storage) SaveWithKauthToken(token *oauth2.Token, kauthRefreshToken string) error {
-	if token == nil {
-		return fmt.Errorf("cannot save nil token")
-	}
-
-	// Create cache directory with 0700 permissions (rwx for owner only)
-	dir := filepath.Dir(s.cachePath)
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return fmt.Errorf("failed to create cache directory: %w", err)
-	}
-
-	// Build cache structure
-	cache := Cache{
-		AccessToken:       token.AccessToken,
-		RefreshToken:      token.RefreshToken,
-		KauthRefreshToken: kauthRefreshToken,
-		TokenType:         token.TokenType,
-		Expiry:            token.Expiry,
-	}
-
-	// Extract ID token from extras
-	if idToken, ok := token.Extra("id_token").(string); ok {
-		cache.IDToken = idToken
-	}
-
-	// Marshal to JSON
-	data, err := json.MarshalIndent(cache, "", "  ")
-	if err != nil {
-		return fmt.Errorf("failed to marshal token: %w", err)
-	}
-
-	// Write with 0600 permissions (rw- for owner only)
-	if err := os.WriteFile(s.cachePath, data, 0600); err != nil {
-		return fmt.Errorf("failed to write token cache: %w", err)
-	}
-
-	return nil
-}
-
-// GetKauthRefreshToken loads the kauth refresh token from cache
-func (s *Storage) GetKauthRefreshToken() (string, error) {
-	data, err := os.ReadFile(s.cachePath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return "", nil // No cache exists
-		}
-		return "", fmt.Errorf("failed to read token cache: %w", err)
-	}
-
-	var cache Cache
-	if err := json.Unmarshal(data, &cache); err != nil {
-		return "", fmt.Errorf("failed to unmarshal token cache: %w", err)
-	}
-
-	return cache.KauthRefreshToken, nil
 }

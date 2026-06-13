@@ -50,6 +50,15 @@
               "-X github.com/krezh/kauth/cmd/kauth/cmd.Version=${version}"
               "-X github.com/krezh/kauth/cmd/kauth/cmd.GitCommit=${self.rev or "unknown"}"
             ];
+
+            nativeBuildInputs = [ pkgs.installShellFiles ];
+
+            postInstall = pkgs.lib.optionalString (pkgs.stdenv.buildPlatform.canExecute pkgs.stdenv.hostPlatform) ''
+              installShellCompletion --cmd kauth \
+                --bash <($out/bin/kauth completion bash) \
+                --fish <($out/bin/kauth completion fish) \
+                --zsh <($out/bin/kauth completion zsh)
+            '';
           };
           kauth-server = pkgs.buildGoApplication {
             pname = "kauth-server";

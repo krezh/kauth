@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"kauth/pkg/token"
+
 	"github.com/spf13/cobra"
 )
 
@@ -31,7 +33,6 @@ func init() {
 	rootCmd.AddCommand(getTokenCmd)
 }
 
-// ExecCredential is the Kubernetes exec credential format
 type ExecCredential struct {
 	APIVersion string                `json:"apiVersion"`
 	Kind       string                `json:"kind"`
@@ -43,19 +44,10 @@ type ExecCredentialStatus struct {
 	ExpirationTimestamp *time.Time `json:"expirationTimestamp,omitempty"`
 }
 
-// TokenCache represents cached token info
-type TokenCache struct {
-	IDToken           string    `json:"id_token"`
-	KauthRefreshToken string    `json:"kauth_refresh_token"`
-	ExpiresAt         time.Time `json:"expires_at"`
-}
-
-// RefreshRequest is sent to the server to refresh tokens
 type RefreshRequest struct {
 	RefreshToken string `json:"refresh_token"`
 }
 
-// RefreshResponse is returned by the server after token refresh
 type RefreshResponse struct {
 	IDToken      string `json:"id_token"`
 	RefreshToken string `json:"refresh_token"`
@@ -71,11 +63,10 @@ func runGetToken(cmd *cobra.Command, args []string) error {
 	}
 
 	cacheDir := filepath.Join(homeDir, ".kube", "cache")
-	tokenCachePath := filepath.Join(cacheDir, "kauth-token-cache.json")
-	refreshTokenPath := filepath.Join(cacheDir, "kauth-refresh-token")
 	serverURLPath := filepath.Join(cacheDir, "kauth-server-url")
 
-	// Read server URL from cache
+	storage := token.NewStorage(token.DefaultCachePath())
+
 	serverURLBytes, err := os.ReadFile(serverURLPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -85,85 +76,34 @@ func runGetToken(cmd *cobra.Command, args []string) error {
 	}
 	serverURL := string(serverURLBytes)
 
-	// Try to load cached token
-	cachedToken, err := loadTokenCache(tokenCachePath)
+	cachedToken, err := storage.Load()
 	if err == nil && cachedToken != nil {
-		// Check if token is still valid (with 5 minute buffer)
-		if time.Now().Before(cachedToken.ExpiresAt.Add(-5 * time.Minute)) {
-			// Token is still valid, return it
-			return outputExecCredential(cachedToken.IDToken, cachedToken.ExpiresAt)
+		if time.Now().Before(cachedToken.Expiry.Add(-5 * time.Minute)) {
+			return outputExecCredential(cachedToken.IDToken, cachedToken.Expiry)
 		}
 	}
 
-	// Token expired or not found, try to refresh
-	refreshToken, err := os.ReadFile(refreshTokenPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("no refresh token found.\n\nYour authentication session may have expired.\nTo re-authenticate, run:\n  kauth login")
-		}
-		return fmt.Errorf("failed to read refresh token: %w", err)
+	if cachedToken == nil || cachedToken.RefreshToken == "" {
+		return fmt.Errorf("no refresh token found.\n\nYour authentication session may have expired.\nTo re-authenticate, run:\n  kauth login")
 	}
 
-	if len(refreshToken) == 0 {
-		return fmt.Errorf("refresh token is empty.\n\nTo re-authenticate, run:\n  kauth login")
-	}
-
-	// Refresh the token
-	refreshResp, err := refreshTokenFromServer(serverURL, string(refreshToken))
+	refreshResp, err := refreshTokenFromServer(serverURL, cachedToken.RefreshToken)
 	if err != nil {
 		return fmt.Errorf("failed to refresh token: %w\n\nYour refresh token may have expired.\nTo re-authenticate, run:\n  kauth login", err)
 	}
 
-	// Save new refresh token
-	if refreshResp.RefreshToken != "" {
-		if err := os.WriteFile(refreshTokenPath, []byte(refreshResp.RefreshToken), 0600); err != nil {
-			// Non-fatal, just log to stderr
-			fmt.Fprintf(os.Stderr, "Warning: failed to save new refresh token: %v\n", err)
-		}
+	expiresAt := time.Now().Add(time.Duration(refreshResp.ExpiresIn) * time.Second)
+	newCache := &token.Cache{
+		IDToken:      refreshResp.IDToken,
+		RefreshToken: refreshResp.RefreshToken,
+		Expiry:       expiresAt,
 	}
 
-	// Cache the new token
-	expiresAt := time.Now().Add(time.Duration(refreshResp.ExpiresIn) * time.Second)
-	newCache := TokenCache{
-		IDToken:           refreshResp.IDToken,
-		KauthRefreshToken: refreshResp.RefreshToken,
-		ExpiresAt:         expiresAt,
-	}
-	if err := saveTokenCache(tokenCachePath, &newCache); err != nil {
-		// Non-fatal
+	if err := storage.Save(newCache); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to cache token: %v\n", err)
 	}
 
-	// Output the token in exec credential format
 	return outputExecCredential(refreshResp.IDToken, expiresAt)
-}
-
-func loadTokenCache(path string) (*TokenCache, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return nil, err
-	}
-
-	var cache TokenCache
-	if err := json.Unmarshal(data, &cache); err != nil {
-		return nil, err
-	}
-
-	return &cache, nil
-}
-
-func saveTokenCache(path string, cache *TokenCache) error {
-	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0700); err != nil {
-		return err
-	}
-
-	data, err := json.MarshalIndent(cache, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	return os.WriteFile(path, data, 0600)
 }
 
 func refreshTokenFromServer(baseURL, refreshToken string) (*RefreshResponse, error) {
@@ -198,12 +138,12 @@ func refreshTokenFromServer(baseURL, refreshToken string) (*RefreshResponse, err
 	return &refreshResp, nil
 }
 
-func outputExecCredential(token string, expiresAt time.Time) error {
+func outputExecCredential(tok string, expiresAt time.Time) error {
 	execCred := ExecCredential{
 		APIVersion: "client.authentication.k8s.io/v1",
 		Kind:       "ExecCredential",
 		Status: &ExecCredentialStatus{
-			Token:               token,
+			Token:               tok,
 			ExpirationTimestamp: &expiresAt,
 		},
 	}
