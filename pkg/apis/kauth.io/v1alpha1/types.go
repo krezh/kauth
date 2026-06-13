@@ -35,37 +35,37 @@ type OAuthSessionSpec struct {
 	Verifier string `json:"verifier"`
 
 	// UserID is the user identifier (email or sub)
-	UserID string `json:"userID,omitempty"`
+	UserID string `json:"userID,omitzero"`
 
 	// CreatedAt is when the session was created
 	CreatedAt metav1.Time `json:"createdAt"`
 
 	// LastUsed is when the session was last used for token refresh
-	LastUsed metav1.Time `json:"lastUsed,omitempty"`
+	LastUsed metav1.Time `json:"lastUsed,omitzero"`
 }
 
 // OAuthSessionStatus defines the observed state of an OAuth session
 type OAuthSessionStatus struct {
 	// Phase indicates the lifecycle phase of the session
-	Phase SessionPhase `json:"phase,omitempty"`
+	Phase SessionPhase `json:"phase,omitzero"`
 
 	// Email is the authenticated user's email address
-	Email string `json:"email,omitempty"`
+	Email string `json:"email,omitzero"`
 
 	// Username is the authenticated user's preferred username
-	Username string `json:"username,omitempty"`
+	Username string `json:"username,omitzero"`
 
 	// RefreshToken is the encrypted JWT refresh token for token rotation
-	RefreshToken string `json:"refreshToken,omitempty"`
+	RefreshToken string `json:"refreshToken,omitzero"`
 
 	// RevokedAt is when the session was revoked
-	RevokedAt *metav1.Time `json:"revokedAt,omitempty"`
+	RevokedAt *metav1.Time `json:"revokedAt,omitzero"`
 
 	// CompletedAt is when the OAuth flow completed
-	CompletedAt *metav1.Time `json:"completedAt,omitempty"`
+	CompletedAt *metav1.Time `json:"completedAt,omitzero"`
 
 	// Error contains any error message if the OAuth flow failed
-	Error string `json:"error,omitempty"`
+	Error string `json:"error,omitzero"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object

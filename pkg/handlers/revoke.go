@@ -71,11 +71,11 @@ func (h *RevokeHandler) HandleRevoke(w http.ResponseWriter, r *http.Request) {
 				http.Error(w, "Session not found", http.StatusNotFound)
 				return
 			}
-			if !canRevokeSession(caller, admin, sess.Spec.UserID) {
+			if !canRevokeSession(caller, admin, sess.Status.Email) {
 				audit.Log(ctx, r, "session_revoke_denied",
 					"session_id", req.SessionID,
 					"caller", caller.Email,
-					"owner", sess.Spec.UserID,
+					"owner", sess.Status.Email,
 				)
 				http.Error(w, "Forbidden: not your session", http.StatusForbidden)
 				return

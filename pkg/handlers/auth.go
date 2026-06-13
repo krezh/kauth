@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"net/http"
+	"slices"
 	"strings"
 
 	"kauth/pkg/oauth"
@@ -49,6 +50,11 @@ func RequireAuth(provider *oauth.Provider, next http.HandlerFunc) http.HandlerFu
 			return
 		}
 
+		if claims.Email == "" {
+			http.Error(w, "Token must contain email claim", http.StatusUnauthorized)
+			return
+		}
+
 		ctx := context.WithValue(r.Context(), callerContextKey, &CallerClaims{
 			Email:  claims.Email,
 			Groups: claims.Groups,
@@ -66,14 +72,9 @@ func getCaller(ctx context.Context) *CallerClaims {
 
 // isAdmin checks if the caller is in any of the admin groups
 func (c *CallerClaims) isAdmin(adminGroups []string) bool {
-	if len(adminGroups) == 0 {
-		return false
-	}
 	for _, ag := range adminGroups {
-		for _, cg := range c.Groups {
-			if ag == cg {
-				return true
-			}
+		if slices.Contains(c.Groups, ag) {
+			return true
 		}
 	}
 	return false

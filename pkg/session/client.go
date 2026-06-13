@@ -77,7 +77,7 @@ func (c *Client) Create(ctx context.Context, state, verifier, userID string) (*v
 	}
 	unstructuredObj.Object = unstructuredMap
 
-	result, err := c.dynamicClient.Resource(c.gvr()).Namespace(c.namespace).Create(
+	_, err = c.dynamicClient.Resource(c.gvr()).Namespace(c.namespace).Create(
 		ctx,
 		unstructuredObj,
 		metav1.CreateOptions{},
@@ -86,12 +86,16 @@ func (c *Client) Create(ctx context.Context, state, verifier, userID string) (*v
 		return nil, fmt.Errorf("failed to create OAuthSession: %w", err)
 	}
 
-	var created v1alpha1.OAuthSession
-	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(result.Object, &created); err != nil {
-		return nil, fmt.Errorf("failed to convert from unstructured: %w", err)
+	// The CRD has a status subresource, so the API server strips the status field
+	// from Create. Set Phase=Pending explicitly via UpdateStatus.
+	if err := c.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
+		Phase: v1alpha1.SessionPending,
+	}); err != nil {
+		_ = c.Delete(ctx, state)
+		return nil, fmt.Errorf("failed to set initial session status: %w", err)
 	}
 
-	return &created, nil
+	return c.Get(ctx, state)
 }
 
 // Get retrieves an OAuthSession by state
@@ -120,10 +124,15 @@ func (c *Client) UpdateStatus(ctx context.Context, state string, status v1alpha1
 		return fmt.Errorf("failed to get session: %w", err)
 	}
 
+	existingCompletedAt := session.Status.CompletedAt
 	session.Status = status
 	if status.Phase == v1alpha1.SessionActive && status.CompletedAt == nil {
-		now := metav1.Now()
-		session.Status.CompletedAt = &now
+		if existingCompletedAt != nil {
+			session.Status.CompletedAt = existingCompletedAt
+		} else {
+			now := metav1.Now()
+			session.Status.CompletedAt = &now
+		}
 	}
 
 	unstructuredObj := &unstructured.Unstructured{}
@@ -150,6 +159,10 @@ func (c *Client) Revoke(ctx context.Context, state string) error {
 	session, err := c.Get(ctx, state)
 	if err != nil {
 		return fmt.Errorf("failed to get session: %w", err)
+	}
+
+	if session.Status.Phase == v1alpha1.SessionRevoked {
+		return nil
 	}
 
 	now := metav1.Now()
@@ -344,13 +357,22 @@ func (c *Client) CleanupOldSessions(ctx context.Context, ttl time.Duration) erro
 			continue
 		}
 
-		// Only delete revoked or expired sessions
-		if session.Status.Phase != v1alpha1.SessionRevoked && session.Status.Phase != v1alpha1.SessionExpired {
+		// Only delete terminal or stale pending sessions; skip active ones
+		phase := session.Status.Phase
+		if phase != v1alpha1.SessionRevoked && phase != v1alpha1.SessionExpired && phase != v1alpha1.SessionPending {
 			continue
 		}
 
-		// Check if old enough to delete
-		if session.Spec.CreatedAt.Time.Before(cutoff) {
+		// For revoked sessions use RevokedAt so freshly-revoked CRDs are kept
+		// long enough for all pods to observe the revocation before deletion.
+		var ageRef time.Time
+		if phase == v1alpha1.SessionRevoked && session.Status.RevokedAt != nil {
+			ageRef = session.Status.RevokedAt.Time
+		} else {
+			ageRef = session.Spec.CreatedAt.Time
+		}
+
+		if ageRef.Before(cutoff) {
 			_ = c.Delete(ctx, session.Spec.State)
 		}
 	}

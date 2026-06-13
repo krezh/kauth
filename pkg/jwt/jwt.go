@@ -153,38 +153,39 @@ func (m *Manager) CreateRefreshToken(userEmail, oidcRefreshToken, sessionID stri
 	return base64.URLEncoding.EncodeToString(signed), nil
 }
 
-// ValidateRefreshToken validates and decrypts a refresh token
-func (m *Manager) ValidateRefreshToken(token string, allowedRotationWindow int) (*RefreshToken, error) {
-	// Decode base64
+// DecodeRefreshToken decodes and decrypts a refresh token without checking expiry.
+// Use ValidateRefreshToken for normal validation; this is for comparing rotation
+// counters against a stored (possibly expired) token.
+func (m *Manager) DecodeRefreshToken(token string) (*RefreshToken, error) {
 	signed, err := base64.URLEncoding.DecodeString(token)
 	if err != nil {
 		return nil, ErrInvalidToken
 	}
-
-	// Verify signature
 	encrypted, err := m.verify(signed)
 	if err != nil {
 		return nil, err
 	}
-
-	// Decrypt
 	data, err := m.decrypt(encrypted)
 	if err != nil {
 		return nil, fmt.Errorf("failed to decrypt refresh token: %w", err)
 	}
-
-	// Unmarshal
 	var refresh RefreshToken
 	if err := json.Unmarshal(data, &refresh); err != nil {
 		return nil, ErrInvalidToken
 	}
+	return &refresh, nil
+}
 
-	// Check expiry
+// ValidateRefreshToken validates and decrypts a refresh token
+func (m *Manager) ValidateRefreshToken(token string) (*RefreshToken, error) {
+	refresh, err := m.DecodeRefreshToken(token)
+	if err != nil {
+		return nil, err
+	}
 	if time.Now().After(refresh.ExpiresAt) {
 		return nil, ErrExpiredToken
 	}
-
-	return &refresh, nil
+	return refresh, nil
 }
 
 // encrypt encrypts data using AES-GCM

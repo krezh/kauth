@@ -207,7 +207,9 @@ func (h *LoginHandler) HandleWatch(w http.ResponseWriter, r *http.Request) {
 			delete(h.sseListeners, state)
 		}
 		h.sseMutex.Unlock()
-		close(listener)
+		// Do not close(listener): watchSessions holds a snapshot of the listeners
+		// slice and may send to this channel after we return. Sending to a closed
+		// channel panics. The channel is buffered (size 1) and will be GC'd.
 	}()
 
 	flusher, ok := w.(http.Flusher)
@@ -240,6 +242,9 @@ func (h *LoginHandler) HandleWatch(w http.ResponseWriter, r *http.Request) {
 func (h *LoginHandler) sendFinalStatus(w http.ResponseWriter, status *StatusResponse) {
 	data, _ := json.Marshal(status)
 	_, _ = fmt.Fprintf(w, "data: %s\n\n", data)
+	if f, ok := w.(http.Flusher); ok {
+		f.Flush()
+	}
 }
 
 func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
@@ -389,7 +394,9 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	_ = h.sessionClient.UpdateUserID(ctx, state, claims.Email)
+	if err := h.sessionClient.UpdateUserID(ctx, state, claims.Email); err != nil {
+		log.Printf("WARN: failed to set session UserID for %s: %v", state[:8], err)
+	}
 
 	// Render success page
 	w.Header().Set("Content-Type", "text/html")

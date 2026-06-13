@@ -511,7 +511,7 @@ func TestValidateRefreshToken(t *testing.T) {
 			t.Fatalf("CreateRefreshToken() error = %v", err)
 		}
 
-		refresh, err := mgr.ValidateRefreshToken(token, 5)
+		refresh, err := mgr.ValidateRefreshToken(token)
 		if err != nil {
 			t.Errorf("ValidateRefreshToken() error = %v", err)
 			return
@@ -534,14 +534,14 @@ func TestValidateRefreshToken(t *testing.T) {
 			t.Fatalf("CreateRefreshToken() error = %v", err)
 		}
 
-		_, err = mgr.ValidateRefreshToken(token, 5)
+		_, err = mgr.ValidateRefreshToken(token)
 		if err != ErrExpiredToken {
 			t.Errorf("ValidateRefreshToken() error = %v, want %v", err, ErrExpiredToken)
 		}
 	})
 
 	t.Run("invalid base64", func(t *testing.T) {
-		_, err := mgr.ValidateRefreshToken("invalid-base64!!!", 5)
+		_, err := mgr.ValidateRefreshToken("invalid-base64!!!")
 		if err != ErrInvalidToken {
 			t.Errorf("ValidateRefreshToken() error = %v, want %v", err, ErrInvalidToken)
 		}
@@ -557,14 +557,14 @@ func TestValidateRefreshToken(t *testing.T) {
 		decoded[10] ^= 1
 		tampered := base64.URLEncoding.EncodeToString(decoded)
 
-		_, err = mgr.ValidateRefreshToken(tampered, 5)
+		_, err = mgr.ValidateRefreshToken(tampered)
 		if err != ErrInvalidSignature {
 			t.Errorf("ValidateRefreshToken() error = %v, want %v", err, ErrInvalidSignature)
 		}
 	})
 
 	t.Run("empty token", func(t *testing.T) {
-		_, err := mgr.ValidateRefreshToken("", 5)
+		_, err := mgr.ValidateRefreshToken("")
 		if err != ErrInvalidToken && err != ErrInvalidSignature {
 			t.Errorf("ValidateRefreshToken() error = %v, want %v or %v", err, ErrInvalidToken, ErrInvalidSignature)
 		}
@@ -638,7 +638,7 @@ func TestTokensAreIndependent(t *testing.T) {
 	// into the wrong struct type. This is acceptable as the JSON structure differs.
 
 	// Session token will fail to parse as refresh token (different JSON structure)
-	_, err = mgr.ValidateRefreshToken(sessionToken, 5)
+	_, err = mgr.ValidateRefreshToken(sessionToken)
 	if err == nil {
 		t.Logf("Note: ValidateRefreshToken may accept session token structurally but will fail in practice")
 		// This is acceptable - the unmarshal will fail due to different JSON fields

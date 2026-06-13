@@ -22,7 +22,7 @@ type RefreshHandler struct {
 	sessionClient   *session.Client
 	kubeconfigGen   *KubeconfigGenerator
 	refreshTokenTTL time.Duration
-	rotationWindow  int
+	rotationWindow  int // max rotation counter lag to accept (replay-attack window)
 }
 
 type RefreshRequest struct {
@@ -77,7 +77,7 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Validate and decrypt refresh token
-	refreshToken, err := h.jwtManager.ValidateRefreshToken(req.RefreshToken, h.rotationWindow)
+	refreshToken, err := h.jwtManager.ValidateRefreshToken(req.RefreshToken)
 	if err != nil {
 		switch err {
 		case jwt.ErrExpiredToken:
@@ -100,10 +100,28 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 
 	if refreshToken.SessionID != "" {
+		// Update last-used before validating so the expiry goroutine sees fresh
+		// activity and does not race to expire a session that is actively in use.
+		_ = h.sessionClient.UpdateLastUsed(ctx, refreshToken.SessionID)
 		if err := h.sessionClient.ValidateSession(ctx, refreshToken.SessionID, v1alpha1.SessionActive); err != nil {
 			log.Printf("REFRESH_FAILURE: user=%q reason=session_invalid error=%q", refreshToken.UserEmail, err)
 			http.Error(w, "Session is no longer active", http.StatusUnauthorized)
 			return
+		}
+
+		// Replay-attack check: the session CRD stores the latest valid refresh token.
+		// If the incoming counter is behind the stored counter, a rotated-away token
+		// is being replayed.
+		if sess, err := h.sessionClient.Get(ctx, refreshToken.SessionID); err == nil && sess.Status.RefreshToken != "" {
+			if stored, err := h.jwtManager.DecodeRefreshToken(sess.Status.RefreshToken); err == nil {
+				if refreshToken.RotationCounter < stored.RotationCounter ||
+					refreshToken.RotationCounter > stored.RotationCounter+h.rotationWindow {
+					log.Printf("REFRESH_FAILURE: user=%q reason=replay_attack incoming_counter=%d stored_counter=%d",
+						refreshToken.UserEmail, refreshToken.RotationCounter, stored.RotationCounter)
+					http.Error(w, "Token replay detected", http.StatusUnauthorized)
+					return
+				}
+			}
 		}
 	}
 
@@ -160,9 +178,8 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Update session with new refresh token and last used timestamp
+	// Update session with new refresh token
 	if refreshToken.SessionID != "" {
-		_ = h.sessionClient.UpdateLastUsed(ctx, refreshToken.SessionID)
 		_ = h.sessionClient.UpdateStatus(ctx, refreshToken.SessionID, v1alpha1.OAuthSessionStatus{
 			Phase:        v1alpha1.SessionActive,
 			Email:        claims.Email,
