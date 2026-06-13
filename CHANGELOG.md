@@ -1,5 +1,31 @@
 # Changelog
 
+## [0.2.15](https://github.com/krezh/kauth/compare/0.2.14...0.2.15) (2026-06-13)
+
+
+### Features
+
+* add session tracking and revocation ([128c8c0](https://github.com/krezh/kauth/commit/128c8c082b20461e405ed411bd186439e858de55))
+
+
+### Bug Fixes
+
+* harden session lifecycle, JWT replay protection, and token cache safety ([8a71af7](https://github.com/krezh/kauth/commit/8a71af727f5488c4f762fdf6148d744935bc4ae9))
+* **token:** use a single token cache file. add shell completions ([1606f46](https://github.com/krezh/kauth/commit/1606f464298033edc0f68b6bdf5b77904f5d9d0e))
+
+
+### Miscellaneous Chores
+
+* **deps:** lock file maintenance ([#230](https://github.com/krezh/kauth/issues/230)) ([51d575f](https://github.com/krezh/kauth/commit/51d575ff4753b96dff6821f005ef4f2c5552c424))
+* **deps:** update module charm.land/lipgloss/v2 to v2.0.4 ([#226](https://github.com/krezh/kauth/issues/226)) ([4d901ff](https://github.com/krezh/kauth/commit/4d901ffdeabea9a3506fd67c23e152765dc60eee))
+* **deps:** update module k8s.io/apimachinery to v0.36.2 ([#228](https://github.com/krezh/kauth/issues/228)) ([1fb5136](https://github.com/krezh/kauth/commit/1fb5136812578fef391b4432788e8c7884456500))
+* **deps:** update module k8s.io/client-go to v0.36.2 ([#229](https://github.com/krezh/kauth/issues/229)) ([8984991](https://github.com/krezh/kauth/commit/8984991b7e055195c3fda5f47d43349703e51bd2))
+
+
+### Code Refactoring
+
+* **token:** fold server URL into JSON cache, drop kauth-server-url file ([562e6b2](https://github.com/krezh/kauth/commit/562e6b296eac95e616886b941e70ab5f9c9d26e7))
+
 ## [0.2.14](https://github.com/krezh/kauth/compare/0.2.13...0.2.14) (2026-06-12)
 
 
