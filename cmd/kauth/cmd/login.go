@@ -160,31 +160,24 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	cacheDir := filepath.Join(os.Getenv("HOME"), ".kube", "cache")
-	if err := os.MkdirAll(cacheDir, 0700); err != nil {
-		return fmt.Errorf("failed to create cache directory: %w", err)
+	storage := token.NewStorage(token.DefaultCachePath())
+	newCache := &token.Cache{
+		ServerURL: serverURL,
 	}
 
 	if status.RefreshToken != "" {
 		refreshResp, err := refreshTokenFromServer(serverURL, status.RefreshToken)
 		if err == nil {
-			storage := token.NewStorage(token.DefaultCachePath())
 			expiresAt := time.Now().Add(time.Duration(refreshResp.ExpiresIn) * time.Second)
-			newCache := &token.Cache{
-				IDToken:      refreshResp.IDToken,
-				RefreshToken: refreshResp.RefreshToken,
-				SessionID:    status.SessionID,
-				Expiry:       expiresAt,
-			}
-			if err := storage.Save(newCache); err != nil {
-				fmt.Fprintf(os.Stderr, "warning: failed to cache token: %v\n", err)
-			}
+			newCache.IDToken = refreshResp.IDToken
+			newCache.RefreshToken = refreshResp.RefreshToken
+			newCache.SessionID = status.SessionID
+			newCache.Expiry = expiresAt
 		}
 	}
 
-	serverURLPath := filepath.Join(cacheDir, "kauth-server-url")
-	if err := os.WriteFile(serverURLPath, []byte(serverURL), 0600); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to save server URL: %v\n", err)
+	if err := storage.Save(newCache); err != nil {
+		fmt.Fprintf(os.Stderr, "warning: failed to cache token: %v\n", err)
 	}
 
 	fmt.Printf("\n  %s %s %s\n", successIcon, green.Render("Logged in to "+info.ClusterName), muted.Render(kubeconfigPath))
@@ -205,23 +198,11 @@ func resolveServerURL() (string, error) {
 		}
 	}
 
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("failed to get home directory: %w", err)
+	if cached, err := token.NewStorage(token.DefaultCachePath()).Load(); err == nil && cached != nil && cached.ServerURL != "" {
+		return cached.ServerURL, nil
 	}
-	cached := filepath.Join(homeDir, ".kube", "cache", "kauth-server-url")
-	data, err := os.ReadFile(cached)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return "", fmt.Errorf("no kauth servers found.\n\nConfigure DNS TXT records at _kauth.<domain> or re-run with a cached session")
-		}
-		return "", fmt.Errorf("failed to read cached server URL: %w", err)
-	}
-	url := strings.TrimSpace(string(data))
-	if url == "" {
-		return "", fmt.Errorf("cached server URL is empty")
-	}
-	return url, nil
+
+	return "", fmt.Errorf("no kauth servers found.\n\nConfigure DNS TXT records at _kauth.<domain> or run:\n  kauth login --url <server-url>")
 }
 
 func selectServer(servers []discoveredServer) (string, error) {

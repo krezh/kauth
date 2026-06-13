@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -37,8 +35,8 @@ type SessionInfo struct {
 	Phase       string    `json:"phase"`
 	CreatedAt   time.Time `json:"created_at"`
 	LastUsed    time.Time `json:"last_used"`
-	RevokedAt   time.Time `json:"revoked_at,omitempty"`
-	CompletedAt time.Time `json:"completed_at,omitempty"`
+	RevokedAt   time.Time `json:"revoked_at"`
+	CompletedAt time.Time `json:"completed_at"`
 }
 
 type SessionsResponse struct {
@@ -51,23 +49,6 @@ type RevokeSessionRequest struct {
 }
 
 func runSessions(cmd *cobra.Command, args []string) error {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("failed to get home directory: %w", err)
-	}
-
-	cacheDir := filepath.Join(homeDir, ".kube", "cache")
-	serverURLPath := filepath.Join(cacheDir, "kauth-server-url")
-
-	serverURLBytes, err := os.ReadFile(serverURLPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("not authenticated.\n\nTo authenticate, run:\n  kauth login --url <server-url>")
-		}
-		return fmt.Errorf("failed to read server URL: %w", err)
-	}
-	serverURL := string(serverURLBytes)
-
 	storage := token.NewStorage(token.DefaultCachePath())
 	cachedToken, _ := storage.Load()
 
@@ -75,17 +56,19 @@ func runSessions(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no valid token found.\n\nTo authenticate, run:\n  kauth login --url <server-url>")
 	}
 
+	serverURL := cachedToken.ServerURL
+	if serverURL == "" {
+		return fmt.Errorf("not authenticated.\n\nTo authenticate, run:\n  kauth login --url <server-url>")
+	}
+
 	if revokeSessionID != "" {
 		return revokeSession(serverURL, revokeSessionID, cachedToken.IDToken)
 	}
 
 	userEmail := ""
-	if cachedToken != nil {
-		idToken := cachedToken.IDToken
-		claims := decodeJWTClaims(idToken)
-		if email, ok := claims["email"].(string); ok {
-			userEmail = email
-		}
+	claims := decodeJWTClaims(cachedToken.IDToken)
+	if email, ok := claims["email"].(string); ok {
+		userEmail = email
 	}
 
 	req, err := http.NewRequest("GET", serverURL+"/sessions", nil)

@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -28,14 +29,6 @@ func init() {
 }
 
 func runStatus(cmd *cobra.Command, args []string) error {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("failed to get home directory: %w", err)
-	}
-
-	cacheDir := filepath.Join(homeDir, ".kube", "cache")
-	serverURLPath := filepath.Join(cacheDir, "kauth-server-url")
-
 	storage := token.NewStorage(token.DefaultCachePath())
 
 	cachedToken, _ := storage.Load()
@@ -45,19 +38,16 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
+	serverURLFull := cachedToken.ServerURL
 	serverURL := "unknown"
-	serverURLFull := ""
-	if data, err := os.ReadFile(serverURLPath); err == nil {
-		serverURLFull = strings.TrimSpace(string(data))
+	if serverURLFull != "" {
 		serverURL = urlHost(serverURLFull)
 	}
 
 	fmt.Printf("\n  %s %s\n\n", accent.Render("●"), bold.Render("Authentication Status"))
 
-	if cachedToken != nil {
-		user := getUserFromToken(cachedToken.IDToken)
-		fmt.Printf("  %s %s\n", accent.Render("User"), orange.Render(user))
-	}
+	user := getUserFromToken(cachedToken.IDToken)
+	fmt.Printf("  %s %s\n", accent.Render("User"), orange.Render(user))
 
 	kubeInfo, err := getKubeconfigInfo()
 	if err == nil {
@@ -66,7 +56,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  %s %s\n", accent.Render("API Server"), orange.Render(kubeInfo.apiServer))
 	}
 
-	if cachedToken != nil && kubeInfo != nil {
+	if kubeInfo != nil {
 		user := getUserFromToken(cachedToken.IDToken)
 		groups := getGroupsFromToken(cachedToken.IDToken)
 		roles := getClusterRoles(kubeInfo.apiServer, cachedToken.IDToken, user, groups)
@@ -84,18 +74,14 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  %s %s %s\n", accent.Render("Health"), errorIcon, red.Render("Unreachable"))
 	}
 
-	if cachedToken == nil {
-		fmt.Printf("  %s %s\n", accent.Render("Token"), muted.Render("Not yet fetched"))
-	} else {
-		now := time.Now()
-		timeUntilExpiry := cachedToken.Expiry.Sub(now)
-		expired := timeUntilExpiry <= 0
+	now := time.Now()
+	timeUntilExpiry := cachedToken.Expiry.Sub(now)
+	expired := timeUntilExpiry <= 0
 
-		if expired {
-			fmt.Printf("  %s %s %s %s\n", accent.Render("Token"), errorIcon, red.Render("Expired"), muted.Render(fmt.Sprintf("(%s ago)", formatDuration(-timeUntilExpiry))))
-		} else {
-			fmt.Printf("  %s %s %s %s\n", accent.Render("Token"), successIcon, green.Render("Valid"), muted.Render(fmt.Sprintf("(expires in %s)", formatDuration(timeUntilExpiry))))
-		}
+	if expired {
+		fmt.Printf("  %s %s %s %s\n", accent.Render("Token"), errorIcon, red.Render("Expired"), muted.Render(fmt.Sprintf("(%s ago)", formatDuration(-timeUntilExpiry))))
+	} else {
+		fmt.Printf("  %s %s %s %s\n", accent.Render("Token"), successIcon, green.Render("Valid"), muted.Render(fmt.Sprintf("(expires in %s)", formatDuration(timeUntilExpiry))))
 	}
 
 	fmt.Printf("  %s %s %s\n", accent.Render("Refresh"), successIcon, green.Render("Available"))
@@ -108,18 +94,14 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  %s %s\n", successIcon, green.Render("kubectl ready."))
 	}
 
-	if cachedToken == nil {
-		fmt.Printf("  %s %s\n", infoIcon, orange.Render("Token will be fetched on next kubectl use."))
-	} else {
-		now := time.Now()
-		timeUntilExpiry := cachedToken.Expiry.Sub(now)
-		expired := timeUntilExpiry <= 0
+	now = time.Now()
+	timeUntilExpiry = cachedToken.Expiry.Sub(now)
+	expired = timeUntilExpiry <= 0
 
-		if expired {
-			fmt.Printf("  %s %s\n", infoIcon, yellow.Render("Token expired — will auto-refresh on next kubectl use."))
-		} else if timeUntilExpiry < 5*time.Minute {
-			fmt.Printf("  %s %s\n", warningIcon, yellow.Render("Token expires soon."))
-		}
+	if expired {
+		fmt.Printf("  %s %s\n", infoIcon, yellow.Render("Token expired — will auto-refresh on next kubectl use."))
+	} else if timeUntilExpiry < 5*time.Minute {
+		fmt.Printf("  %s %s\n", warningIcon, yellow.Render("Token expires soon."))
 	}
 
 	fmt.Println()
@@ -150,7 +132,7 @@ func formatDuration(d time.Duration) string {
 	return fmt.Sprintf("%ds", seconds)
 }
 
-func decodeJWTClaims(token string) map[string]interface{} {
+func decodeJWTClaims(token string) map[string]any {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
 		return nil
@@ -161,7 +143,7 @@ func decodeJWTClaims(token string) map[string]interface{} {
 		return nil
 	}
 
-	var claims map[string]interface{}
+	var claims map[string]any
 	if err := json.Unmarshal(payload, &claims); err != nil {
 		return nil
 	}
@@ -190,7 +172,7 @@ func getGroupsFromToken(token string) []string {
 		return nil
 	}
 
-	groups, ok := claims["groups"].([]interface{})
+	groups, ok := claims["groups"].([]any)
 	if !ok {
 		return nil
 	}
@@ -236,13 +218,8 @@ func getClusterRoles(apiServer, token string, userEmail string, userGroups []str
 						roles = append(roles, binding.RoleRef.Name)
 						break
 					}
-					if subject.Kind == "Group" {
-						for _, g := range userGroups {
-							if subject.Name == g {
-								roles = append(roles, binding.RoleRef.Name)
-								break
-							}
-						}
+					if subject.Kind == "Group" && slices.Contains(userGroups, subject.Name) {
+						roles = append(roles, binding.RoleRef.Name)
 					}
 				}
 			}

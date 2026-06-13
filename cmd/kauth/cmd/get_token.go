@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
 	"time"
 
 	"kauth/pkg/token"
@@ -57,33 +56,20 @@ type RefreshResponse struct {
 }
 
 func runGetToken(cmd *cobra.Command, args []string) error {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("failed to get home directory: %w", err)
-	}
-
-	cacheDir := filepath.Join(homeDir, ".kube", "cache")
-	serverURLPath := filepath.Join(cacheDir, "kauth-server-url")
-
 	storage := token.NewStorage(token.DefaultCachePath())
 
-	serverURLBytes, err := os.ReadFile(serverURLPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return fmt.Errorf("not authenticated.\n\nTo authenticate, run:\n  kauth login --url <server-url>\n\nExample:\n  kauth login --url https://kauth.example.com")
-		}
-		return fmt.Errorf("failed to read server URL: %w", err)
-	}
-	serverURL := string(serverURLBytes)
-
 	cachedToken, err := storage.Load()
-	if err == nil && cachedToken != nil {
-		if time.Now().Before(cachedToken.Expiry.Add(-5 * time.Minute)) {
-			return outputExecCredential(cachedToken.IDToken, cachedToken.Expiry)
-		}
+	if err != nil || cachedToken == nil || cachedToken.ServerURL == "" {
+		return fmt.Errorf("not authenticated.\n\nTo authenticate, run:\n  kauth login --url <server-url>\n\nExample:\n  kauth login --url https://kauth.example.com")
 	}
 
-	if cachedToken == nil || cachedToken.RefreshToken == "" {
+	serverURL := cachedToken.ServerURL
+
+	if cachedToken.RefreshToken != "" && time.Now().Before(cachedToken.Expiry.Add(-5*time.Minute)) {
+		return outputExecCredential(cachedToken.IDToken, cachedToken.Expiry)
+	}
+
+	if cachedToken.RefreshToken == "" {
 		return fmt.Errorf("no refresh token found.\n\nYour authentication session may have expired.\nTo re-authenticate, run:\n  kauth login")
 	}
 
@@ -93,11 +79,23 @@ func runGetToken(cmd *cobra.Command, args []string) error {
 	}
 
 	expiresAt := time.Now().Add(time.Duration(refreshResp.ExpiresIn) * time.Second)
+	if refreshResp.ExpiresIn <= 0 {
+		fmt.Fprintf(os.Stderr, "Warning: server returned non-positive expires_in (%d), defaulting to 5 minutes\n", refreshResp.ExpiresIn)
+		expiresAt = time.Now().Add(5 * time.Minute)
+	}
+
+	if refreshResp.IDToken == "" {
+		return fmt.Errorf("server returned empty ID token")
+	}
+
 	newCache := &token.Cache{
 		IDToken:      refreshResp.IDToken,
-		RefreshToken: refreshResp.RefreshToken,
 		SessionID:    cachedToken.SessionID,
 		Expiry:       expiresAt,
+		RefreshToken: cachedToken.RefreshToken, // keep existing unless server sends a new one
+	}
+	if refreshResp.RefreshToken != "" {
+		newCache.RefreshToken = refreshResp.RefreshToken
 	}
 
 	if err := storage.Save(newCache); err != nil {

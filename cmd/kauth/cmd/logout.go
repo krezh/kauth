@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"path/filepath"
 
 	"kauth/pkg/token"
 
@@ -29,32 +28,15 @@ type RevokeRequest struct {
 }
 
 func runLogout(cmd *cobra.Command, args []string) error {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return fmt.Errorf("failed to get home directory: %w", err)
-	}
-
-	cacheDir := filepath.Join(homeDir, ".kube", "cache")
-	serverURLPath := filepath.Join(cacheDir, "kauth-server-url")
-
 	storage := token.NewStorage(token.DefaultCachePath())
 
 	cachedToken, err := storage.Load()
-	if err != nil || cachedToken == nil {
+	if err != nil || cachedToken == nil || cachedToken.RefreshToken == "" {
 		fmt.Println("Not authenticated.")
 		return nil
 	}
 
-	serverURLBytes, err := os.ReadFile(serverURLPath)
-	if err != nil {
-		if os.IsNotExist(err) {
-			_ = storage.Delete()
-			fmt.Println("Not authenticated (no server URL). Local cache cleared.")
-			return nil
-		}
-		return fmt.Errorf("failed to read server URL: %w", err)
-	}
-	serverURL := string(serverURLBytes)
+	serverURL := cachedToken.ServerURL
 
 	if cachedToken.SessionID != "" {
 		reqBody := RevokeRequest{
@@ -85,7 +67,7 @@ func runLogout(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if err := storage.Delete(); err != nil {
+	if err := storage.Save(&token.Cache{ServerURL: serverURL}); err != nil {
 		return fmt.Errorf("failed to clear local cache: %w", err)
 	}
 

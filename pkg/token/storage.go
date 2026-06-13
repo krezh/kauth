@@ -10,10 +10,11 @@ import (
 
 // Cache represents the token cache structure
 type Cache struct {
-	IDToken      string    `json:"id_token"`
-	RefreshToken string    `json:"refresh_token"`
-	SessionID    string    `json:"session_id"`
-	Expiry       time.Time `json:"expiry"`
+	ServerURL    string    `json:"server_url,omitempty"`
+	IDToken      string    `json:"id_token,omitempty"`
+	RefreshToken string    `json:"refresh_token,omitempty"`
+	SessionID    string    `json:"session_id,omitempty"`
+	Expiry       time.Time `json:"expiry,omitempty"`
 }
 
 // Storage handles token persistence
@@ -55,7 +56,8 @@ func (s *Storage) Load() (*Cache, error) {
 	return &cache, nil
 }
 
-// Save saves a token to the cache with secure permissions
+// Save saves a token to the cache with secure permissions.
+// Uses a temp-file + rename to avoid partial writes under concurrent kubectl calls.
 func (s *Storage) Save(cache *Cache) error {
 	if cache == nil {
 		return fmt.Errorf("cannot save nil cache")
@@ -71,8 +73,27 @@ func (s *Storage) Save(cache *Cache) error {
 		return fmt.Errorf("failed to marshal token: %w", err)
 	}
 
-	if err := os.WriteFile(s.cachePath, data, 0600); err != nil {
-		return fmt.Errorf("failed to write token cache: %w", err)
+	tmp, err := os.CreateTemp(dir, ".kauth-token-*.json")
+	if err != nil {
+		return fmt.Errorf("failed to create temp file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer func() { _ = os.Remove(tmpPath) }()
+
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("failed to write temp file: %w", err)
+	}
+	if err := tmp.Chmod(0600); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("failed to set temp file permissions: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("failed to close temp file: %w", err)
+	}
+
+	if err := os.Rename(tmpPath, s.cachePath); err != nil {
+		return fmt.Errorf("failed to rename token cache: %w", err)
 	}
 
 	return nil
