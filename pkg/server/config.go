@@ -35,4 +35,5 @@ type Config struct {
 
 	// Authorization Configuration
 	AllowedGroups []string // OIDC groups allowed to authenticate (empty = allow all)
+	AdminGroups   []string // OIDC groups allowed to manage/revoke sessions (empty = no admins)
 }

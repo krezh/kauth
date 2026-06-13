@@ -71,6 +71,7 @@ func (in *OAuthSessionList) DeepCopy() *OAuthSessionList {
 func (in *OAuthSessionSpec) DeepCopyInto(out *OAuthSessionSpec) {
 	*out = *in
 	in.CreatedAt.DeepCopyInto(&out.CreatedAt)
+	in.LastUsed.DeepCopyInto(&out.LastUsed)
 }
 
 // DeepCopy creates a deep copy
@@ -88,6 +89,11 @@ func (in *OAuthSessionStatus) DeepCopyInto(out *OAuthSessionStatus) {
 	*out = *in
 	if in.CompletedAt != nil {
 		in, out := &in.CompletedAt, &out.CompletedAt
+		*out = new(metav1.Time)
+		(*in).DeepCopyInto(*out)
+	}
+	if in.RevokedAt != nil {
+		in, out := &in.RevokedAt, &out.RevokedAt
 		*out = new(metav1.Time)
 		(*in).DeepCopyInto(*out)
 	}

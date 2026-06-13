@@ -56,6 +56,7 @@ type StatusResponse struct {
 	Ready        bool   `json:"ready"`
 	Kubeconfig   string `json:"kubeconfig,omitempty"`
 	RefreshToken string `json:"refresh_token,omitempty"`
+	SessionID    string `json:"session_id,omitempty"`
 	Error        string `json:"error,omitempty"`
 }
 
@@ -172,6 +173,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 			newCache := &token.Cache{
 				IDToken:      refreshResp.IDToken,
 				RefreshToken: refreshResp.RefreshToken,
+				SessionID:    status.SessionID,
 				Expiry:       expiresAt,
 			}
 			if err := storage.Save(newCache); err != nil {

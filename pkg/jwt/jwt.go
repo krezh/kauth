@@ -31,8 +31,9 @@ type SessionToken struct {
 // RefreshToken contains refresh token data (encrypted, signed)
 type RefreshToken struct {
 	UserEmail        string    `json:"user_email"`
-	OIDCRefreshToken string    `json:"oidc_refresh_token"` // Encrypted OIDC provider refresh token
+	OIDCRefreshToken string    `json:"oidc_refresh_token"`
 	RotationCounter  int       `json:"rotation_counter"`
+	SessionID        string    `json:"session_id"`
 	IssuedAt         time.Time `json:"issued_at"`
 	ExpiresAt        time.Time `json:"expires_at"`
 }
@@ -123,12 +124,13 @@ func (m *Manager) ValidateSessionToken(token string) (*SessionToken, error) {
 }
 
 // CreateRefreshToken creates an encrypted and signed refresh token
-func (m *Manager) CreateRefreshToken(userEmail, oidcRefreshToken string, rotationCounter int, ttl time.Duration) (string, error) {
+func (m *Manager) CreateRefreshToken(userEmail, oidcRefreshToken, sessionID string, rotationCounter int, ttl time.Duration) (string, error) {
 	now := time.Now()
 	refresh := RefreshToken{
 		UserEmail:        userEmail,
 		OIDCRefreshToken: oidcRefreshToken,
 		RotationCounter:  rotationCounter,
+		SessionID:        sessionID,
 		IssuedAt:         now,
 		ExpiresAt:        now.Add(ttl),
 	}

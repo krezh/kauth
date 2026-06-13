@@ -24,23 +24,41 @@ spec:
                 verifier:
                   type: string
                   description: PKCE verifier for code exchange
+                userID:
+                  type: string
+                  description: User identifier (email or sub)
                 createdAt:
                   type: string
                   format: date-time
                   description: Timestamp when session was created
+                lastUsed:
+                  type: string
+                  format: date-time
+                  description: Timestamp when session was last used for token refresh
             status:
               type: object
               properties:
-                ready:
-                  type: boolean
-                  description: Whether OAuth flow has completed
-                  default: false
+                phase:
+                  type: string
+                  description: Lifecycle phase of the session (Pending, Active, Revoked, Expired)
+                  enum:
+                    - Pending
+                    - Active
+                    - Revoked
+                    - Expired
                 email:
                   type: string
                   description: Authenticated user's email address
+                username:
+                  type: string
+                  description: Authenticated user's preferred username
                 refreshToken:
                   type: string
-                  description: JWT refresh token for token rotation
+                  description: Encrypted JWT refresh token for token rotation
+                revokedAt:
+                  type: string
+                  format: date-time
+                  description: Timestamp when the session was revoked
                 error:
                   type: string
                   description: Error message if OAuth flow failed
@@ -51,9 +69,18 @@ spec:
       subresources:
         status: {}
       additionalPrinterColumns:
-        - name: Ready
-          type: boolean
-          jsonPath: .status.ready
+        - name: Phase
+          type: string
+          jsonPath: .status.phase
+        - name: User
+          type: string
+          jsonPath: .status.username
+        - name: Email
+          type: string
+          jsonPath: .status.email
+        - name: Last Used
+          type: date
+          jsonPath: .spec.lastUsed
         - name: Age
           type: date
           jsonPath: .metadata.creationTimestamp

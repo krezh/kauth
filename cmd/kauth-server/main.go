@@ -77,6 +77,7 @@ func main() {
 		RefreshTokenTTL:   getEnvDuration("REFRESH_TOKEN_TTL", 7*24*time.Hour),
 		AllowedOrigins:    getEnvStringSlice("ALLOWED_ORIGINS", []string{}),
 		AllowedGroups:     getEnvStringSlice("ALLOWED_GROUPS", []string{}),
+		AdminGroups:       getEnvStringSlice("ADMIN_GROUPS", []string{}),
 		RateLimitRPS:      getEnvFloat("RATE_LIMIT_RPS", 10.0),
 		RateLimitBurst:    getEnvInt("RATE_LIMIT_BURST", 20),
 		RotationWindow:    getEnvInt("ROTATION_WINDOW", 2),
@@ -219,6 +220,7 @@ func main() {
 			refreshHandler = handlers.NewRefreshHandler(
 				provider,
 				jwtManager,
+				sessionClient,
 				cfg.ClusterName,
 				clusterServer,
 				clusterCA,
@@ -248,6 +250,12 @@ func main() {
 	mux.HandleFunc("/refresh", requireProvider(func(w http.ResponseWriter, r *http.Request) {
 		getRefreshHandler().HandleRefresh(w, r)
 	}))
+	mux.HandleFunc("/revoke", requireProvider(handlers.RequireAuth(provider, func(w http.ResponseWriter, r *http.Request) {
+		handlers.NewRevokeHandler(sessionClient, cfg.AdminGroups).HandleRevoke(w, r)
+	})))
+	mux.HandleFunc("/sessions", requireProvider(handlers.RequireAuth(provider, func(w http.ResponseWriter, r *http.Request) {
+		handlers.NewSessionsHandler(sessionClient, cfg.AdminGroups).HandleListSessions(w, r)
+	})))
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("OK"))
@@ -302,6 +310,11 @@ func main() {
 		slog.Info("Group authorization enabled", "allowed_groups", cfg.AllowedGroups)
 	} else {
 		slog.Info("Group authorization disabled - all OIDC users allowed")
+	}
+	if len(cfg.AdminGroups) > 0 {
+		slog.Info("Admin groups configured", "admin_groups", cfg.AdminGroups)
+	} else {
+		slog.Info("No admin groups configured - session management disabled")
 	}
 
 	// Create HTTP server

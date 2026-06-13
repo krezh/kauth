@@ -12,6 +12,7 @@ import (
 type Cache struct {
 	IDToken      string    `json:"id_token"`
 	RefreshToken string    `json:"refresh_token"`
+	SessionID    string    `json:"session_id"`
 	Expiry       time.Time `json:"expiry"`
 }
 

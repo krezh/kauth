@@ -46,7 +46,7 @@ func (c *Client) gvr() schema.GroupVersionResource {
 }
 
 // Create creates a new OAuthSession
-func (c *Client) Create(ctx context.Context, state, verifier string) (*v1alpha1.OAuthSession, error) {
+func (c *Client) Create(ctx context.Context, state, verifier, userID string) (*v1alpha1.OAuthSession, error) {
 	session := &v1alpha1.OAuthSession{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: "kauth.io/v1alpha1",
@@ -62,10 +62,11 @@ func (c *Client) Create(ctx context.Context, state, verifier string) (*v1alpha1.
 		Spec: v1alpha1.OAuthSessionSpec{
 			State:     state,
 			Verifier:  verifier,
+			UserID:    userID,
 			CreatedAt: metav1.Now(),
 		},
 		Status: v1alpha1.OAuthSessionStatus{
-			Ready: false,
+			Phase: v1alpha1.SessionPending,
 		},
 	}
 
@@ -114,15 +115,13 @@ func (c *Client) Get(ctx context.Context, state string) (*v1alpha1.OAuthSession,
 
 // UpdateStatus updates the status of an OAuthSession
 func (c *Client) UpdateStatus(ctx context.Context, state string, status v1alpha1.OAuthSessionStatus) error {
-	// Get current session
 	session, err := c.Get(ctx, state)
 	if err != nil {
 		return fmt.Errorf("failed to get session: %w", err)
 	}
 
-	// Update status
 	session.Status = status
-	if status.Ready {
+	if status.Phase == v1alpha1.SessionActive && status.CompletedAt == nil {
 		now := metav1.Now()
 		session.Status.CompletedAt = &now
 	}
@@ -144,6 +143,161 @@ func (c *Client) UpdateStatus(ctx context.Context, state string, status v1alpha1
 	}
 
 	return nil
+}
+
+// Revoke marks a session as revoked
+func (c *Client) Revoke(ctx context.Context, state string) error {
+	session, err := c.Get(ctx, state)
+	if err != nil {
+		return fmt.Errorf("failed to get session: %w", err)
+	}
+
+	now := metav1.Now()
+	session.Status.Phase = v1alpha1.SessionRevoked
+	session.Status.RevokedAt = &now
+
+	unstructuredObj := &unstructured.Unstructured{}
+	unstructuredMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(session)
+	if err != nil {
+		return fmt.Errorf("failed to convert to unstructured: %w", err)
+	}
+	unstructuredObj.Object = unstructuredMap
+
+	_, err = c.dynamicClient.Resource(c.gvr()).Namespace(c.namespace).UpdateStatus(
+		ctx,
+		unstructuredObj,
+		metav1.UpdateOptions{},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to revoke session: %w", err)
+	}
+
+	return nil
+}
+
+// ListActive returns all sessions that are not revoked or expired
+func (c *Client) ListActive(ctx context.Context) ([]v1alpha1.OAuthSession, error) {
+	list, err := c.dynamicClient.Resource(c.gvr()).Namespace(c.namespace).List(
+		ctx,
+		metav1.ListOptions{
+			LabelSelector: "app.kubernetes.io/managed-by=kauth",
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list sessions: %w", err)
+	}
+
+	var active []v1alpha1.OAuthSession
+	for _, item := range list.Items {
+		var session v1alpha1.OAuthSession
+		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(item.Object, &session); err != nil {
+			continue
+		}
+
+		if session.Status.Phase != v1alpha1.SessionRevoked && session.Status.Phase != v1alpha1.SessionExpired {
+			active = append(active, session)
+		}
+	}
+
+	return active, nil
+}
+
+// ValidateSession checks if a session exists and has the expected phase
+func (c *Client) ValidateSession(ctx context.Context, state string, expectedPhase v1alpha1.SessionPhase) error {
+	session, err := c.Get(ctx, state)
+	if err != nil {
+		return fmt.Errorf("session not found: %w", err)
+	}
+
+	if session.Status.Phase != expectedPhase {
+		return fmt.Errorf("session is %s, expected %s", session.Status.Phase, expectedPhase)
+	}
+
+	return nil
+}
+
+// UpdateLastUsed updates the last used timestamp for a session
+func (c *Client) UpdateLastUsed(ctx context.Context, state string) error {
+	session, err := c.Get(ctx, state)
+	if err != nil {
+		return fmt.Errorf("failed to get session: %w", err)
+	}
+
+	session.Spec.LastUsed = metav1.Now()
+
+	unstructuredObj := &unstructured.Unstructured{}
+	unstructuredMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(session)
+	if err != nil {
+		return fmt.Errorf("failed to convert to unstructured: %w", err)
+	}
+	unstructuredObj.Object = unstructuredMap
+
+	_, err = c.dynamicClient.Resource(c.gvr()).Namespace(c.namespace).Update(
+		ctx,
+		unstructuredObj,
+		metav1.UpdateOptions{},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update last used: %w", err)
+	}
+
+	return nil
+}
+
+// UpdateUserID updates the user ID in the session spec
+func (c *Client) UpdateUserID(ctx context.Context, state, userID string) error {
+	session, err := c.Get(ctx, state)
+	if err != nil {
+		return fmt.Errorf("failed to get session: %w", err)
+	}
+
+	session.Spec.UserID = userID
+	session.Spec.LastUsed = metav1.Now()
+
+	unstructuredObj := &unstructured.Unstructured{}
+	unstructuredMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(session)
+	if err != nil {
+		return fmt.Errorf("failed to convert to unstructured: %w", err)
+	}
+	unstructuredObj.Object = unstructuredMap
+
+	_, err = c.dynamicClient.Resource(c.gvr()).Namespace(c.namespace).Update(
+		ctx,
+		unstructuredObj,
+		metav1.UpdateOptions{},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to update user ID: %w", err)
+	}
+
+	return nil
+}
+
+// GetByUser returns all sessions for a specific user
+func (c *Client) GetByUser(ctx context.Context, userID string) ([]v1alpha1.OAuthSession, error) {
+	list, err := c.dynamicClient.Resource(c.gvr()).Namespace(c.namespace).List(
+		ctx,
+		metav1.ListOptions{
+			LabelSelector: "app.kubernetes.io/managed-by=kauth",
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list sessions: %w", err)
+	}
+
+	var userSessions []v1alpha1.OAuthSession
+	for _, item := range list.Items {
+		var session v1alpha1.OAuthSession
+		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(item.Object, &session); err != nil {
+			continue
+		}
+
+		if session.Spec.UserID == userID {
+			userSessions = append(userSessions, session)
+		}
+	}
+
+	return userSessions, nil
 }
 
 // Delete deletes an OAuthSession
@@ -170,6 +324,7 @@ func (c *Client) Watch(ctx context.Context) (watch.Interface, error) {
 }
 
 // CleanupOldSessions deletes sessions older than the specified TTL
+// Only deletes sessions that are Revoked or Expired
 func (c *Client) CleanupOldSessions(ctx context.Context, ttl time.Duration) error {
 	list, err := c.dynamicClient.Resource(c.gvr()).Namespace(c.namespace).List(
 		ctx,
@@ -189,6 +344,12 @@ func (c *Client) CleanupOldSessions(ctx context.Context, ttl time.Duration) erro
 			continue
 		}
 
+		// Only delete revoked or expired sessions
+		if session.Status.Phase != v1alpha1.SessionRevoked && session.Status.Phase != v1alpha1.SessionExpired {
+			continue
+		}
+
+		// Check if old enough to delete
 		if session.Spec.CreatedAt.Time.Before(cutoff) {
 			_ = c.Delete(ctx, session.Spec.State)
 		}
@@ -197,13 +358,60 @@ func (c *Client) CleanupOldSessions(ctx context.Context, ttl time.Duration) erro
 	return nil
 }
 
+// ExpireInactiveSessions marks sessions as expired if they haven't been used within the TTL
+func (c *Client) ExpireInactiveSessions(ctx context.Context, ttl time.Duration) error {
+	list, err := c.dynamicClient.Resource(c.gvr()).Namespace(c.namespace).List(
+		ctx,
+		metav1.ListOptions{
+			LabelSelector: "app.kubernetes.io/managed-by=kauth",
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("failed to list sessions: %w", err)
+	}
+
+	cutoff := time.Now().Add(-ttl)
+
+	for _, item := range list.Items {
+		var session v1alpha1.OAuthSession
+		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(item.Object, &session); err != nil {
+			continue
+		}
+
+		// Only expire active sessions
+		if session.Status.Phase != v1alpha1.SessionActive {
+			continue
+		}
+
+		// Use LastUsed if set, otherwise use CreatedAt
+		lastActivity := session.Spec.CreatedAt.Time
+		if !session.Spec.LastUsed.IsZero() {
+			lastActivity = session.Spec.LastUsed.Time
+		}
+
+		if lastActivity.Before(cutoff) {
+			session.Status.Phase = v1alpha1.SessionExpired
+			unstructuredObj := &unstructured.Unstructured{}
+			unstructuredMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&session)
+			if err != nil {
+				continue
+			}
+			unstructuredObj.Object = unstructuredMap
+
+			_, _ = c.dynamicClient.Resource(c.gvr()).Namespace(c.namespace).UpdateStatus(
+				ctx,
+				unstructuredObj,
+				metav1.UpdateOptions{},
+			)
+		}
+	}
+
+	return nil
+}
+
 // sanitizeName converts OAuth state to valid Kubernetes resource name
-// Kubernetes names must be lowercase alphanumeric characters, '-' or '.',
-// and must start and end with an alphanumeric character (RFC 1123 subdomain)
 func sanitizeName(state string) string {
-	// Use a prefix to avoid collision with other resources
 	sanitized := validation.SanitizeToResourceName(state)
-	// Ensure we don't exceed 63 chars with the prefix
 	if len(sanitized)+6 > 63 {
 		sanitized = sanitized[:57]
 	}

@@ -8,8 +8,10 @@ import (
 	"net/http"
 	"time"
 
+	v1alpha1 "kauth/pkg/apis/kauth.io/v1alpha1"
 	"kauth/pkg/jwt"
 	"kauth/pkg/oauth"
+	"kauth/pkg/session"
 
 	"golang.org/x/oauth2"
 )
@@ -17,9 +19,10 @@ import (
 type RefreshHandler struct {
 	provider        *oauth.Provider
 	jwtManager      *jwt.Manager
+	sessionClient   *session.Client
 	kubeconfigGen   *KubeconfigGenerator
 	refreshTokenTTL time.Duration
-	rotationWindow  int // Number of previous tokens to accept
+	rotationWindow  int
 }
 
 type RefreshRequest struct {
@@ -37,6 +40,7 @@ type RefreshResponse struct {
 func NewRefreshHandler(
 	provider *oauth.Provider,
 	jwtManager *jwt.Manager,
+	sessionClient *session.Client,
 	clusterName, clusterServer, clusterCA string,
 	refreshTokenTTL time.Duration,
 	rotationWindow int,
@@ -44,6 +48,7 @@ func NewRefreshHandler(
 	return &RefreshHandler{
 		provider:   provider,
 		jwtManager: jwtManager,
+		sessionClient: sessionClient,
 		kubeconfigGen: &KubeconfigGenerator{
 			ClusterName:   clusterName,
 			ClusterServer: clusterServer,
@@ -88,11 +93,19 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	log.Printf("REFRESH_ATTEMPT: user=%q rotation_counter=%d", refreshToken.UserEmail, refreshToken.RotationCounter)
+	log.Printf("REFRESH_ATTEMPT: user=%q rotation_counter=%d session=%q", refreshToken.UserEmail, refreshToken.RotationCounter, refreshToken.SessionID)
 
 	// Refresh the OIDC token using the provider
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
+
+	if refreshToken.SessionID != "" {
+		if err := h.sessionClient.ValidateSession(ctx, refreshToken.SessionID, v1alpha1.SessionActive); err != nil {
+			log.Printf("REFRESH_FAILURE: user=%q reason=session_invalid error=%q", refreshToken.UserEmail, err)
+			http.Error(w, "Session is no longer active", http.StatusUnauthorized)
+			return
+		}
+	}
 
 	// Create oauth2 token from stored refresh token
 	oldToken := &oauth2.Token{
@@ -136,7 +149,8 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 	// Create new rotated refresh token with incremented counter
 	newRefreshToken, err := h.jwtManager.CreateRefreshToken(
 		claims.Email,
-		newToken.RefreshToken, // New OIDC refresh token
+		newToken.RefreshToken,
+		refreshToken.SessionID,
 		refreshToken.RotationCounter+1,
 		h.refreshTokenTTL,
 	)
@@ -144,6 +158,17 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 		log.Printf("REFRESH_FAILURE: user=%q reason=create_refresh_token_failed error=%q", claims.Email, err)
 		http.Error(w, "Failed to create new refresh token", http.StatusInternalServerError)
 		return
+	}
+
+	// Update session with new refresh token and last used timestamp
+	if refreshToken.SessionID != "" {
+		_ = h.sessionClient.UpdateLastUsed(ctx, refreshToken.SessionID)
+		_ = h.sessionClient.UpdateStatus(ctx, refreshToken.SessionID, v1alpha1.OAuthSessionStatus{
+			Phase:        v1alpha1.SessionActive,
+			Email:        claims.Email,
+			Username:     claims.PreferredUsername,
+			RefreshToken: newRefreshToken,
+		})
 	}
 
 	// Calculate expires_in

@@ -127,6 +127,8 @@ env: []
   #   value: "https://app1.example.com,https://app2.example.com"  # CORS origins (comma-separated)
   # - name: ALLOWED_GROUPS
   #   value: "admins,developers"  # Restrict access to specific OIDC groups (comma-separated)
+  # - name: ADMIN_GROUPS
+  #   value: "admins"  # OIDC groups allowed to manage/revoke sessions (comma-separated)
   # - name: RATE_LIMIT_RPS
   #   value: "10"            # Requests per second per IP (default: 10)
   # - name: RATE_LIMIT_BURST

@@ -51,6 +51,7 @@ type StatusResponse struct {
 	Ready        bool   `json:"ready"`
 	Kubeconfig   string `json:"kubeconfig,omitempty"`
 	RefreshToken string `json:"refresh_token,omitempty"`
+	SessionID    string `json:"session_id,omitempty"`
 	Error        string `json:"error,omitempty"`
 }
 
@@ -100,7 +101,7 @@ func (h *LoginHandler) HandleStartLogin(w http.ResponseWriter, r *http.Request) 
 
 	// Store session in CRD (distributed across all pods)
 	ctx := r.Context()
-	_, err = h.sessionClient.Create(ctx, state, verifier)
+	_, err = h.sessionClient.Create(ctx, state, verifier, "")
 	if err != nil {
 		log.Printf("Failed to create session CRD: %v", err)
 		http.Error(w, "Failed to create session", http.StatusInternalServerError)
@@ -161,8 +162,8 @@ func (h *LoginHandler) HandleWatch(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
-	// If already ready, send immediately
-	if crdSession.Status.Ready {
+	// If already active, send immediately
+	if crdSession.Status.Phase == v1alpha1.SessionActive {
 		// Generate kubeconfig on-demand from stored email and username
 		kubeconfig := h.kubeconfigGen.Generate(crdSession.Status.Email, crdSession.Status.Username)
 
@@ -170,6 +171,7 @@ func (h *LoginHandler) HandleWatch(w http.ResponseWriter, r *http.Request) {
 			Ready:        true,
 			Kubeconfig:   kubeconfig,
 			RefreshToken: crdSession.Status.RefreshToken,
+			SessionID:    crdSession.Spec.State,
 		}
 		h.sendFinalStatus(w, &status)
 		return
@@ -264,7 +266,7 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	verifier := crdSession.Spec.Verifier
 	if verifier == "" {
 		_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
-			Ready: false,
+			Phase: v1alpha1.SessionPending,
 			Error: "Invalid session",
 		})
 		http.Error(w, "Invalid session", http.StatusInternalServerError)
@@ -275,7 +277,7 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	if errParam := r.URL.Query().Get("error"); errParam != "" {
 		errDesc := r.URL.Query().Get("error_description")
 		_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
-			Ready: false,
+			Phase: v1alpha1.SessionPending,
 			Error: fmt.Sprintf("%s: %s", errParam, errDesc),
 		})
 		http.Error(w, errParam, http.StatusBadRequest)
@@ -285,7 +287,7 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	code := r.URL.Query().Get("code")
 	if code == "" {
 		_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
-			Ready: false,
+			Phase: v1alpha1.SessionPending,
 			Error: "No authorization code returned",
 		})
 		http.Error(w, "No code returned", http.StatusBadRequest)
@@ -302,7 +304,7 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	)
 	if err != nil {
 		_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
-			Ready: false,
+			Phase: v1alpha1.SessionPending,
 			Error: fmt.Sprintf("Token exchange failed: %v", err),
 		})
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -312,7 +314,7 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	idToken, ok := token.Extra("id_token").(string)
 	if !ok {
 		_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
-			Ready: false,
+			Phase: v1alpha1.SessionPending,
 			Error: "No ID token returned",
 		})
 		http.Error(w, "No ID token", http.StatusInternalServerError)
@@ -322,7 +324,7 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	claims, _, err := VerifyAndExtractClaims(ctx, h.provider, idToken)
 	if err != nil {
 		_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
-			Ready: false,
+			Phase: v1alpha1.SessionPending,
 			Error: err.Error(),
 		})
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -334,7 +336,7 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		if !h.isUserAuthorized(claims.Groups) {
 			audit.AuthorizationDeny(ctx, r, claims.Email, claims.Groups, h.allowedGroups)
 			_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
-				Ready: false,
+				Phase: v1alpha1.SessionPending,
 				Error: "User is not a member of allowed groups",
 			})
 			http.Error(w, "Forbidden: user not in allowed groups", http.StatusForbidden)
@@ -362,22 +364,21 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	refreshToken, err := h.jwtManager.CreateRefreshToken(
 		claims.Email,
 		oidcRefreshToken,
-		0, // Initial rotation counter
+		state,
+		0,
 		h.refreshTokenTTL,
 	)
 	if err != nil {
 		_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
-			Ready: false,
+			Phase: v1alpha1.SessionPending,
 			Error: "Failed to create refresh token",
 		})
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
 
-	// Update session status in CRD (triggers watch on all pods)
-	// Store only email, username and refresh token, kubeconfig will be generated on-demand
 	err = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
-		Ready:        true,
+		Phase:        v1alpha1.SessionActive,
 		Email:        claims.Email,
 		Username:     claims.PreferredUsername,
 		RefreshToken: refreshToken,
@@ -387,6 +388,8 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
+
+	_ = h.sessionClient.UpdateUserID(ctx, state, claims.Email)
 
 	// Render success page
 	w.Header().Set("Content-Type", "text/html")

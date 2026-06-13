@@ -96,6 +96,7 @@ func runGetToken(cmd *cobra.Command, args []string) error {
 	newCache := &token.Cache{
 		IDToken:      refreshResp.IDToken,
 		RefreshToken: refreshResp.RefreshToken,
+		SessionID:    cachedToken.SessionID,
 		Expiry:       expiresAt,
 	}
 

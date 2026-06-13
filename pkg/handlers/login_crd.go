@@ -11,7 +11,6 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 )
 
-// watchSessions watches for OAuthSession CRD updates and notifies local SSE listeners
 func (h *LoginHandler) watchSessions() {
 	for {
 		ctx := context.Background()
@@ -26,7 +25,6 @@ func (h *LoginHandler) watchSessions() {
 
 		for event := range watcher.ResultChan() {
 			if event.Type == watch.Modified || event.Type == watch.Added {
-				// Convert event object to unstructured map
 				unstructuredMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(event.Object)
 				if err != nil {
 					log.Printf("Failed to convert to unstructured: %v", err)
@@ -40,36 +38,33 @@ func (h *LoginHandler) watchSessions() {
 					continue
 				}
 
-				// Only notify if status is ready or has error
-				if session.Status.Ready || session.Status.Error != "" {
+				if session.Status.Phase == v1alpha1.SessionActive || session.Status.Error != "" {
 					state := session.Spec.State
 
 					h.sseMutex.Lock()
 					listeners := h.sseListeners[state]
 					h.sseMutex.Unlock()
 
-				if len(listeners) > 0 {
-					// Generate kubeconfig on-demand from stored email and username
-					var kubeconfig string
-					if session.Status.Ready && session.Status.Email != "" {
-						kubeconfig = h.kubeconfigGen.Generate(session.Status.Email, session.Status.Username)
-					}
+					if len(listeners) > 0 {
+						var kubeconfig string
+						if session.Status.Phase == v1alpha1.SessionActive && session.Status.Email != "" {
+							kubeconfig = h.kubeconfigGen.Generate(session.Status.Email, session.Status.Username)
+						}
 
 						status := StatusResponse{
-							Ready:        session.Status.Ready,
+							Ready:        session.Status.Phase == v1alpha1.SessionActive,
 							Kubeconfig:   kubeconfig,
 							RefreshToken: session.Status.RefreshToken,
+							SessionID:    session.Spec.State,
 							Error:        session.Status.Error,
 						}
 
 						log.Printf("Notifying %d local listeners for state %s", len(listeners), state[:8])
 
-						// Notify all local listeners
 						for _, listener := range listeners {
 							select {
 							case listener <- status:
 							default:
-								// Listener channel full, skip
 							}
 						}
 					}
@@ -77,20 +72,24 @@ func (h *LoginHandler) watchSessions() {
 			}
 		}
 
-		// Watch closed, restart after delay
 		log.Println("Session watch closed, restarting...")
 		time.Sleep(5 * time.Second)
 	}
 }
 
-// cleanupSessions periodically cleans up old OAuthSession CRDs
 func (h *LoginHandler) cleanupSessions() {
 	ticker := time.NewTicker(30 * time.Second)
 	defer ticker.Stop()
 
 	for range ticker.C {
 		ctx := context.Background()
-		err := h.sessionClient.CleanupOldSessions(ctx, 60*time.Second)
+
+		err := h.sessionClient.ExpireInactiveSessions(ctx, h.refreshTokenTTL)
+		if err != nil {
+			log.Printf("Failed to expire inactive sessions: %v", err)
+		}
+
+		err = h.sessionClient.CleanupOldSessions(ctx, 60*time.Second)
 		if err != nil {
 			log.Printf("Failed to cleanup old sessions: %v", err)
 		}
