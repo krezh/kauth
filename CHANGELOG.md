@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.18](https://github.com/krezh/kauth/compare/0.2.17...0.2.18) (2026-06-14)
+
+
+### Bug Fixes
+
+* modernize codebase and fix multiple bugs ([5a3cc79](https://github.com/krezh/kauth/commit/5a3cc79467a1ab80152344011d11bf06629809ca))
+
 ## [0.2.17](https://github.com/krezh/kauth/compare/0.2.16...0.2.17) (2026-06-14)
 
 
