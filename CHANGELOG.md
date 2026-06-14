@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.16](https://github.com/krezh/kauth/compare/0.2.15...0.2.16) (2026-06-14)
+
+
+### Bug Fixes
+
+* nil pointer panic in RequireAuth middleware ([ed1da91](https://github.com/krezh/kauth/commit/ed1da911806d79e80610d92d142cea68bca4aa35))
+
 ## [0.2.15](https://github.com/krezh/kauth/compare/0.2.14...0.2.15) (2026-06-14)
 
 
