@@ -192,7 +192,7 @@ func getClusterRoles(apiServer, token string, userEmail string, userGroups []str
 	var roles []string
 
 	// Check ClusterRoleBindings
-	req, _ := http.NewRequest("GET", apiServer+"/apis/rbac.authorization.k8s.io/v1/clusterrolebindings", nil)
+	req, _ := http.NewRequest(http.MethodGet, apiServer+"/apis/rbac.authorization.k8s.io/v1/clusterrolebindings", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	resp, err := client.Do(req)
 	if err != nil {

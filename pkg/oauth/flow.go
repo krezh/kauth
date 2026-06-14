@@ -17,6 +17,7 @@ type AuthCodeFlowResult struct {
 	Token *oauth2.Token
 	Error error
 	mu    sync.RWMutex
+	done  chan struct{}
 }
 
 // StartAuthCodeFlow initiates an OAuth2 authorization code flow with PKCE
@@ -38,7 +39,7 @@ func (p *Provider) StartAuthCodeFlow(ctx context.Context, port int) (string, *Au
 	)
 
 	// Start callback server
-	result := &AuthCodeFlowResult{}
+	result := &AuthCodeFlowResult{done: make(chan struct{})}
 	if err := p.startCallbackServer(ctx, port, state, verifier, result); err != nil {
 		return "", nil, fmt.Errorf("failed to start callback server: %w", err)
 	}
@@ -124,7 +125,7 @@ func (p *Provider) startCallbackServer(ctx context.Context, port int, expectedSt
 
 	// Start server in goroutine
 	go func() {
-		if err := server.Serve(listener); err != nil && err != http.ErrServerClosed {
+		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			once.Do(func() {
 				result.setError(fmt.Errorf("callback server error: %w", err))
 			})
@@ -169,32 +170,22 @@ func (p *Provider) startCallbackServer(ctx context.Context, port int, expectedSt
 
 func (r *AuthCodeFlowResult) setToken(token *oauth2.Token) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.Token = token
+	r.mu.Unlock()
+	close(r.done)
 }
 
 func (r *AuthCodeFlowResult) setError(err error) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
 	r.Error = err
+	r.mu.Unlock()
+	close(r.done)
 }
 
-// Wait waits for the authentication flow to complete
+// Wait blocks until the authentication flow completes and returns the token or error.
 func (r *AuthCodeFlowResult) Wait() (*oauth2.Token, error) {
-	// Poll until we have either a token or an error
-	for {
-		r.mu.RLock()
-		if r.Token != nil {
-			token := r.Token
-			r.mu.RUnlock()
-			return token, nil
-		}
-		if r.Error != nil {
-			err := r.Error
-			r.mu.RUnlock()
-			return nil, err
-		}
-		r.mu.RUnlock()
-		time.Sleep(100 * time.Millisecond)
-	}
+	<-r.done
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.Token, r.Error
 }

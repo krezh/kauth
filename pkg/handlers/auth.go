@@ -34,12 +34,11 @@ func RequireAuth(getProvider func() *oauth.Provider, next http.HandlerFunc) http
 			return
 		}
 
-		if !strings.HasPrefix(authHeader, "Bearer ") {
+		rawToken, ok := strings.CutPrefix(authHeader, "Bearer ")
+		if !ok {
 			http.Error(w, "Invalid Authorization header", http.StatusUnauthorized)
 			return
 		}
-
-		rawToken := strings.TrimPrefix(authHeader, "Bearer ")
 
 		idToken, err := provider.VerifyIDToken(r.Context(), rawToken)
 		if err != nil {

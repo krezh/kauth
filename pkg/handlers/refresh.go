@@ -2,9 +2,9 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -66,7 +66,7 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req RefreshRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
@@ -76,35 +76,38 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctx := r.Context()
+
 	// Validate and decrypt refresh token
 	refreshToken, err := h.jwtManager.ValidateRefreshToken(req.RefreshToken)
 	if err != nil {
-		switch err {
-		case jwt.ErrExpiredToken:
-			log.Printf("REFRESH_FAILURE: reason=token_expired")
+		switch {
+		case errors.Is(err, jwt.ErrExpiredToken):
+			slog.WarnContext(ctx, "refresh: token expired")
 			http.Error(w, "Refresh token expired", http.StatusUnauthorized)
-		case jwt.ErrInvalidSignature:
-			log.Printf("REFRESH_FAILURE: reason=invalid_signature")
+		case errors.Is(err, jwt.ErrInvalidSignature):
+			slog.WarnContext(ctx, "refresh: invalid signature")
 			http.Error(w, "Invalid refresh token", http.StatusUnauthorized)
 		default:
-			log.Printf("REFRESH_FAILURE: reason=invalid_token error=%q", err)
+			slog.WarnContext(ctx, "refresh: invalid token", "error", err)
 			http.Error(w, "Invalid refresh token", http.StatusUnauthorized)
 		}
 		return
 	}
 
-	log.Printf("REFRESH_ATTEMPT: user=%q rotation_counter=%d session=%q", refreshToken.UserEmail, refreshToken.RotationCounter, refreshToken.SessionID)
+	slog.DebugContext(ctx, "refresh attempt", "user", refreshToken.UserEmail, "rotation_counter", refreshToken.RotationCounter, "session", refreshToken.SessionID)
 
 	// Refresh the OIDC token using the provider
-	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+	ctx2, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
+	ctx = ctx2
 
 	if refreshToken.SessionID != "" {
 		// Update last-used before validating so the expiry goroutine sees fresh
 		// activity and does not race to expire a session that is actively in use.
 		_ = h.sessionClient.UpdateLastUsed(ctx, refreshToken.SessionID)
 		if err := h.sessionClient.ValidateSession(ctx, refreshToken.SessionID, v1alpha1.SessionActive); err != nil {
-			log.Printf("REFRESH_FAILURE: user=%q reason=session_invalid error=%q", refreshToken.UserEmail, err)
+			slog.WarnContext(ctx, "refresh: session invalid", "user", refreshToken.UserEmail, "error", err)
 			http.Error(w, "Session is no longer active", http.StatusUnauthorized)
 			return
 		}
@@ -116,8 +119,11 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 			if stored, err := h.jwtManager.DecodeRefreshToken(sess.Status.RefreshToken); err == nil {
 				if refreshToken.RotationCounter < stored.RotationCounter ||
 					refreshToken.RotationCounter > stored.RotationCounter+h.rotationWindow {
-					log.Printf("REFRESH_FAILURE: user=%q reason=replay_attack incoming_counter=%d stored_counter=%d",
-						refreshToken.UserEmail, refreshToken.RotationCounter, stored.RotationCounter)
+					slog.WarnContext(ctx, "refresh: replay attack detected",
+						"user", refreshToken.UserEmail,
+						"incoming_counter", refreshToken.RotationCounter,
+						"stored_counter", stored.RotationCounter,
+					)
 					http.Error(w, "Token replay detected", http.StatusUnauthorized)
 					return
 				}
@@ -136,15 +142,15 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 	// Use the provider to refresh
 	newToken, err := h.provider.OAuth2Config.TokenSource(ctxWithClient, oldToken).Token()
 	if err != nil {
-		log.Printf("REFRESH_FAILURE: user=%q reason=oidc_refresh_failed error=%q", refreshToken.UserEmail, err)
-		http.Error(w, fmt.Sprintf("Failed to refresh token: %v", err), http.StatusUnauthorized)
+		slog.WarnContext(ctx, "refresh: OIDC token refresh failed", "user", refreshToken.UserEmail, "error", err)
+		http.Error(w, "Failed to refresh token", http.StatusUnauthorized)
 		return
 	}
 
 	// Extract new ID token
 	idToken, ok := newToken.Extra("id_token").(string)
 	if !ok {
-		log.Printf("REFRESH_FAILURE: user=%q reason=no_id_token", refreshToken.UserEmail)
+		slog.ErrorContext(ctx, "refresh: no ID token in response", "user", refreshToken.UserEmail)
 		http.Error(w, "No ID token in refresh response", http.StatusInternalServerError)
 		return
 	}
@@ -152,14 +158,14 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 	// Verify the new ID token and extract claims
 	claims, _, err := VerifyAndExtractClaims(ctx, h.provider, idToken)
 	if err != nil {
-		log.Printf("REFRESH_FAILURE: user=%q reason=id_token_verification_failed error=%q", refreshToken.UserEmail, err)
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		slog.WarnContext(ctx, "refresh: ID token verification failed", "user", refreshToken.UserEmail, "error", err)
+		http.Error(w, "Token verification failed", http.StatusInternalServerError)
 		return
 	}
 
 	// Verify the user email matches (security check)
 	if claims.Email != refreshToken.UserEmail {
-		log.Printf("REFRESH_FAILURE: user=%q reason=user_mismatch claimed_email=%q", refreshToken.UserEmail, claims.Email)
+		slog.WarnContext(ctx, "refresh: user mismatch", "token_user", refreshToken.UserEmail, "claimed_email", claims.Email)
 		http.Error(w, "Token user mismatch", http.StatusUnauthorized)
 		return
 	}
@@ -173,7 +179,7 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 		h.refreshTokenTTL,
 	)
 	if err != nil {
-		log.Printf("REFRESH_FAILURE: user=%q reason=create_refresh_token_failed error=%q", claims.Email, err)
+		slog.ErrorContext(ctx, "refresh: failed to create refresh token", "user", claims.Email, "error", err)
 		http.Error(w, "Failed to create new refresh token", http.StatusInternalServerError)
 		return
 	}
@@ -188,27 +194,26 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// Calculate expires_in
 	expiresIn := int64(0)
 	if !newToken.Expiry.IsZero() {
 		expiresIn = int64(time.Until(newToken.Expiry).Seconds())
 	}
 
-	// Log successful token refresh
-	log.Printf("REFRESH_SUCCESS: user=%q name=%q sub=%q groups=%v rotation_counter=%d cluster=%q expires_in=%ds",
-		claims.Email, claims.Name, claims.Sub, claims.Groups, refreshToken.RotationCounter+1, h.kubeconfigGen.ClusterName, expiresIn)
+	slog.InfoContext(ctx, "refresh: success",
+		"user", claims.Email,
+		"name", claims.Name,
+		"sub", claims.Sub,
+		"groups", claims.Groups,
+		"rotation_counter", refreshToken.RotationCounter+1,
+		"cluster", h.kubeconfigGen.ClusterName,
+		"expires_in", fmt.Sprintf("%ds", expiresIn),
+	)
 
-	// Generate updated kubeconfig
-	kubeconfig := h.kubeconfigGen.Generate(claims.Email, claims.PreferredUsername)
-
-	resp := RefreshResponse{
+	writeJSON(w, RefreshResponse{
 		IDToken:      idToken,
 		RefreshToken: newRefreshToken,
 		ExpiresIn:    expiresIn,
 		TokenType:    "Bearer",
-		Kubeconfig:   kubeconfig,
-	}
-
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
+		Kubeconfig:   h.kubeconfigGen.Generate(claims.Email, claims.PreferredUsername),
+	})
 }

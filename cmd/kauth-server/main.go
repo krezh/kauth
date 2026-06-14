@@ -140,6 +140,12 @@ func main() {
 	var provider *oauth.Provider
 	providerReady := make(chan struct{})
 
+	// Handlers are initialized inside the goroutine before close(providerReady).
+	// The channel close establishes a happens-before guarantee, so any goroutine
+	// that reads from providerReady sees fully-initialized handler values.
+	var loginHandler *handlers.LoginHandler
+	var refreshHandler *handlers.RefreshHandler
+
 	go func() {
 		maxRetries := 60
 		retryDelay := 5 * time.Second
@@ -154,6 +160,27 @@ func main() {
 			})
 			if err == nil {
 				provider = p
+				loginHandler = handlers.NewLoginHandler(
+					provider,
+					jwtManager,
+					cfg.ClusterName,
+					clusterServer,
+					clusterCA,
+					cfg.SessionTTL,
+					cfg.RefreshTokenTTL,
+					cfg.AllowedGroups,
+					sessionClient,
+				)
+				refreshHandler = handlers.NewRefreshHandler(
+					provider,
+					jwtManager,
+					sessionClient,
+					cfg.ClusterName,
+					clusterServer,
+					clusterCA,
+					cfg.RefreshTokenTTL,
+					cfg.RotationWindow,
+				)
 				close(providerReady)
 				slog.Info("Successfully connected to OIDC provider", "url", cfg.IssuerURL)
 				return
@@ -193,44 +220,6 @@ func main() {
 		}
 	}
 
-	// Create handlers that will use the provider once it's ready
-	var loginHandler *handlers.LoginHandler
-	var refreshHandler *handlers.RefreshHandler
-
-	// Lazy initialization of handlers once provider is ready
-	getLoginHandler := func() *handlers.LoginHandler {
-		if loginHandler == nil && provider != nil {
-			loginHandler = handlers.NewLoginHandler(
-				provider,
-				jwtManager,
-				cfg.ClusterName,
-				clusterServer,
-				clusterCA,
-				cfg.SessionTTL,
-				cfg.RefreshTokenTTL,
-				cfg.AllowedGroups,
-				sessionClient,
-			)
-		}
-		return loginHandler
-	}
-
-	getRefreshHandler := func() *handlers.RefreshHandler {
-		if refreshHandler == nil && provider != nil {
-			refreshHandler = handlers.NewRefreshHandler(
-				provider,
-				jwtManager,
-				sessionClient,
-				cfg.ClusterName,
-				clusterServer,
-				clusterCA,
-				cfg.RefreshTokenTTL,
-				cfg.RotationWindow,
-			)
-		}
-		return refreshHandler
-	}
-
 	mux.HandleFunc("/info", handlers.HandleInfo(
 		cfg.ClusterName,
 		clusterServer,
@@ -239,16 +228,16 @@ func main() {
 		cfg.BaseURL,
 	))
 	mux.HandleFunc("/start-login", requireProvider(func(w http.ResponseWriter, r *http.Request) {
-		getLoginHandler().HandleStartLogin(w, r)
+		loginHandler.HandleStartLogin(w, r)
 	}))
 	mux.HandleFunc("/watch", requireProvider(func(w http.ResponseWriter, r *http.Request) {
-		getLoginHandler().HandleWatch(w, r)
+		loginHandler.HandleWatch(w, r)
 	}))
 	mux.HandleFunc("/callback", requireProvider(func(w http.ResponseWriter, r *http.Request) {
-		getLoginHandler().HandleCallback(w, r)
+		loginHandler.HandleCallback(w, r)
 	}))
 	mux.HandleFunc("/refresh", requireProvider(func(w http.ResponseWriter, r *http.Request) {
-		getRefreshHandler().HandleRefresh(w, r)
+		refreshHandler.HandleRefresh(w, r)
 	}))
 	mux.HandleFunc("/revoke", requireProvider(handlers.RequireAuth(func() *oauth.Provider { return provider }, func(w http.ResponseWriter, r *http.Request) {
 		handlers.NewRevokeHandler(sessionClient, cfg.AdminGroups).HandleRevoke(w, r)
@@ -332,7 +321,6 @@ func main() {
 			slog.Info("Starting server with TLS")
 			serverErrors <- server.ListenAndServeTLS(cfg.TLSCertFile, cfg.TLSKeyFile)
 		} else {
-			slog.Info("Starting server without TLS", "hint", "Use TLS_CERT_FILE and TLS_KEY_FILE for HTTPS")
 			serverErrors <- server.ListenAndServe()
 		}
 	}()
@@ -392,7 +380,7 @@ func getEnvDuration(key string, defaultValue time.Duration) time.Duration {
 	}
 	duration, err := time.ParseDuration(value)
 	if err != nil {
-		slog.Info("Invalid duration for %s: %s, using default", key, value)
+		slog.Warn("invalid env var, using default", "key", key, "value", value)
 		return defaultValue
 	}
 	return duration
@@ -405,7 +393,7 @@ func getEnvInt(key string, defaultValue int) int {
 	}
 	intVal, err := strconv.Atoi(value)
 	if err != nil {
-		slog.Info("Invalid int for %s: %s, using default", key, value)
+		slog.Warn("invalid env var, using default", "key", key, "value", value)
 		return defaultValue
 	}
 	return intVal
@@ -418,7 +406,7 @@ func getEnvFloat(key string, defaultValue float64) float64 {
 	}
 	floatVal, err := strconv.ParseFloat(value, 64)
 	if err != nil {
-		slog.Info("Invalid float for %s: %s, using default", key, value)
+		slog.Warn("invalid env var, using default", "key", key, "value", value)
 		return defaultValue
 	}
 	return floatVal

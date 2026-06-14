@@ -191,10 +191,11 @@ func resolveServerURL() (string, error) {
 	}
 
 	if domain, err := detectDomain(); err == nil {
-		for d := domain; strings.Contains(d, "."); d = d[strings.Index(d, ".")+1:] {
+		for d := domain; strings.Contains(d, "."); {
 			if servers := discoverDNS(d); len(servers) > 0 {
 				return selectServer(servers)
 			}
+			_, d, _ = strings.Cut(d, ".")
 		}
 	}
 

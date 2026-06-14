@@ -1,9 +1,6 @@
 package handlers
 
-import (
-	"encoding/json"
-	"net/http"
-)
+import "net/http"
 
 // InfoResponse contains cluster and auth configuration
 type InfoResponse struct {
@@ -27,7 +24,6 @@ func HandleInfo(clusterName, clusterServer, issuerURL, clientID, baseURL string)
 			RefreshURL:    baseURL + "/refresh",
 		}
 
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(info)
+		writeJSON(w, info)
 	}
 }

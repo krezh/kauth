@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+var resourceNameRE = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`)
+
 // ValidateResourceName validates a Kubernetes resource name (RFC 1123 subdomain)
 func ValidateResourceName(name string) error {
 	if len(name) == 0 {
@@ -14,13 +16,9 @@ func ValidateResourceName(name string) error {
 	if len(name) > 63 {
 		return fmt.Errorf("name exceeds 63 characters: %d", len(name))
 	}
-
-	pattern := `^[a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*$`
-	matched, _ := regexp.MatchString(pattern, name)
-	if !matched {
+	if !resourceNameRE.MatchString(name) {
 		return fmt.Errorf("name must be lowercase alphanumeric with hyphens or dots: %q", name)
 	}
-
 	return nil
 }
 
@@ -32,35 +30,27 @@ func SanitizeToResourceName(input string) string {
 		return "default"
 	}
 
-	// Convert to lowercase and replace invalid characters with dashes
-	name := ""
+	var b strings.Builder
+	b.Grow(len(input))
 	for _, ch := range input {
-		if (ch >= 'a' && ch <= 'z') || (ch >= '0' && ch <= '9') {
-			name += string(ch)
-		} else if ch >= 'A' && ch <= 'Z' {
-			name += string(ch - 'A' + 'a') // Convert uppercase to lowercase
-		} else {
-			name += "-"
+		switch {
+		case ch >= 'a' && ch <= 'z', ch >= '0' && ch <= '9':
+			b.WriteRune(ch)
+		case ch >= 'A' && ch <= 'Z':
+			b.WriteRune(ch - 'A' + 'a')
+		default:
+			b.WriteByte('-')
 		}
 	}
 
-	// Remove leading dashes/dots
-	name = strings.TrimLeft(name, "-.")
+	name := strings.TrimRight(strings.TrimLeft(b.String(), "-."), "-.")
 
-	// Remove trailing dashes/dots
-	name = strings.TrimRight(name, "-.")
-
-	// Truncate if too long (max 63 chars for k8s names)
 	if len(name) > 63 {
-		name = name[:63]
-		// Ensure we didn't truncate to end with a dash/dot
-		name = strings.TrimRight(name, "-.")
+		name = strings.TrimRight(name[:63], "-.")
 	}
 
-	// Ensure name isn't empty after sanitization
 	if name == "" {
-		name = "default"
+		return "default"
 	}
-
 	return name
 }

@@ -48,7 +48,7 @@ func runLogout(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to marshal request: %w", err)
 		}
 
-		req, err := http.NewRequest("POST", serverURL+"/revoke", bytes.NewBuffer(jsonData))
+		req, err := http.NewRequest(http.MethodPost, serverURL+"/revoke", bytes.NewBuffer(jsonData))
 		if err != nil {
 			return fmt.Errorf("failed to create request: %w", err)
 		}
@@ -61,7 +61,7 @@ func runLogout(cmd *cobra.Command, args []string) error {
 			fmt.Fprintf(os.Stderr, "Local cache will still be cleared.\n")
 		} else {
 			_ = resp.Body.Close()
-			if resp.StatusCode != 200 {
+			if resp.StatusCode != http.StatusOK {
 				fmt.Fprintf(os.Stderr, "Warning: server returned status %d\n", resp.StatusCode)
 			}
 		}

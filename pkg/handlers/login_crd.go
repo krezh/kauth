@@ -2,7 +2,7 @@ package handlers
 
 import (
 	"context"
-	"log"
+	"log/slog"
 	"time"
 
 	v1alpha1 "kauth/pkg/apis/kauth.io/v1alpha1"
@@ -12,29 +12,49 @@ import (
 )
 
 func (h *LoginHandler) watchSessions() {
+	var resourceVersion string
+	first := true
+
 	for {
 		ctx := context.Background()
-		watcher, err := h.sessionClient.Watch(ctx)
+		watcher, err := h.sessionClient.Watch(ctx, resourceVersion)
 		if err != nil {
-			log.Printf("Failed to start session watch: %v", err)
+			slog.Error("Failed to start session watch", "error", err)
 			time.Sleep(5 * time.Second)
 			continue
 		}
 
-		log.Println("Started watching OAuthSession CRDs")
+		if first {
+			slog.Info("Started watching OAuthSession CRDs")
+			first = false
+		} else {
+			slog.Debug("Session watch restarted", "resourceVersion", resourceVersion)
+		}
 
 		for event := range watcher.ResultChan() {
+			if event.Type == watch.Bookmark {
+				if obj, err := runtime.DefaultUnstructuredConverter.ToUnstructured(event.Object); err == nil {
+					if rv, ok := obj["metadata"].(map[string]any)["resourceVersion"].(string); ok && rv != "" {
+						resourceVersion = rv
+					}
+				}
+				continue
+			}
+
 			if event.Type == watch.Modified || event.Type == watch.Added {
 				unstructuredMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(event.Object)
 				if err != nil {
-					log.Printf("Failed to convert to unstructured: %v", err)
+					slog.Error("Failed to convert session to unstructured", "error", err)
 					continue
 				}
 
+				if rv, ok := unstructuredMap["metadata"].(map[string]any)["resourceVersion"].(string); ok && rv != "" {
+					resourceVersion = rv
+				}
+
 				var session v1alpha1.OAuthSession
-				err = runtime.DefaultUnstructuredConverter.FromUnstructured(unstructuredMap, &session)
-				if err != nil {
-					log.Printf("Failed to convert from unstructured: %v", err)
+				if err = runtime.DefaultUnstructuredConverter.FromUnstructured(unstructuredMap, &session); err != nil {
+					slog.Error("Failed to convert session from unstructured", "error", err)
 					continue
 				}
 
@@ -42,7 +62,9 @@ func (h *LoginHandler) watchSessions() {
 					sessionID := session.Spec.SessionID
 
 					h.sseMutex.Lock()
-					listeners := h.sseListeners[sessionID]
+					src := h.sseListeners[sessionID]
+					listeners := make([]chan StatusResponse, len(src))
+					copy(listeners, src)
 					h.sseMutex.Unlock()
 
 					if len(listeners) > 0 {
@@ -59,7 +81,7 @@ func (h *LoginHandler) watchSessions() {
 							Error:        session.Status.Error,
 						}
 
-						log.Printf("Notifying %d local listeners for session %s", len(listeners), sessionID[:8])
+						slog.Info("Notifying local listeners for session", "session", sessionID[:8], "count", len(listeners))
 
 						for _, listener := range listeners {
 							select {
@@ -72,7 +94,7 @@ func (h *LoginHandler) watchSessions() {
 			}
 		}
 
-		log.Println("Session watch closed, restarting...")
+		slog.Debug("Session watch closed, restarting...")
 		time.Sleep(5 * time.Second)
 	}
 }
@@ -86,12 +108,12 @@ func (h *LoginHandler) cleanupSessions() {
 
 		err := h.sessionClient.ExpireInactiveSessions(ctx, h.refreshTokenTTL)
 		if err != nil {
-			log.Printf("Failed to expire inactive sessions: %v", err)
+			slog.Error("Failed to expire inactive sessions", "error", err)
 		}
 
 		err = h.sessionClient.CleanupOldSessions(ctx, 60*time.Second)
 		if err != nil {
-			log.Printf("Failed to cleanup old sessions: %v", err)
+			slog.Error("Failed to cleanup old sessions", "error", err)
 		}
 	}
 }

@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"fmt"
+	"strings"
 	"time"
 
 	v1alpha1 "kauth/pkg/apis/kauth.io/v1alpha1"
@@ -305,7 +306,7 @@ func (c *Client) GetByUser(ctx context.Context, userID string) ([]v1alpha1.OAuth
 			continue
 		}
 
-		if session.Spec.UserID == userID {
+		if session.Status.Email == userID {
 			userSessions = append(userSessions, session)
 		}
 	}
@@ -326,12 +327,14 @@ func (c *Client) Delete(ctx context.Context, sessionID string) error {
 	return nil
 }
 
-// Watch watches for OAuthSession changes
-func (c *Client) Watch(ctx context.Context) (watch.Interface, error) {
+// Watch watches for OAuthSession changes, resuming from resourceVersion if non-empty.
+func (c *Client) Watch(ctx context.Context, resourceVersion string) (watch.Interface, error) {
 	return c.dynamicClient.Resource(c.gvr()).Namespace(c.namespace).Watch(
 		ctx,
 		metav1.ListOptions{
-			LabelSelector: "app.kubernetes.io/managed-by=kauth",
+			LabelSelector:       "app.kubernetes.io/managed-by=kauth",
+			ResourceVersion:     resourceVersion,
+			AllowWatchBookmarks: true,
 		},
 	)
 }
@@ -435,7 +438,7 @@ func (c *Client) ExpireInactiveSessions(ctx context.Context, ttl time.Duration) 
 func sanitizeName(sessionID string) string {
 	sanitized := validation.SanitizeToResourceName(sessionID)
 	if len(sanitized)+6 > 63 {
-		sanitized = sanitized[:57]
+		sanitized = strings.TrimRight(sanitized[:57], "-.")
 	}
 	return "oauth-" + sanitized
 }

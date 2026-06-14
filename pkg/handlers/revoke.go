@@ -2,8 +2,7 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
-	"log"
+	"log/slog"
 	"net/http"
 	"time"
 
@@ -46,7 +45,7 @@ func (h *RevokeHandler) HandleRevoke(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req RevokeRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+	if err := decodeJSON(r, &req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
@@ -64,35 +63,34 @@ func (h *RevokeHandler) HandleRevoke(w http.ResponseWriter, r *http.Request) {
 	revoked := 0
 
 	if req.SessionID != "" {
-		if !admin {
-			sess, err := h.sessionClient.Get(ctx, req.SessionID)
-			if err != nil {
-				log.Printf("REVOKE_FAILURE: session_id=%q error=%q", req.SessionID, err)
-				http.Error(w, "Session not found", http.StatusNotFound)
-				return
-			}
-			if !canRevokeSession(caller, admin, sess.Status.Email) {
-				audit.Log(ctx, r, "session_revoke_denied",
-					"session_id", req.SessionID,
-					"caller", caller.Email,
-					"owner", sess.Status.Email,
-				)
-				http.Error(w, "Forbidden: not your session", http.StatusForbidden)
-				return
-			}
+		sess, err := h.sessionClient.Get(ctx, req.SessionID)
+		if err != nil {
+			slog.WarnContext(ctx, "revoke: session not found", "session_id", req.SessionID, "error", err)
+			http.Error(w, "Session not found", http.StatusNotFound)
+			return
+		}
+		if !canRevokeSession(caller, admin, sess.Status.Email) {
+			audit.Log(ctx, r, "session_revoke_denied",
+				"session_id", req.SessionID,
+				"caller", caller.Email,
+				"owner", sess.Status.Email,
+			)
+			http.Error(w, "Forbidden: not your session", http.StatusForbidden)
+			return
 		}
 
 		if err := h.sessionClient.Revoke(ctx, req.SessionID); err != nil {
-			log.Printf("REVOKE_FAILURE: session_id=%q error=%q", req.SessionID, err)
+			slog.ErrorContext(ctx, "revoke: failed to revoke session", "session_id", req.SessionID, "error", err)
 			http.Error(w, "Failed to revoke session", http.StatusInternalServerError)
 			return
 		}
 		revoked = 1
 		audit.Log(ctx, r, "session_revoked",
 			"session_id", req.SessionID,
+			"owner", sess.Status.Email,
 			"caller", caller.Email,
 		)
-		log.Printf("REVOKE_SUCCESS: session_id=%q by=%s", req.SessionID, caller.Email)
+		slog.InfoContext(ctx, "revoke: session revoked", "session_id", req.SessionID, "owner", sess.Status.Email, "by", caller.Email)
 	}
 
 	if req.UserEmail != "" {
@@ -107,7 +105,7 @@ func (h *RevokeHandler) HandleRevoke(w http.ResponseWriter, r *http.Request) {
 
 		sessions, err := h.sessionClient.GetByUser(ctx, req.UserEmail)
 		if err != nil {
-			log.Printf("REVOKE_FAILURE: user_email=%q error=%q", req.UserEmail, err)
+			slog.ErrorContext(ctx, "revoke: failed to list user sessions", "user_email", req.UserEmail, "error", err)
 			http.Error(w, "Failed to find user sessions", http.StatusInternalServerError)
 			return
 		}
@@ -116,8 +114,11 @@ func (h *RevokeHandler) HandleRevoke(w http.ResponseWriter, r *http.Request) {
 			if s.Status.Phase == v1alpha1.SessionRevoked || s.Status.Phase == v1alpha1.SessionExpired {
 				continue
 			}
+			if s.Spec.SessionID == req.SessionID {
+				continue // already revoked in the session_id block above
+			}
 			if err := h.sessionClient.Revoke(ctx, s.Spec.SessionID); err != nil {
-				log.Printf("REVOKE_FAILURE: session_id=%q error=%q", s.Spec.SessionID, err)
+				slog.WarnContext(ctx, "revoke: failed to revoke session", "session_id", s.Spec.SessionID, "error", err)
 				continue
 			}
 			revoked++
@@ -128,12 +129,10 @@ func (h *RevokeHandler) HandleRevoke(w http.ResponseWriter, r *http.Request) {
 			"count", revoked,
 			"caller", caller.Email,
 		)
-		log.Printf("REVOKE_SUCCESS: user_email=%q count=%d by=%s", req.UserEmail, revoked, caller.Email)
+		slog.InfoContext(ctx, "revoke: user sessions revoked", "user_email", req.UserEmail, "count", revoked, "by", caller.Email)
 	}
 
-	resp := RevokeResponse{Revoked: revoked}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
+	writeJSON(w, RevokeResponse{Revoked: revoked})
 }
 
 func canRevokeSession(caller *CallerClaims, admin bool, ownerID string) bool {

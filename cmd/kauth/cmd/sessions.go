@@ -71,7 +71,7 @@ func runSessions(cmd *cobra.Command, args []string) error {
 		userEmail = email
 	}
 
-	req, err := http.NewRequest("GET", serverURL+"/sessions", nil)
+	req, err := http.NewRequest(http.MethodGet, serverURL+"/sessions", nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
@@ -89,7 +89,7 @@ func runSessions(cmd *cobra.Command, args []string) error {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("server returned status %d", resp.StatusCode)
 	}
 
@@ -120,7 +120,7 @@ func revokeSession(serverURL, sessionID, idToken string) error {
 		return fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	req, err := http.NewRequest("POST", serverURL+"/revoke", bytes.NewBuffer(jsonData))
+	req, err := http.NewRequest(http.MethodPost, serverURL+"/revoke", bytes.NewBuffer(jsonData))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
@@ -133,7 +133,7 @@ func revokeSession(serverURL, sessionID, idToken string) error {
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		return fmt.Errorf("server returned status %d", resp.StatusCode)
 	}
 

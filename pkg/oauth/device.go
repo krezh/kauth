@@ -2,6 +2,7 @@ package oauth
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -60,7 +61,8 @@ func (p *Provider) pollForDeviceToken(ctx context.Context, deviceAuth *oauth2.De
 			}
 
 			// Handle specific OAuth2 error codes
-			if rerr, ok := err.(*oauth2.RetrieveError); ok {
+			var rerr *oauth2.RetrieveError
+			if errors.As(err, &rerr) {
 				switch rerr.ErrorCode {
 				case "authorization_pending":
 					// Still waiting for user to authorize

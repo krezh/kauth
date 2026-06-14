@@ -74,7 +74,7 @@ func CORS(allowedOrigins []string) func(http.Handler) http.Handler {
 			}
 
 			// Handle preflight
-			if r.Method == "OPTIONS" {
+			if r.Method == http.MethodOptions {
 				w.WriteHeader(http.StatusNoContent)
 				return
 			}
@@ -271,8 +271,7 @@ func RequestLogger(ipExtractor *ClientIPExtractor) func(http.Handler) http.Handl
 			duration := time.Since(start)
 
 			// Skip logging for health endpoint to reduce noise
-			switch r.URL.Path {
-			case "/health":
+			if r.URL.Path == "/health" {
 				return
 			}
 

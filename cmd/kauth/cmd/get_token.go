@@ -89,6 +89,7 @@ func runGetToken(cmd *cobra.Command, args []string) error {
 	}
 
 	newCache := &token.Cache{
+		ServerURL:    cachedToken.ServerURL,
 		IDToken:      refreshResp.IDToken,
 		SessionID:    cachedToken.SessionID,
 		Expiry:       expiresAt,
@@ -125,7 +126,7 @@ func refreshTokenFromServer(baseURL, refreshToken string) (*RefreshResponse, err
 	}
 	defer func() { _ = resp.Body.Close() }()
 
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("server returned status %d", resp.StatusCode)
 	}
 

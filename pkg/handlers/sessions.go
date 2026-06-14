@@ -2,7 +2,6 @@ package handlers
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"time"
 
@@ -99,7 +98,5 @@ func (h *SessionsHandler) HandleListSessions(w http.ResponseWriter, r *http.Requ
 		sessionInfos = append(sessionInfos, info)
 	}
 
-	resp := SessionsResponse{Sessions: sessionInfos}
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
+	writeJSON(w, SessionsResponse{Sessions: sessionInfos})
 }

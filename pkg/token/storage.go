@@ -2,7 +2,9 @@ package token
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"time"
@@ -42,7 +44,7 @@ func DefaultCachePath() string {
 func (s *Storage) Load() (*Cache, error) {
 	data, err := os.ReadFile(s.cachePath)
 	if err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("failed to read token cache: %w", err)
@@ -102,7 +104,7 @@ func (s *Storage) Save(cache *Cache) error {
 // Delete removes the token cache file
 func (s *Storage) Delete() error {
 	if err := os.Remove(s.cachePath); err != nil {
-		if os.IsNotExist(err) {
+		if errors.Is(err, fs.ErrNotExist) {
 			return nil
 		}
 		return fmt.Errorf("failed to delete token cache: %w", err)

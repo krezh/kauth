@@ -5,8 +5,8 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"log"
 	"log/slog"
 	"net/http"
 	"slices"
@@ -103,7 +103,7 @@ func (h *LoginHandler) HandleStartLogin(w http.ResponseWriter, r *http.Request) 
 	ctx := r.Context()
 	_, err = h.sessionClient.Create(ctx, sessionID, verifier, "")
 	if err != nil {
-		log.Printf("Failed to create session CRD: %v", err)
+		slog.ErrorContext(ctx, "failed to create session CRD", "error", err)
 		http.Error(w, "Failed to create session", http.StatusInternalServerError)
 		return
 	}
@@ -119,9 +119,7 @@ func (h *LoginHandler) HandleStartLogin(w http.ResponseWriter, r *http.Request) 
 		SessionToken: sessionToken,
 		LoginURL:     authURL,
 	}
-
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
+	writeJSON(w, resp)
 }
 
 func (h *LoginHandler) HandleWatch(w http.ResponseWriter, r *http.Request) {
@@ -134,8 +132,8 @@ func (h *LoginHandler) HandleWatch(w http.ResponseWriter, r *http.Request) {
 	// Validate session token
 	sessionJWT, err := h.jwtManager.ValidateSessionToken(sessionToken)
 	if err != nil {
-		log.Printf("Watch: Failed to validate session token: %v", err)
-		if err == jwt.ErrExpiredToken {
+		slog.WarnContext(r.Context(), "watch: failed to validate session token", "error", err)
+		if errors.Is(err, jwt.ErrExpiredToken) {
 			http.Error(w, "Session expired", http.StatusUnauthorized)
 		} else {
 			http.Error(w, "Invalid session token", http.StatusUnauthorized)
@@ -144,56 +142,26 @@ func (h *LoginHandler) HandleWatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	sessionID := sessionJWT.SessionID
-
-	// Check if session already completed in CRD
 	ctx := r.Context()
-	crdSession, err := h.sessionClient.Get(ctx, sessionID)
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			http.Error(w, "Session not found or expired", http.StatusNotFound)
-		} else {
-			http.Error(w, "Failed to get session", http.StatusInternalServerError)
-		}
+
+	// Check streaming support before touching response headers.
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		slog.ErrorContext(ctx, "watch: streaming not supported")
+		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
 		return
 	}
 
-	// Set SSE headers
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.Header().Set("Connection", "keep-alive")
-
-	// If already active, send immediately
-	if crdSession.Status.Phase == v1alpha1.SessionActive {
-		// Generate kubeconfig on-demand from stored email and username
-		kubeconfig := h.kubeconfigGen.Generate(crdSession.Status.Email, crdSession.Status.Username)
-
-		status := StatusResponse{
-			Ready:        true,
-			Kubeconfig:   kubeconfig,
-			RefreshToken: crdSession.Status.RefreshToken,
-			SessionID:    crdSession.Spec.SessionID,
-		}
-		h.sendFinalStatus(w, &status)
-		return
-	}
-
-	// If there's an error, send immediately
-	if crdSession.Status.Error != "" {
-		status := StatusResponse{
-			Ready: false,
-			Error: crdSession.Status.Error,
-		}
-		h.sendFinalStatus(w, &status)
-		return
-	}
-
-	// Register local listener for updates
+	// Register listener BEFORE reading CRD status so we cannot miss an event
+	// that fires in the window between the CRD read and the registration.
 	listener := make(chan StatusResponse, 1)
 	h.sseMutex.Lock()
 	h.sseListeners[sessionID] = append(h.sseListeners[sessionID], listener)
 	h.sseMutex.Unlock()
 
-	// Cleanup listener on exit
+	// Cleanup listener on exit.
+	// Do not close(listener): watchSessions holds a copy of the slice and may
+	// send to this channel after we return. The buffered channel is GC'd.
 	defer func() {
 		h.sseMutex.Lock()
 		listeners := h.sseListeners[sessionID]
@@ -207,15 +175,41 @@ func (h *LoginHandler) HandleWatch(w http.ResponseWriter, r *http.Request) {
 			delete(h.sseListeners, sessionID)
 		}
 		h.sseMutex.Unlock()
-		// Do not close(listener): watchSessions holds a snapshot of the listeners
-		// slice and may send to this channel after we return. Sending to a closed
-		// channel panics. The channel is buffered (size 1) and will be GC'd.
 	}()
 
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		log.Printf("Watch: Streaming not supported")
-		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+	// Read CRD status after registering listener — catches sessions that
+	// completed between token validation and listener registration.
+	crdSession, err := h.sessionClient.Get(ctx, sessionID)
+	if err != nil {
+		if apierrors.IsNotFound(err) {
+			http.Error(w, "Session not found or expired", http.StatusNotFound)
+		} else {
+			http.Error(w, "Failed to get session", http.StatusInternalServerError)
+		}
+		return
+	}
+
+	// Set SSE headers — no more error returns after this point.
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	// If already active, send immediately.
+	if crdSession.Status.Phase == v1alpha1.SessionActive {
+		kubeconfig := h.kubeconfigGen.Generate(crdSession.Status.Email, crdSession.Status.Username)
+		status := StatusResponse{
+			Ready:        true,
+			Kubeconfig:   kubeconfig,
+			RefreshToken: crdSession.Status.RefreshToken,
+			SessionID:    crdSession.Spec.SessionID,
+		}
+		h.sendFinalStatus(w, &status)
+		return
+	}
+
+	// If there's an error, send immediately.
+	if crdSession.Status.Error != "" {
+		h.sendFinalStatus(w, &StatusResponse{Ready: false, Error: crdSession.Status.Error})
 		return
 	}
 
@@ -308,11 +302,12 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		oauth2.VerifierOption(verifier),
 	)
 	if err != nil {
+		slog.ErrorContext(ctx, "token exchange failed", "error", err)
 		_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
 			Phase: v1alpha1.SessionPending,
-			Error: fmt.Sprintf("Token exchange failed: %v", err),
+			Error: "Token exchange failed",
 		})
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Authentication failed", http.StatusInternalServerError)
 		return
 	}
 
@@ -322,17 +317,18 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 			Phase: v1alpha1.SessionPending,
 			Error: "No ID token returned",
 		})
-		http.Error(w, "No ID token", http.StatusInternalServerError)
+		http.Error(w, "Authentication failed", http.StatusInternalServerError)
 		return
 	}
 
 	claims, _, err := VerifyAndExtractClaims(ctx, h.provider, idToken)
 	if err != nil {
+		slog.ErrorContext(ctx, "ID token verification failed", "error", err)
 		_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
 			Phase: v1alpha1.SessionPending,
-			Error: err.Error(),
+			Error: "Token verification failed",
 		})
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Authentication failed", http.StatusInternalServerError)
 		return
 	}
 
@@ -361,14 +357,9 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	)
 
 	// Create refresh token (contains OIDC refresh token encrypted)
-	oidcRefreshToken := ""
-	if token.RefreshToken != "" {
-		oidcRefreshToken = token.RefreshToken
-	}
-
 	refreshToken, err := h.jwtManager.CreateRefreshToken(
 		claims.Email,
-		oidcRefreshToken,
+		token.RefreshToken,
 		state,
 		0,
 		h.refreshTokenTTL,
@@ -389,13 +380,13 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		RefreshToken: refreshToken,
 	})
 	if err != nil {
-		log.Printf("Failed to update session status: %v", err)
+		slog.ErrorContext(ctx, "failed to update session status", "error", err)
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
 
 	if err := h.sessionClient.UpdateUserID(ctx, state, claims.Email); err != nil {
-		log.Printf("WARN: failed to set session UserID for %s: %v", state[:8], err)
+		slog.WarnContext(ctx, "failed to set session user ID", "session", state[:8], "error", err)
 	}
 
 	// Render success page
@@ -553,9 +544,6 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		),
 	).Render(w)
 }
-
-// notifyListeners is deprecated - notifications now handled by CRD watch
-// Keeping stub for compatibility during migration
 
 func generateRandomString(size int) string {
 	b := make([]byte, size)
