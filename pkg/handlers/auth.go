@@ -20,8 +20,14 @@ type CallerClaims struct {
 }
 
 // RequireAuth is middleware that verifies the Bearer token and extracts caller claims
-func RequireAuth(provider *oauth.Provider, next http.HandlerFunc) http.HandlerFunc {
+func RequireAuth(getProvider func() *oauth.Provider, next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
+		provider := getProvider()
+		if provider == nil {
+			http.Error(w, "Service temporarily unavailable", http.StatusServiceUnavailable)
+			return
+		}
+
 		authHeader := r.Header.Get("Authorization")
 		if authHeader == "" {
 			http.Error(w, "Missing Authorization header", http.StatusUnauthorized)

@@ -250,10 +250,10 @@ func main() {
 	mux.HandleFunc("/refresh", requireProvider(func(w http.ResponseWriter, r *http.Request) {
 		getRefreshHandler().HandleRefresh(w, r)
 	}))
-	mux.HandleFunc("/revoke", requireProvider(handlers.RequireAuth(provider, func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/revoke", requireProvider(handlers.RequireAuth(func() *oauth.Provider { return provider }, func(w http.ResponseWriter, r *http.Request) {
 		handlers.NewRevokeHandler(sessionClient, cfg.AdminGroups).HandleRevoke(w, r)
 	})))
-	mux.HandleFunc("/sessions", requireProvider(handlers.RequireAuth(provider, func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/sessions", requireProvider(handlers.RequireAuth(func() *oauth.Provider { return provider }, func(w http.ResponseWriter, r *http.Request) {
 		handlers.NewSessionsHandler(sessionClient, cfg.AdminGroups).HandleListSessions(w, r)
 	})))
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
