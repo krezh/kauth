@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.17](https://github.com/krezh/kauth/compare/0.2.16...0.2.17) (2026-06-14)
+
+
+### Bug Fixes
+
+* rename state to session id, restyle kauth sessions command ([8584ad5](https://github.com/krezh/kauth/commit/8584ad5fe3a31ac08b25e349e4c5f2c9f005fd4e))
+
 ## [0.2.16](https://github.com/krezh/kauth/compare/0.2.15...0.2.16) (2026-06-14)
 
 
