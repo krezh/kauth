@@ -46,21 +46,21 @@ func (c *Client) gvr() schema.GroupVersionResource {
 }
 
 // Create creates a new OAuthSession
-func (c *Client) Create(ctx context.Context, state, verifier, userID string) (*v1alpha1.OAuthSession, error) {
+func (c *Client) Create(ctx context.Context, sessionID, verifier, userID string) (*v1alpha1.OAuthSession, error) {
 	session := &v1alpha1.OAuthSession{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: "kauth.io/v1alpha1",
 			Kind:       "OAuthSession",
 		},
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      sanitizeName(state),
+			Name:      sanitizeName(sessionID),
 			Namespace: c.namespace,
 			Labels: map[string]string{
 				"app.kubernetes.io/managed-by": "kauth",
 			},
 		},
 		Spec: v1alpha1.OAuthSessionSpec{
-			State:     state,
+			SessionID: sessionID,
 			Verifier:  verifier,
 			UserID:    userID,
 			CreatedAt: metav1.Now(),
@@ -88,21 +88,21 @@ func (c *Client) Create(ctx context.Context, state, verifier, userID string) (*v
 
 	// The CRD has a status subresource, so the API server strips the status field
 	// from Create. Set Phase=Pending explicitly via UpdateStatus.
-	if err := c.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
+	if err := c.UpdateStatus(ctx, sessionID, v1alpha1.OAuthSessionStatus{
 		Phase: v1alpha1.SessionPending,
 	}); err != nil {
-		_ = c.Delete(ctx, state)
+		_ = c.Delete(ctx, sessionID)
 		return nil, fmt.Errorf("failed to set initial session status: %w", err)
 	}
 
-	return c.Get(ctx, state)
+	return c.Get(ctx, sessionID)
 }
 
-// Get retrieves an OAuthSession by state
-func (c *Client) Get(ctx context.Context, state string) (*v1alpha1.OAuthSession, error) {
+// Get retrieves an OAuthSession by session ID
+func (c *Client) Get(ctx context.Context, sessionID string) (*v1alpha1.OAuthSession, error) {
 	result, err := c.dynamicClient.Resource(c.gvr()).Namespace(c.namespace).Get(
 		ctx,
-		sanitizeName(state),
+		sanitizeName(sessionID),
 		metav1.GetOptions{},
 	)
 	if err != nil {
@@ -118,8 +118,8 @@ func (c *Client) Get(ctx context.Context, state string) (*v1alpha1.OAuthSession,
 }
 
 // UpdateStatus updates the status of an OAuthSession
-func (c *Client) UpdateStatus(ctx context.Context, state string, status v1alpha1.OAuthSessionStatus) error {
-	session, err := c.Get(ctx, state)
+func (c *Client) UpdateStatus(ctx context.Context, sessionID string, status v1alpha1.OAuthSessionStatus) error {
+	session, err := c.Get(ctx, sessionID)
 	if err != nil {
 		return fmt.Errorf("failed to get session: %w", err)
 	}
@@ -155,8 +155,8 @@ func (c *Client) UpdateStatus(ctx context.Context, state string, status v1alpha1
 }
 
 // Revoke marks a session as revoked
-func (c *Client) Revoke(ctx context.Context, state string) error {
-	session, err := c.Get(ctx, state)
+func (c *Client) Revoke(ctx context.Context, sessionID string) error {
+	session, err := c.Get(ctx, sessionID)
 	if err != nil {
 		return fmt.Errorf("failed to get session: %w", err)
 	}
@@ -216,8 +216,8 @@ func (c *Client) ListActive(ctx context.Context) ([]v1alpha1.OAuthSession, error
 }
 
 // ValidateSession checks if a session exists and has the expected phase
-func (c *Client) ValidateSession(ctx context.Context, state string, expectedPhase v1alpha1.SessionPhase) error {
-	session, err := c.Get(ctx, state)
+func (c *Client) ValidateSession(ctx context.Context, sessionID string, expectedPhase v1alpha1.SessionPhase) error {
+	session, err := c.Get(ctx, sessionID)
 	if err != nil {
 		return fmt.Errorf("session not found: %w", err)
 	}
@@ -230,8 +230,8 @@ func (c *Client) ValidateSession(ctx context.Context, state string, expectedPhas
 }
 
 // UpdateLastUsed updates the last used timestamp for a session
-func (c *Client) UpdateLastUsed(ctx context.Context, state string) error {
-	session, err := c.Get(ctx, state)
+func (c *Client) UpdateLastUsed(ctx context.Context, sessionID string) error {
+	session, err := c.Get(ctx, sessionID)
 	if err != nil {
 		return fmt.Errorf("failed to get session: %w", err)
 	}
@@ -258,8 +258,8 @@ func (c *Client) UpdateLastUsed(ctx context.Context, state string) error {
 }
 
 // UpdateUserID updates the user ID in the session spec
-func (c *Client) UpdateUserID(ctx context.Context, state, userID string) error {
-	session, err := c.Get(ctx, state)
+func (c *Client) UpdateUserID(ctx context.Context, sessionID, userID string) error {
+	session, err := c.Get(ctx, sessionID)
 	if err != nil {
 		return fmt.Errorf("failed to get session: %w", err)
 	}
@@ -314,10 +314,10 @@ func (c *Client) GetByUser(ctx context.Context, userID string) ([]v1alpha1.OAuth
 }
 
 // Delete deletes an OAuthSession
-func (c *Client) Delete(ctx context.Context, state string) error {
+func (c *Client) Delete(ctx context.Context, sessionID string) error {
 	err := c.dynamicClient.Resource(c.gvr()).Namespace(c.namespace).Delete(
 		ctx,
-		sanitizeName(state),
+		sanitizeName(sessionID),
 		metav1.DeleteOptions{},
 	)
 	if err != nil {
@@ -373,7 +373,7 @@ func (c *Client) CleanupOldSessions(ctx context.Context, ttl time.Duration) erro
 		}
 
 		if ageRef.Before(cutoff) {
-			_ = c.Delete(ctx, session.Spec.State)
+			_ = c.Delete(ctx, session.Spec.SessionID)
 		}
 	}
 
@@ -431,9 +431,9 @@ func (c *Client) ExpireInactiveSessions(ctx context.Context, ttl time.Duration) 
 	return nil
 }
 
-// sanitizeName converts OAuth state to valid Kubernetes resource name
-func sanitizeName(state string) string {
-	sanitized := validation.SanitizeToResourceName(state)
+// sanitizeName converts a session ID to a valid Kubernetes resource name
+func sanitizeName(sessionID string) string {
+	sanitized := validation.SanitizeToResourceName(sessionID)
 	if len(sanitized)+6 > 63 {
 		sanitized = sanitized[:57]
 	}

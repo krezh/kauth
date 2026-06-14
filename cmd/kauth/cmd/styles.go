@@ -9,9 +9,9 @@ import (
 
 var (
 	bold   = lipgloss.NewStyle().Bold(true)
-	muted  = lipgloss.NewStyle().Foreground(lipgloss.Color("#7f849c")) // Overlay1
-	accent = lipgloss.NewStyle().Foreground(lipgloss.Color("#89b4fa")).Bold(true) // Blue
-	green  = lipgloss.NewStyle().Foreground(lipgloss.Color("#a6e3a1")).Bold(true) // Green
+	muted  = lipgloss.NewStyle().Foreground(lipgloss.Color("#7f849c"))                 // Overlay1
+	accent = lipgloss.NewStyle().Foreground(lipgloss.Color("#89b4fa")).Bold(true)      // Blue
+	green  = lipgloss.NewStyle().Foreground(lipgloss.Color("#a6e3a1")).Bold(true)      // Green
 	link   = lipgloss.NewStyle().Foreground(lipgloss.Color("#89b4fa")).Underline(true) // Blue
 
 	red    = lipgloss.NewStyle().Foreground(lipgloss.Color("#f38ba8")).Bold(true) // Red

@@ -46,8 +46,8 @@ func NewRefreshHandler(
 	rotationWindow int,
 ) *RefreshHandler {
 	return &RefreshHandler{
-		provider:   provider,
-		jwtManager: jwtManager,
+		provider:      provider,
+		jwtManager:    jwtManager,
 		sessionClient: sessionClient,
 		kubeconfigGen: &KubeconfigGenerator{
 			ClusterName:   clusterName,

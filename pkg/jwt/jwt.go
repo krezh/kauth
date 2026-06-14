@@ -22,7 +22,7 @@ var (
 
 // SessionToken contains OAuth flow state (encrypted, signed)
 type SessionToken struct {
-	State     string    `json:"state"`
+	SessionID string    `json:"sessionID"`
 	Verifier  string    `json:"verifier"`
 	CreatedAt time.Time `json:"created_at"`
 	ExpiresAt time.Time `json:"expires_at"`
@@ -62,10 +62,10 @@ func NewManager(signingKey, encryptionKey []byte) (*Manager, error) {
 }
 
 // CreateSessionToken creates an encrypted and signed session token
-func (m *Manager) CreateSessionToken(state, verifier string, ttl time.Duration) (string, error) {
+func (m *Manager) CreateSessionToken(sessionID, verifier string, ttl time.Duration) (string, error) {
 	now := time.Now()
 	session := SessionToken{
-		State:     state,
+		SessionID: sessionID,
 		Verifier:  verifier,
 		CreatedAt: now,
 		ExpiresAt: now.Add(ttl),

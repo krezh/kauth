@@ -8,10 +8,10 @@ import (
 type SessionPhase string
 
 const (
-	SessionPending  SessionPhase = "Pending"
-	SessionActive   SessionPhase = "Active"
-	SessionRevoked  SessionPhase = "Revoked"
-	SessionExpired  SessionPhase = "Expired"
+	SessionPending SessionPhase = "Pending"
+	SessionActive  SessionPhase = "Active"
+	SessionRevoked SessionPhase = "Revoked"
+	SessionExpired SessionPhase = "Expired"
 )
 
 // +genclient
@@ -28,8 +28,8 @@ type OAuthSession struct {
 
 // OAuthSessionSpec defines the desired state of an OAuth session
 type OAuthSessionSpec struct {
-	// State is the OAuth state parameter for CSRF protection
-	State string `json:"state"`
+	// SessionID is the unique identifier for this session
+	SessionID string `json:"sessionID"`
 
 	// Verifier is the PKCE verifier for code exchange
 	Verifier string `json:"verifier"`

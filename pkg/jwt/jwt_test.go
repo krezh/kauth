@@ -401,8 +401,8 @@ func TestValidateSessionToken(t *testing.T) {
 			return
 		}
 
-		if session.State != state {
-			t.Errorf("ValidateSessionToken() state = %v, want %v", session.State, state)
+		if session.SessionID != state {
+			t.Errorf("ValidateSessionToken() sessionID = %v, want %v", session.SessionID, state)
 		}
 		if session.Verifier != verifier {
 			t.Errorf("ValidateSessionToken() verifier = %v, want %v", session.Verifier, verifier)
@@ -473,7 +473,7 @@ func TestCreateRefreshToken(t *testing.T) {
 	rotationCounter := 5
 	ttl := 24 * time.Hour
 
-	token, err := 	mgr.CreateRefreshToken(email, oidcToken, "test-session", rotationCounter, ttl)
+	token, err := mgr.CreateRefreshToken(email, oidcToken, "test-session", rotationCounter, ttl)
 	if err != nil {
 		t.Fatalf("CreateRefreshToken() error = %v", err)
 	}
@@ -506,7 +506,7 @@ func TestValidateRefreshToken(t *testing.T) {
 		rotationCounter := 3
 		ttl := 24 * time.Hour
 
-		token, err := 	mgr.CreateRefreshToken(email, oidcToken, "test-session", rotationCounter, ttl)
+		token, err := mgr.CreateRefreshToken(email, oidcToken, "test-session", rotationCounter, ttl)
 		if err != nil {
 			t.Fatalf("CreateRefreshToken() error = %v", err)
 		}
@@ -529,7 +529,7 @@ func TestValidateRefreshToken(t *testing.T) {
 	})
 
 	t.Run("expired token", func(t *testing.T) {
-		token, err := 	mgr.CreateRefreshToken("user@example.com", "oidc-token", "test-session", 1, -1*time.Hour)
+		token, err := mgr.CreateRefreshToken("user@example.com", "oidc-token", "test-session", 1, -1*time.Hour)
 		if err != nil {
 			t.Fatalf("CreateRefreshToken() error = %v", err)
 		}
@@ -548,7 +548,7 @@ func TestValidateRefreshToken(t *testing.T) {
 	})
 
 	t.Run("tampered token", func(t *testing.T) {
-		token, err := 	mgr.CreateRefreshToken("user@example.com", "oidc-token", "test-session", 1, 24*time.Hour)
+		token, err := mgr.CreateRefreshToken("user@example.com", "oidc-token", "test-session", 1, 24*time.Hour)
 		if err != nil {
 			t.Fatalf("CreateRefreshToken() error = %v", err)
 		}
@@ -623,7 +623,7 @@ func TestTokensAreIndependent(t *testing.T) {
 	}
 
 	// Create refresh token
-	refreshToken, err := 	mgr.CreateRefreshToken("user@example.com", "oidc-token", "test-session", 1, 24*time.Hour)
+	refreshToken, err := mgr.CreateRefreshToken("user@example.com", "oidc-token", "test-session", 1, 24*time.Hour)
 	if err != nil {
 		t.Fatalf("CreateRefreshToken() error = %v", err)
 	}

@@ -15,12 +15,12 @@ spec:
             spec:
               type: object
               required:
-                - state
+                - sessionID
                 - verifier
               properties:
-                state:
+                sessionID:
                   type: string
-                  description: OAuth state parameter for CSRF protection
+                  description: Unique identifier for this session
                 verifier:
                   type: string
                   description: PKCE verifier for code exchange
@@ -84,9 +84,9 @@ spec:
         - name: Age
           type: date
           jsonPath: .metadata.creationTimestamp
-        - name: State
+        - name: Session ID
           type: string
-          jsonPath: .spec.state
+          jsonPath: .spec.sessionID
           priority: 1
   scope: Namespaced
   names:

@@ -5,11 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"strings"
 	"time"
 
 	"kauth/pkg/token"
 
+	"charm.land/lipgloss/v2"
 	"github.com/spf13/cobra"
 )
 
@@ -28,7 +28,7 @@ func init() {
 }
 
 type SessionInfo struct {
-	State       string    `json:"state"`
+	SessionID   string    `json:"sessionID"`
 	UserID      string    `json:"user_id"`
 	Email       string    `json:"email"`
 	Username    string    `json:"username"`
@@ -65,7 +65,7 @@ func runSessions(cmd *cobra.Command, args []string) error {
 		return revokeSession(serverURL, revokeSessionID, cachedToken.IDToken)
 	}
 
-	userEmail := ""
+	var userEmail string
 	claims := decodeJWTClaims(cachedToken.IDToken)
 	if email, ok := claims["email"].(string); ok {
 		userEmail = email
@@ -99,11 +99,14 @@ func runSessions(cmd *cobra.Command, args []string) error {
 	}
 
 	if len(sessionsResp.Sessions) == 0 {
-		fmt.Println("No active sessions found.")
+		fmt.Printf("\n  %s %s\n", infoIcon, muted.Render("No active sessions found."))
 		return nil
 	}
 
-	printSessionsTable(sessionsResp.Sessions)
+	serverLink := hyperlink(muted.Render(urlHost(serverURL)), serverURL)
+	fmt.Printf("\n  %s %s %s\n", accent.Render("◆"), accent.Render("Sessions"), serverLink)
+	fmt.Println()
+	printSessions(sessionsResp.Sessions)
 	return nil
 }
 
@@ -134,52 +137,48 @@ func revokeSession(serverURL, sessionID, idToken string) error {
 		return fmt.Errorf("server returned status %d", resp.StatusCode)
 	}
 
-	fmt.Printf("Session %s revoked.\n", sessionID)
+	fmt.Printf("\n  %s %s\n", successIcon, muted.Render(fmt.Sprintf("Session %s revoked.", sessionID)))
 	return nil
 }
 
-func printSessionsTable(sessions []SessionInfo) {
-	headers := []string{"STATE", "PHASE", "USER", "LAST USED", "CREATED"}
-	widths := make([]int, len(headers))
-	for i, h := range headers {
-		widths[i] = len(h)
+func phaseStyle(phase string) lipgloss.Style {
+	switch phase {
+	case "Active":
+		return green
+	case "Revoked":
+		return red
+	case "Expired":
+		return yellow
+	case "Pending":
+		return orange
+	default:
+		return muted
 	}
+}
 
-	rows := make([][]string, len(sessions))
-	for i, s := range sessions {
+func printSessions(sessions []SessionInfo) {
+	for _, s := range sessions {
 		user := s.Username
 		if user == "" {
 			user = s.Email
 		}
+
+		phase := phaseStyle(s.Phase).Render(s.Phase)
 		lastUsed := "never"
 		if !s.LastUsed.IsZero() {
 			lastUsed = formatTimeAgo(s.LastUsed)
 		}
-		rows[i] = []string{
-			truncate(s.State, 12),
-			s.Phase,
-			user,
-			lastUsed,
-			formatTimeAgo(s.CreatedAt),
-		}
-		for j, cell := range rows[i] {
-			if len(cell) > widths[j] {
-				widths[j] = len(cell)
-			}
-		}
-	}
 
-	formatRow := func(cells []string) string {
-		parts := make([]string, len(cells))
-		for i, cell := range cells {
-			parts[i] = cell + strings.Repeat(" ", widths[i]-len(cell)+2)
-		}
-		return strings.TrimRight(strings.Join(parts, ""), " ")
-	}
-
-	fmt.Println(formatRow(headers))
-	for _, row := range rows {
-		fmt.Println(formatRow(row))
+		fmt.Printf("  %s %s\n", accent.Render("◆"), bold.Render(s.SessionID))
+		fmt.Printf("    %s %s  %s %s  %s %s\n",
+			muted.Render("phase:"), phase,
+			muted.Render("user:"), user,
+			muted.Render("last used:"), lastUsed,
+		)
+		fmt.Printf("    %s %s\n",
+			muted.Render("created:"), formatTimeAgo(s.CreatedAt),
+		)
+		fmt.Println()
 	}
 }
 
@@ -207,11 +206,4 @@ func formatTimeAgo(t time.Time) string {
 		}
 		return fmt.Sprintf("%dd ago", days)
 	}
-}
-
-func truncate(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen-3] + "..."
 }

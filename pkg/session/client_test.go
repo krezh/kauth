@@ -56,8 +56,8 @@ func TestClient_Create(t *testing.T) {
 		t.Fatalf("Create() error = %v", err)
 	}
 
-	if session.Spec.State != "test-state-123" {
-		t.Errorf("State = %q, want %q", session.Spec.State, "test-state-123")
+	if session.Spec.SessionID != "test-state-123" {
+		t.Errorf("SessionID = %q, want %q", session.Spec.SessionID, "test-state-123")
 	}
 	if session.Spec.Verifier != "test-verifier" {
 		t.Errorf("Verifier = %q, want %q", session.Spec.Verifier, "test-verifier")
@@ -101,8 +101,8 @@ func TestClient_Get(t *testing.T) {
 		t.Fatalf("Get() error = %v", err)
 	}
 
-	if got.Spec.State != created.Spec.State {
-		t.Errorf("State = %q, want %q", got.Spec.State, created.Spec.State)
+	if got.Spec.SessionID != created.Spec.SessionID {
+		t.Errorf("SessionID = %q, want %q", got.Spec.SessionID, created.Spec.SessionID)
 	}
 	if got.Spec.UserID != created.Spec.UserID {
 		t.Errorf("UserID = %q, want %q", got.Spec.UserID, created.Spec.UserID)

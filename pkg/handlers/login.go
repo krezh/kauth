@@ -88,12 +88,12 @@ func NewLoginHandler(
 }
 
 func (h *LoginHandler) HandleStartLogin(w http.ResponseWriter, r *http.Request) {
-	// Generate state and PKCE verifier
-	state := generateRandomString(32)
+	// Generate session ID and PKCE verifier
+	sessionID := generateRandomString(32)
 	verifier := oauth2.GenerateVerifier()
 
 	// Create stateless session token (JWT)
-	sessionToken, err := h.jwtManager.CreateSessionToken(state, verifier, h.sessionTTL)
+	sessionToken, err := h.jwtManager.CreateSessionToken(sessionID, verifier, h.sessionTTL)
 	if err != nil {
 		http.Error(w, "Failed to create session", http.StatusInternalServerError)
 		return
@@ -101,7 +101,7 @@ func (h *LoginHandler) HandleStartLogin(w http.ResponseWriter, r *http.Request) 
 
 	// Store session in CRD (distributed across all pods)
 	ctx := r.Context()
-	_, err = h.sessionClient.Create(ctx, state, verifier, "")
+	_, err = h.sessionClient.Create(ctx, sessionID, verifier, "")
 	if err != nil {
 		log.Printf("Failed to create session CRD: %v", err)
 		http.Error(w, "Failed to create session", http.StatusInternalServerError)
@@ -110,7 +110,7 @@ func (h *LoginHandler) HandleStartLogin(w http.ResponseWriter, r *http.Request) 
 
 	// Create OAuth URL with state
 	authURL := h.provider.OAuth2Config.AuthCodeURL(
-		state,
+		sessionID,
 		oauth2.AccessTypeOffline,
 		oauth2.S256ChallengeOption(verifier),
 	)
@@ -143,11 +143,11 @@ func (h *LoginHandler) HandleWatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	state := sessionJWT.State
+	sessionID := sessionJWT.SessionID
 
 	// Check if session already completed in CRD
 	ctx := r.Context()
-	crdSession, err := h.sessionClient.Get(ctx, state)
+	crdSession, err := h.sessionClient.Get(ctx, sessionID)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			http.Error(w, "Session not found or expired", http.StatusNotFound)
@@ -171,7 +171,7 @@ func (h *LoginHandler) HandleWatch(w http.ResponseWriter, r *http.Request) {
 			Ready:        true,
 			Kubeconfig:   kubeconfig,
 			RefreshToken: crdSession.Status.RefreshToken,
-			SessionID:    crdSession.Spec.State,
+			SessionID:    crdSession.Spec.SessionID,
 		}
 		h.sendFinalStatus(w, &status)
 		return
@@ -190,21 +190,21 @@ func (h *LoginHandler) HandleWatch(w http.ResponseWriter, r *http.Request) {
 	// Register local listener for updates
 	listener := make(chan StatusResponse, 1)
 	h.sseMutex.Lock()
-	h.sseListeners[state] = append(h.sseListeners[state], listener)
+	h.sseListeners[sessionID] = append(h.sseListeners[sessionID], listener)
 	h.sseMutex.Unlock()
 
 	// Cleanup listener on exit
 	defer func() {
 		h.sseMutex.Lock()
-		listeners := h.sseListeners[state]
+		listeners := h.sseListeners[sessionID]
 		for i, l := range listeners {
 			if l == listener {
-				h.sseListeners[state] = append(listeners[:i], listeners[i+1:]...)
+				h.sseListeners[sessionID] = append(listeners[:i], listeners[i+1:]...)
 				break
 			}
 		}
-		if len(h.sseListeners[state]) == 0 {
-			delete(h.sseListeners, state)
+		if len(h.sseListeners[sessionID]) == 0 {
+			delete(h.sseListeners, sessionID)
 		}
 		h.sseMutex.Unlock()
 		// Do not close(listener): watchSessions holds a snapshot of the listeners

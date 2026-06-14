@@ -160,7 +160,7 @@ func TestSanitizeToResourceName(t *testing.T) {
 			expected: strings.Repeat("a", 62),
 		},
 		{
-			name:     "oauth state with underscores",
+			name:     "session ID with underscores",
 			input:    "x96Pc3ynjOX2eMnby1oZI1jSmfCwUn7ai_O9TYPJaBc",
 			expected: "x96pc3ynjox2emnby1ozi1jsmfcwun7ai-o9typjabc",
 		},

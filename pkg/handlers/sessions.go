@@ -16,7 +16,7 @@ type SessionsHandler struct {
 }
 
 type SessionInfo struct {
-	State       string    `json:"state"`
+	SessionID   string    `json:"sessionID"`
 	UserID      string    `json:"user_id"`
 	Email       string    `json:"email"`
 	Username    string    `json:"username"`
@@ -80,7 +80,7 @@ func (h *SessionsHandler) HandleListSessions(w http.ResponseWriter, r *http.Requ
 	sessionInfos := make([]SessionInfo, 0, len(sessions))
 	for _, s := range sessions {
 		info := SessionInfo{
-			State:     s.Spec.State,
+			SessionID: s.Spec.SessionID,
 			UserID:    s.Spec.UserID,
 			Email:     s.Status.Email,
 			Username:  s.Status.Username,

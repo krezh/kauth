@@ -116,8 +116,8 @@ func (h *RevokeHandler) HandleRevoke(w http.ResponseWriter, r *http.Request) {
 			if s.Status.Phase == v1alpha1.SessionRevoked || s.Status.Phase == v1alpha1.SessionExpired {
 				continue
 			}
-			if err := h.sessionClient.Revoke(ctx, s.Spec.State); err != nil {
-				log.Printf("REVOKE_FAILURE: session_id=%q error=%q", s.Spec.State, err)
+			if err := h.sessionClient.Revoke(ctx, s.Spec.SessionID); err != nil {
+				log.Printf("REVOKE_FAILURE: session_id=%q error=%q", s.Spec.SessionID, err)
 				continue
 			}
 			revoked++

@@ -39,10 +39,10 @@ func (h *LoginHandler) watchSessions() {
 				}
 
 				if session.Status.Phase == v1alpha1.SessionActive || session.Status.Error != "" {
-					state := session.Spec.State
+					sessionID := session.Spec.SessionID
 
 					h.sseMutex.Lock()
-					listeners := h.sseListeners[state]
+					listeners := h.sseListeners[sessionID]
 					h.sseMutex.Unlock()
 
 					if len(listeners) > 0 {
@@ -55,11 +55,11 @@ func (h *LoginHandler) watchSessions() {
 							Ready:        session.Status.Phase == v1alpha1.SessionActive,
 							Kubeconfig:   kubeconfig,
 							RefreshToken: session.Status.RefreshToken,
-							SessionID:    session.Spec.State,
+							SessionID:    session.Spec.SessionID,
 							Error:        session.Status.Error,
 						}
 
-						log.Printf("Notifying %d local listeners for state %s", len(listeners), state[:8])
+						log.Printf("Notifying %d local listeners for session %s", len(listeners), sessionID[:8])
 
 						for _, listener := range listeners {
 							select {
