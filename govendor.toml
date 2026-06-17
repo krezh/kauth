@@ -49,8 +49,8 @@ schema = 3
     go = "1.18"
     packages = ["github.com/clipperhouse/uax29/v2/graphemes"]
   [mod."github.com/coreos/go-oidc/v3"]
-    version = "v3.18.0"
-    hash = "sha256-5vd00/GgjGZfpu+0qZdWUHRhnIHBnHccwkksuU50D9s="
+    version = "v3.19.0"
+    hash = "sha256-WYK1ZZraFCp2DEXWKwrrXbEl+mgIybqacfXMDOh+WDA="
     go = "1.25.0"
     packages = ["github.com/coreos/go-oidc/v3/oidc"]
   [mod."github.com/davecgh/go-spew"]
