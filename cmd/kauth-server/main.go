@@ -146,6 +146,10 @@ func main() {
 	var loginHandler *handlers.LoginHandler
 	var refreshHandler *handlers.RefreshHandler
 
+	// The webhook handler only needs the provider at request time via a closure,
+	// so it can be built eagerly here; the route is still gated by requireProvider.
+	webhookHandler := handlers.NewWebhookHandler(func() *oauth.Provider { return provider }, sessionClient)
+
 	go func() {
 		maxRetries := 60
 		retryDelay := 5 * time.Second
@@ -245,6 +249,9 @@ func main() {
 	mux.HandleFunc("/sessions", requireProvider(handlers.RequireAuth(func() *oauth.Provider { return provider }, func(w http.ResponseWriter, r *http.Request) {
 		handlers.NewSessionsHandler(sessionClient, cfg.AdminGroups).HandleListSessions(w, r)
 	})))
+	mux.HandleFunc("/webhook/token-review", requireProvider(func(w http.ResponseWriter, r *http.Request) {
+		webhookHandler.HandleTokenReview(w, r)
+	}))
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("OK"))

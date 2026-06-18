@@ -66,7 +66,7 @@ func runGetToken(cmd *cobra.Command, args []string) error {
 	serverURL := cachedToken.ServerURL
 
 	if cachedToken.RefreshToken != "" && time.Now().Before(cachedToken.Expiry.Add(-5*time.Minute)) {
-		return outputExecCredential(cachedToken.IDToken, cachedToken.Expiry)
+		return outputExecCredential(buildToken(cachedToken.IDToken, cachedToken.SessionID), cachedToken.Expiry)
 	}
 
 	if cachedToken.RefreshToken == "" {
@@ -103,7 +103,18 @@ func runGetToken(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "Warning: failed to cache token: %v\n", err)
 	}
 
-	return outputExecCredential(refreshResp.IDToken, expiresAt)
+	return outputExecCredential(buildToken(refreshResp.IDToken, cachedToken.SessionID), expiresAt)
+}
+
+// buildToken assembles the compound webhook credential presented to Kubernetes:
+// "kauth_<sessionID>.<idToken>". The sessionID lets kauth's webhook check that
+// specific session's revocation status. An empty sessionID (pre-session-id
+// login cache) falls back to the bare ID token for backwards compatibility.
+func buildToken(idToken, sessionID string) string {
+	if sessionID == "" {
+		return idToken
+	}
+	return "kauth_" + sessionID + "." + idToken
 }
 
 func refreshTokenFromServer(baseURL, refreshToken string) (*RefreshResponse, error) {
