@@ -4,6 +4,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var debug bool
+
 var rootCmd = &cobra.Command{
 	Use:   "kauth",
 	Short: "Kubernetes OIDC authentication client",
@@ -20,4 +22,8 @@ you'll authenticate, and kubectl will be configured automatically.`,
 
 func Execute() error {
 	return rootCmd.Execute()
+}
+
+func init() {
+	rootCmd.PersistentFlags().BoolVar(&debug, "debug", false, "print debug output")
 }

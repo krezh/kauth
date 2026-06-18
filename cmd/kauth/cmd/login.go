@@ -232,44 +232,120 @@ func selectServer(servers []discoveredServer) (string, error) {
 	return servers[n-1].URL, nil
 }
 
+// watchForCompletion waits for the login to complete by streaming the server's
+// /watch SSE endpoint. The connection is long-lived (it stays open while the
+// user authenticates in the browser) so it is vulnerable to being silently
+// dropped by intermediaries — VPNs and proxies can half-close the TCP socket
+// without sending FIN/RST, which would otherwise block the reader forever.
+//
+// To stay robust, each connection is read with a liveness deadline; if no data
+// (keepalive or result) arrives in time, or the stream ends without a result,
+// we reconnect. This is safe because the server immediately re-sends the final
+// status when the session is already active, so a reconnect recovers any result
+// that was missed during a drop.
 func watchForCompletion(client *http.Client, baseURL, sessionToken string) (*StatusResponse, error) {
+	deadline := time.Now().Add(15 * time.Minute)
+	for {
+		status, retriable, err := watchOnce(client, baseURL, sessionToken)
+		switch {
+		case err != nil && !retriable:
+			return nil, err
+		case status != nil:
+			return status, nil
+		}
+
+		if !time.Now().Before(deadline) {
+			return nil, fmt.Errorf("timed out waiting for authentication.\n\nPlease try logging in again")
+		}
+		if debug {
+			fmt.Fprintf(os.Stderr, "  [debug] reconnecting in 2s...\n")
+		}
+		time.Sleep(2 * time.Second)
+	}
+}
+
+// watchOnce makes a single /watch connection. It returns a non-nil status on
+// success. retriable is true when the connection dropped or idled without a
+// result, signalling the caller to reconnect.
+func watchOnce(client *http.Client, baseURL, sessionToken string) (status *StatusResponse, retriable bool, err error) {
 	resp, err := client.Get(fmt.Sprintf("%s/watch?session_token=%s", baseURL, sessionToken))
 	if err != nil {
-		return nil, fmt.Errorf("failed to connect to watch endpoint: %w\n\nThe service may have become unavailable", err)
+		return nil, true, nil // connection failure: reconnect
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("watch endpoint returned error: %s\n\nYour session may have expired. Please try logging in again", resp.Status)
+		// 5xx may be transient (server starting / rolling update); 4xx is fatal.
+		if resp.StatusCode >= 500 {
+			return nil, true, nil
+		}
+		return nil, false, fmt.Errorf("watch endpoint returned error: %s\n\nYour session may have expired. Please try logging in again", resp.Status)
 	}
 
-	// Read SSE stream
-	scanner := bufio.NewScanner(resp.Body)
-	for scanner.Scan() {
-		line := scanner.Text()
-
-		// SSE format: "data: <json>"
-		if data, ok := strings.CutPrefix(line, "data: "); ok {
-			var status StatusResponse
-			if err := json.Unmarshal([]byte(data), &status); err != nil {
-				continue
-			}
-
-			if status.Error != "" {
-				return nil, fmt.Errorf("authentication failed: %s\n\nPlease try logging in again", status.Error)
-			}
-
-			if status.Ready && status.Kubeconfig != "" {
-				return &status, nil
+	// Read the SSE stream in a goroutine so the main loop can enforce a
+	// liveness deadline that the blocking Scanner cannot provide on its own.
+	lines := make(chan string)
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		scanner := bufio.NewScanner(resp.Body)
+		for scanner.Scan() {
+			select {
+			case lines <- scanner.Text():
+			case <-done:
+				return
 			}
 		}
-	}
+		close(lines)
+	}()
 
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("error reading authentication stream: %w\n\nThe connection may have been interrupted", err)
-	}
+	// The server sends a keepalive every 5s; if nothing arrives within this
+	// window the link is considered dead (half-open) and we reconnect.
+	const readTimeout = 30 * time.Second
+	timer := time.NewTimer(readTimeout)
+	defer timer.Stop()
 
-	return nil, fmt.Errorf("authentication stream ended unexpectedly.\n\nThe service may have restarted. Please try logging in again")
+	for {
+		select {
+		case line, ok := <-lines:
+			if !ok {
+				if debug {
+					fmt.Fprintf(os.Stderr, "\n  [debug] watch stream ended, reconnecting\n")
+				}
+				return nil, true, nil // stream ended: reconnect
+			}
+			if !timer.Stop() {
+				<-timer.C
+			}
+			timer.Reset(readTimeout)
+
+			data, ok := strings.CutPrefix(line, "data: ")
+			if !ok {
+				if debug {
+					fmt.Fprintf(os.Stderr, ".")
+				}
+				continue // keepalive comment or blank line
+			}
+			var s StatusResponse
+			if err := json.Unmarshal([]byte(data), &s); err != nil {
+				continue
+			}
+			if s.Error != "" {
+				return nil, false, fmt.Errorf("authentication failed: %s\n\nPlease try logging in again", s.Error)
+			}
+			if s.Ready && s.Kubeconfig != "" {
+				return &s, false, nil
+			}
+		case <-timer.C:
+			// No data within readTimeout: the connection is likely half-open.
+			// Closing the body unblocks the reader goroutine; then reconnect.
+			if debug {
+				fmt.Fprintf(os.Stderr, "\n  [debug] 30s read timeout, reconnecting\n")
+			}
+			_ = resp.Body.Close()
+			return nil, true, nil
+		}
+	}
 }
 
 func openBrowser(url string) error {

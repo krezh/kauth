@@ -213,8 +213,10 @@ func (h *LoginHandler) HandleWatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Send keepalive every 15 seconds
-	ticker := time.NewTicker(15 * time.Second)
+	// Send a keepalive every 5 seconds. This must stay well below any
+	// intermediate proxy idle timeout (e.g. Envoy's connectionIdleTimeout)
+	// so the long-lived stream is never reaped while waiting for login.
+	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
 	for {

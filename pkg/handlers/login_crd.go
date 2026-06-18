@@ -11,6 +11,11 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 )
 
+// watchIdleTimeout is how long watchSessions will wait without receiving any
+// event (including K8s bookmarks, which flow every ~10 s on a live stream)
+// before declaring the watch stalled and reconnecting.
+const watchIdleTimeout = 60 * time.Second
+
 func (h *LoginHandler) watchSessions() {
 	var resourceVersion string
 	first := true
@@ -28,74 +33,99 @@ func (h *LoginHandler) watchSessions() {
 			slog.Info("Started watching OAuthSession CRDs")
 			first = false
 		} else {
-			slog.Debug("Session watch restarted", "resourceVersion", resourceVersion)
+			slog.Info("Session watch restarted", "resourceVersion", resourceVersion)
 		}
 
-		for event := range watcher.ResultChan() {
-			if event.Type == watch.Bookmark {
-				if obj, err := runtime.DefaultUnstructuredConverter.ToUnstructured(event.Object); err == nil {
-					if rv, ok := obj["metadata"].(map[string]any)["resourceVersion"].(string); ok && rv != "" {
-						resourceVersion = rv
+		idleTimer := time.NewTimer(watchIdleTimeout)
+	eventLoop:
+		for {
+			select {
+			case event, ok := <-watcher.ResultChan():
+				if !ok {
+					break eventLoop
+				}
+				// Any event (bookmark or otherwise) proves the stream is alive.
+				if !idleTimer.Stop() {
+					select {
+					case <-idleTimer.C:
+					default:
 					}
 				}
-				continue
-			}
+				idleTimer.Reset(watchIdleTimeout)
 
-			if event.Type == watch.Modified || event.Type == watch.Added {
-				unstructuredMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(event.Object)
-				if err != nil {
-					slog.Error("Failed to convert session to unstructured", "error", err)
+				if event.Type == watch.Bookmark {
+					if obj, err := runtime.DefaultUnstructuredConverter.ToUnstructured(event.Object); err == nil {
+						if rv, ok := obj["metadata"].(map[string]any)["resourceVersion"].(string); ok && rv != "" {
+							resourceVersion = rv
+						}
+					}
 					continue
 				}
 
-				if rv, ok := unstructuredMap["metadata"].(map[string]any)["resourceVersion"].(string); ok && rv != "" {
-					resourceVersion = rv
-				}
+				if event.Type == watch.Modified || event.Type == watch.Added {
+					unstructuredMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(event.Object)
+					if err != nil {
+						slog.Error("Failed to convert session to unstructured", "error", err)
+						continue
+					}
 
-				var session v1alpha1.OAuthSession
-				if err = runtime.DefaultUnstructuredConverter.FromUnstructured(unstructuredMap, &session); err != nil {
-					slog.Error("Failed to convert session from unstructured", "error", err)
-					continue
-				}
+					if rv, ok := unstructuredMap["metadata"].(map[string]any)["resourceVersion"].(string); ok && rv != "" {
+						resourceVersion = rv
+					}
 
-				if session.Status.Phase == v1alpha1.SessionActive || session.Status.Error != "" {
-					sessionID := session.Spec.SessionID
+					var session v1alpha1.OAuthSession
+					if err = runtime.DefaultUnstructuredConverter.FromUnstructured(unstructuredMap, &session); err != nil {
+						slog.Error("Failed to convert session from unstructured", "error", err)
+						continue
+					}
 
-					h.sseMutex.Lock()
-					src := h.sseListeners[sessionID]
-					listeners := make([]chan StatusResponse, len(src))
-					copy(listeners, src)
-					h.sseMutex.Unlock()
+					if session.Status.Phase == v1alpha1.SessionActive || session.Status.Error != "" {
+						sessionID := session.Spec.SessionID
 
-					if len(listeners) > 0 {
-						var kubeconfig string
-						if session.Status.Phase == v1alpha1.SessionActive && session.Status.Email != "" {
-							kubeconfig = h.kubeconfigGen.Generate(session.Status.Email, session.Status.Username)
-						}
+						h.sseMutex.Lock()
+						src := h.sseListeners[sessionID]
+						listeners := make([]chan StatusResponse, len(src))
+						copy(listeners, src)
+						h.sseMutex.Unlock()
 
-						status := StatusResponse{
-							Ready:        session.Status.Phase == v1alpha1.SessionActive,
-							Kubeconfig:   kubeconfig,
-							RefreshToken: session.Status.RefreshToken,
-							SessionID:    session.Spec.SessionID,
-							Error:        session.Status.Error,
-						}
+						slog.Info("Session went Active, checking for local listeners", "session", sessionID[:8], "listeners", len(listeners))
 
-						slog.Info("Notifying local listeners for session", "session", sessionID[:8], "count", len(listeners))
+						if len(listeners) > 0 {
+							var kubeconfig string
+							if session.Status.Phase == v1alpha1.SessionActive && session.Status.Email != "" {
+								kubeconfig = h.kubeconfigGen.Generate(session.Status.Email, session.Status.Username)
+							}
 
-						for _, listener := range listeners {
-							select {
-							case listener <- status:
-							default:
+							status := StatusResponse{
+								Ready:        session.Status.Phase == v1alpha1.SessionActive,
+								Kubeconfig:   kubeconfig,
+								RefreshToken: session.Status.RefreshToken,
+								SessionID:    session.Spec.SessionID,
+								Error:        session.Status.Error,
+							}
+
+							slog.Info("Notifying local listeners for session", "session", sessionID[:8], "count", len(listeners))
+
+							for _, listener := range listeners {
+								select {
+								case listener <- status:
+								default:
+								}
 							}
 						}
 					}
 				}
+
+			case <-idleTimer.C:
+				slog.Info("Session watch idle, reconnecting")
+				watcher.Stop()
+				break eventLoop
 			}
 		}
+		idleTimer.Stop()
 
-		slog.Debug("Session watch closed, restarting...")
-		time.Sleep(5 * time.Second)
+		slog.Info("Session watch closed, restarting...")
+		time.Sleep(1 * time.Second)
 	}
 }
 
