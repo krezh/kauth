@@ -39,6 +39,19 @@ securityContext:
 service:
   type: ClusterIP
   port: 8080
+  # Pin the ClusterIP to a fixed address. Useful when something outside the
+  # cluster DNS (e.g. the kube-apiserver token webhook) must target a stable IP.
+  clusterIP: ""
+
+# Serve HTTPS directly from the pod. When enabled, the named secret (a
+# kubernetes.io/tls secret, e.g. from cert-manager) is mounted and the server
+# starts with TLS. Required for the API server webhook token authenticator,
+# which must reach kauth over TLS by ClusterIP.
+tls:
+  enabled: false
+  # Name of the kubernetes.io/tls secret to mount. Defaults to "<fullname>-tls".
+  secretName: ""
+  mountPath: /etc/kauth/tls
 
 httpRoute:
   enabled: false
