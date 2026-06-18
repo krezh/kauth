@@ -20,6 +20,15 @@ type Config struct {
 	TLSCertFile string
 	TLSKeyFile  string
 
+	// Webhook Listener Configuration
+	// The Kubernetes token-review webhook is served on a separate listener so it
+	// can require TLS independently of the client-facing API (which is typically
+	// TLS-terminated by an ingress/gateway). The webhook listener only starts
+	// when both cert and key are configured.
+	WebhookListenAddr  string
+	WebhookTLSCertFile string
+	WebhookTLSKeyFile  string
+
 	// JWT Configuration (required for stateless operation)
 	JWTSigningKey    []byte        // 32+ bytes for HMAC-SHA256
 	JWTEncryptionKey []byte        // 32 bytes for AES-256

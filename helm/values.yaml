@@ -43,15 +43,17 @@ service:
   # cluster DNS (e.g. the kube-apiserver token webhook) must target a stable IP.
   clusterIP: ""
 
-# Serve HTTPS directly from the pod. When enabled, the named secret (a
-# kubernetes.io/tls secret, e.g. from cert-manager) is mounted and the server
-# starts with TLS. Required for the API server webhook token authenticator,
-# which must reach kauth over TLS by ClusterIP.
-tls:
+# Kubernetes token-review webhook. Served on a SEPARATE TLS listener so the
+# client-facing API stays plain HTTP behind the ingress/gateway (which already
+# terminates TLS), while the API server reaches /webhook/token-review over TLS
+# directly by ClusterIP. When enabled, the named kubernetes.io/tls secret (e.g.
+# from cert-manager) is mounted and the webhook listener starts with TLS.
+webhook:
   enabled: false
-  # Name of the kubernetes.io/tls secret to mount. Defaults to "<fullname>-tls".
+  port: 8443
+  # Name of the kubernetes.io/tls secret to mount. Defaults to "<fullname>-webhook-tls".
   secretName: ""
-  mountPath: /etc/kauth/tls
+  mountPath: /etc/kauth/webhook-tls
 
 httpRoute:
   enabled: false

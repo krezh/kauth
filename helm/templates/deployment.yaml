@@ -34,14 +34,21 @@ spec:
         - name: http
           containerPort: 8080
           protocol: TCP
+        {{- if .Values.webhook.enabled }}
+        - name: webhook
+          containerPort: {{ .Values.webhook.port }}
+          protocol: TCP
+        {{- end }}
         env:
         - name: KAUTH_NAMESPACE
           value: {{ .Release.Namespace | quote }}
-        {{- if .Values.tls.enabled }}
-        - name: TLS_CERT_FILE
-          value: {{ .Values.tls.mountPath }}/tls.crt
-        - name: TLS_KEY_FILE
-          value: {{ .Values.tls.mountPath }}/tls.key
+        {{- if .Values.webhook.enabled }}
+        - name: WEBHOOK_LISTEN_ADDR
+          value: ":{{ .Values.webhook.port }}"
+        - name: WEBHOOK_TLS_CERT_FILE
+          value: {{ .Values.webhook.mountPath }}/tls.crt
+        - name: WEBHOOK_TLS_KEY_FILE
+          value: {{ .Values.webhook.mountPath }}/tls.key
         {{- end }}
         {{- with .Values.env }}
         {{- toYaml . | nindent 8 }}
@@ -56,17 +63,17 @@ spec:
           {{- toYaml .Values.readinessProbe | nindent 12 }}
         resources:
           {{- toYaml .Values.resources | nindent 12 }}
-        {{- if .Values.tls.enabled }}
+        {{- if .Values.webhook.enabled }}
         volumeMounts:
-        - name: tls
-          mountPath: {{ .Values.tls.mountPath }}
+        - name: webhook-tls
+          mountPath: {{ .Values.webhook.mountPath }}
           readOnly: true
         {{- end }}
-      {{- if .Values.tls.enabled }}
+      {{- if .Values.webhook.enabled }}
       volumes:
-      - name: tls
+      - name: webhook-tls
         secret:
-          secretName: {{ .Values.tls.secretName | default (printf "%s-tls" (include "kauth.fullname" .)) }}
+          secretName: {{ .Values.webhook.secretName | default (printf "%s-webhook-tls" (include "kauth.fullname" .)) }}
       {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
