@@ -1,5 +1,26 @@
 # Changelog
 
+## [0.2.19](https://github.com/krezh/kauth/compare/0.2.18...0.2.19) (2026-06-18)
+
+
+### Features
+
+* **deps:** update module github.com/coreos/go-oidc/v3 (v3.18.0 ➔ v3.19.0) ([#244](https://github.com/krezh/kauth/issues/244)) ([490c924](https://github.com/krezh/kauth/commit/490c924ade4e8d82a57ac1ef7d51b4be72b7cc85))
+
+
+### Bug Fixes
+
+* improve login connection handling ([91c316a](https://github.com/krezh/kauth/commit/91c316a1990a4027f05a35a7a5de8b790cd39dc3))
+
+
+### Miscellaneous Chores
+
+* **nix:** add x86_64-darwin to supported systems ([2e97068](https://github.com/krezh/kauth/commit/2e970683165a34ffc42c491602551a7fb158a076))
+* **nix:** lock file maintenance flake.lock ([#240](https://github.com/krezh/kauth/issues/240)) ([6be873f](https://github.com/krezh/kauth/commit/6be873fc5ed60d9499961997cc2f330764e8c04a))
+* **nix:** lock file maintenance flake.lock ([#242](https://github.com/krezh/kauth/issues/242)) ([5d0807f](https://github.com/krezh/kauth/commit/5d0807f50987190f2bd1dc1c27c957265b574085))
+* **nix:** lock file maintenance flake.lock ([#243](https://github.com/krezh/kauth/issues/243)) ([768f895](https://github.com/krezh/kauth/commit/768f895f2338496cc75f5e408b513d8d06d6a94f))
+* **nix:** lock file maintenance flake.lock ([#245](https://github.com/krezh/kauth/issues/245)) ([5565a03](https://github.com/krezh/kauth/commit/5565a03656b9fa5a5c8f6edbf5e2e8ac9dc4b39d))
+
 ## [0.2.18](https://github.com/krezh/kauth/compare/0.2.17...0.2.18) (2026-06-14)
 
 
