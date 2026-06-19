@@ -48,11 +48,13 @@ type StartLoginResponse struct {
 }
 
 type StatusResponse struct {
-	Ready        bool   `json:"ready"`
-	Kubeconfig   string `json:"kubeconfig,omitempty"`
-	RefreshToken string `json:"refresh_token,omitempty"`
-	SessionID    string `json:"session_id,omitempty"`
-	Error        string `json:"error,omitempty"`
+	Ready         bool      `json:"ready"`
+	Kubeconfig    string    `json:"kubeconfig,omitempty"`
+	RefreshToken  string    `json:"refresh_token,omitempty"`
+	SessionID     string    `json:"session_id,omitempty"`
+	WebhookToken  string    `json:"webhook_token,omitempty"`
+	SessionExpiry time.Time `json:"session_expiry,omitempty"`
+	Error         string    `json:"error,omitempty"`
 }
 
 func NewLoginHandler(
@@ -202,6 +204,12 @@ func (h *LoginHandler) HandleWatch(w http.ResponseWriter, r *http.Request) {
 			Kubeconfig:   kubeconfig,
 			RefreshToken: crdSession.Status.RefreshToken,
 			SessionID:    crdSession.Spec.SessionID,
+			WebhookToken: crdSession.Status.WebhookToken,
+		}
+		if crdSession.Status.WebhookToken != "" {
+			if wt, err := h.jwtManager.DecodeWebhookToken(crdSession.Status.WebhookToken); err == nil {
+				status.SessionExpiry = wt.ExpiresAt
+			}
 		}
 		h.sendFinalStatus(w, &status)
 		return
@@ -375,11 +383,23 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	webhookToken, err := h.jwtManager.CreateWebhookToken(state, h.refreshTokenTTL)
+	if err != nil {
+		_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
+			Phase: v1alpha1.SessionPending,
+			Error: "Failed to create webhook token",
+		})
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+
 	err = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
 		Phase:        v1alpha1.SessionActive,
 		Email:        claims.Email,
 		Username:     claims.PreferredUsername,
 		RefreshToken: refreshToken,
+		Groups:       claims.Groups,
+		WebhookToken: webhookToken,
 	})
 	if err != nil {
 		slog.ErrorContext(ctx, "failed to update session status", "error", err)

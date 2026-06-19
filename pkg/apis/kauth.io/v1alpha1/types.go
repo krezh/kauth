@@ -66,6 +66,12 @@ type OAuthSessionStatus struct {
 
 	// Error contains any error message if the OAuth flow failed
 	Error string `json:"error,omitzero"`
+
+	// Groups contains the user's group memberships from OIDC at login time
+	Groups []string `json:"groups,omitzero"`
+
+	// WebhookToken is the encrypted webhook credential for Kubernetes exec plugin
+	WebhookToken string `json:"webhookToken,omitzero"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object

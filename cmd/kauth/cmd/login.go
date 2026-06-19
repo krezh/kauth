@@ -53,11 +53,13 @@ type StartLoginResponse struct {
 }
 
 type StatusResponse struct {
-	Ready        bool   `json:"ready"`
-	Kubeconfig   string `json:"kubeconfig,omitempty"`
-	RefreshToken string `json:"refresh_token,omitempty"`
-	SessionID    string `json:"session_id,omitempty"`
-	Error        string `json:"error,omitempty"`
+	Ready         bool      `json:"ready"`
+	Kubeconfig    string    `json:"kubeconfig,omitempty"`
+	RefreshToken  string    `json:"refresh_token,omitempty"`
+	SessionID     string    `json:"session_id,omitempty"`
+	WebhookToken  string    `json:"webhook_token,omitempty"`
+	SessionExpiry time.Time `json:"session_expiry,omitempty"`
+	Error         string    `json:"error,omitempty"`
 }
 
 func runLogin(cmd *cobra.Command, args []string) error {
@@ -162,17 +164,26 @@ func runLogin(cmd *cobra.Command, args []string) error {
 
 	storage := token.NewStorage(token.DefaultCachePath())
 	newCache := &token.Cache{
-		ServerURL: serverURL,
+		ServerURL:    serverURL,
+		SessionID:    status.SessionID,
+		WebhookToken: status.WebhookToken,
+	}
+
+	if !status.SessionExpiry.IsZero() {
+		newCache.Expiry = status.SessionExpiry
+	} else if status.WebhookToken != "" {
+		// Server should always send SessionExpiry, but fall back to 7 days.
+		newCache.Expiry = time.Now().Add(7 * 24 * time.Hour)
 	}
 
 	if status.RefreshToken != "" {
 		refreshResp, err := refreshTokenFromServer(serverURL, status.RefreshToken)
 		if err == nil {
-			expiresAt := time.Now().Add(time.Duration(refreshResp.ExpiresIn) * time.Second)
 			newCache.IDToken = refreshResp.IDToken
 			newCache.RefreshToken = refreshResp.RefreshToken
-			newCache.SessionID = status.SessionID
-			newCache.Expiry = expiresAt
+			if newCache.Expiry.IsZero() {
+				newCache.Expiry = time.Now().Add(time.Duration(refreshResp.ExpiresIn) * time.Second)
+			}
 		}
 	}
 
@@ -458,6 +469,46 @@ func hasConflict(data []byte, clusterName string) bool {
 		}
 	}
 	return false
+}
+
+type RefreshRequest struct {
+	RefreshToken string `json:"refresh_token"`
+}
+
+type RefreshResponse struct {
+	IDToken      string `json:"id_token"`
+	RefreshToken string `json:"refresh_token"`
+	ExpiresIn    int64  `json:"expires_in"`
+	TokenType    string `json:"token_type"`
+	Kubeconfig   string `json:"kubeconfig"`
+}
+
+func refreshTokenFromServer(baseURL, refreshToken string) (*RefreshResponse, error) {
+	reqBody, err := json.Marshal(RefreshRequest{RefreshToken: refreshToken})
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	resp, err := http.DefaultClient.Post(
+		baseURL+"/refresh",
+		"application/json",
+		strings.NewReader(string(reqBody)),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to connect to server: %w", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("server returned status %d", resp.StatusCode)
+	}
+
+	var refreshResp RefreshResponse
+	if err := json.NewDecoder(resp.Body).Decode(&refreshResp); err != nil {
+		return nil, fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	return &refreshResp, nil
 }
 
 func mergeKubeconfig(existingPath, newConfigYAML string) error {

@@ -71,9 +71,7 @@ func main() {
 		ListenAddr:         getEnv("LISTEN_ADDR", ":8080"),
 		TLSCertFile:        getEnv("TLS_CERT_FILE", ""),
 		TLSKeyFile:         getEnv("TLS_KEY_FILE", ""),
-		WebhookListenAddr:  getEnv("WEBHOOK_LISTEN_ADDR", ":8443"),
-		WebhookTLSCertFile: getEnv("WEBHOOK_TLS_CERT_FILE", ""),
-		WebhookTLSKeyFile:  getEnv("WEBHOOK_TLS_KEY_FILE", ""),
+		WebhookListenAddr: getEnv("WEBHOOK_LISTEN_ADDR", ""),
 		JWTSigningKey:      jwtSigningKey,
 		JWTEncryptionKey:   jwtEncryptionKey,
 		SessionTTL:         getEnvDuration("SESSION_TTL", 15*time.Minute),
@@ -149,9 +147,7 @@ func main() {
 	var loginHandler *handlers.LoginHandler
 	var refreshHandler *handlers.RefreshHandler
 
-	// The webhook handler only needs the provider at request time via a closure,
-	// so it can be built eagerly here; the route is still gated by requireProvider.
-	webhookHandler := handlers.NewWebhookHandler(func() *oauth.Provider { return provider }, sessionClient)
+	webhookHandler := handlers.NewWebhookHandler(jwtManager, sessionClient)
 
 	go func() {
 		maxRetries := 60
@@ -319,17 +315,16 @@ func main() {
 		Handler: handler,
 	}
 
-	// Dedicated TLS listener for the Kubernetes token-review webhook. Kept
-	// separate from the client-facing API (which is TLS-terminated upstream) so
-	// the API server reaches kauth over TLS via the Service DNS name. No rate
-	// limiting or CORS — the API server's webhook cache bounds call frequency.
-	webhookEnabled := cfg.WebhookTLSCertFile != "" && cfg.WebhookTLSKeyFile != ""
+	// Dedicated HTTP listener for the Kubernetes token-review webhook. Kept
+	// separate from the client-facing API so it bypasses the rate limiter (which
+	// would throttle burst requests from the API server on pod restart or cache
+	// expiry). Application-layer encryption makes in-cluster HTTP safe.
 	var webhookServer *http.Server
-	if webhookEnabled {
+	if cfg.WebhookListenAddr != "" {
 		webhookMux := http.NewServeMux()
-		webhookMux.HandleFunc("/webhook/token-review", requireProvider(func(w http.ResponseWriter, r *http.Request) {
+		webhookMux.HandleFunc("/webhook/token-review", func(w http.ResponseWriter, r *http.Request) {
 			webhookHandler.HandleTokenReview(w, r)
-		}))
+		})
 		var webhookHTTPHandler http.Handler = webhookMux
 		webhookHTTPHandler = middleware.RequestLogger(ipExtractor)(webhookHTTPHandler)
 		webhookHTTPHandler = middleware.RequestID(webhookHTTPHandler)
@@ -352,14 +347,13 @@ func main() {
 		}
 	}()
 
-	// Start webhook listener in goroutine (always TLS)
-	if webhookEnabled {
+	if webhookServer != nil {
 		go func() {
-			slog.Info("Starting webhook token-review listener with TLS", "listen_addr", cfg.WebhookListenAddr)
-			serverErrors <- webhookServer.ListenAndServeTLS(cfg.WebhookTLSCertFile, cfg.WebhookTLSKeyFile)
+			slog.Info("Starting webhook token-review listener", "listen_addr", cfg.WebhookListenAddr)
+			serverErrors <- webhookServer.ListenAndServe()
 		}()
 	} else {
-		slog.Info("Webhook token-review listener disabled (set WEBHOOK_TLS_CERT_FILE and WEBHOOK_TLS_KEY_FILE to enable)")
+		slog.Info("Webhook token-review listener disabled (set WEBHOOK_LISTEN_ADDR to enable)")
 	}
 
 	// Setup signal handling for graceful shutdown

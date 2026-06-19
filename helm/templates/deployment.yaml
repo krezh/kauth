@@ -45,10 +45,6 @@ spec:
         {{- if .Values.webhook.enabled }}
         - name: WEBHOOK_LISTEN_ADDR
           value: ":{{ .Values.webhook.port }}"
-        - name: WEBHOOK_TLS_CERT_FILE
-          value: {{ .Values.webhook.mountPath }}/tls.crt
-        - name: WEBHOOK_TLS_KEY_FILE
-          value: {{ .Values.webhook.mountPath }}/tls.key
         {{- end }}
         {{- with .Values.env }}
         {{- toYaml . | nindent 8 }}
@@ -63,18 +59,6 @@ spec:
           {{- toYaml .Values.readinessProbe | nindent 12 }}
         resources:
           {{- toYaml .Values.resources | nindent 12 }}
-        {{- if .Values.webhook.enabled }}
-        volumeMounts:
-        - name: webhook-tls
-          mountPath: {{ .Values.webhook.mountPath }}
-          readOnly: true
-        {{- end }}
-      {{- if .Values.webhook.enabled }}
-      volumes:
-      - name: webhook-tls
-        secret:
-          secretName: {{ .Values.webhook.secretName | default (printf "%s-webhook-tls" (include "kauth.fullname" .)) }}
-      {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

@@ -10,38 +10,49 @@ import (
 	"testing"
 
 	v1alpha1 "kauth/pkg/apis/kauth.io/v1alpha1"
+	"kauth/pkg/jwt"
 
 	authnv1 "k8s.io/api/authentication/v1"
 )
 
-// fakeSessionClient implements sessionValidator for webhook tests.
-type fakeSessionClient struct {
-	session     *v1alpha1.OAuthSession
-	validateErr error
-	getErr      error
+// fakeSessionGetter implements sessionGetter for webhook tests.
+type fakeSessionGetter struct {
+	session *v1alpha1.OAuthSession
+	err     error
 }
 
-func (f *fakeSessionClient) ValidateSession(_ context.Context, _ string, _ v1alpha1.SessionPhase) error {
-	return f.validateErr
+func (f *fakeSessionGetter) Get(_ context.Context, _ string) (*v1alpha1.OAuthSession, error) {
+	return f.session, f.err
 }
 
-func (f *fakeSessionClient) Get(_ context.Context, _ string) (*v1alpha1.OAuthSession, error) {
-	return f.session, f.getErr
-}
-
-func sessionWithEmail(email string) *v1alpha1.OAuthSession {
+func activeSession(email string, groups []string) *v1alpha1.OAuthSession {
 	return &v1alpha1.OAuthSession{
 		Status: v1alpha1.OAuthSessionStatus{
-			Phase: v1alpha1.SessionActive,
+			Phase:  v1alpha1.SessionActive,
+			Email:  email,
+			Groups: groups,
+		},
+	}
+}
+
+func revokedSession(email string) *v1alpha1.OAuthSession {
+	return &v1alpha1.OAuthSession{
+		Status: v1alpha1.OAuthSessionStatus{
+			Phase: v1alpha1.SessionRevoked,
 			Email: email,
 		},
 	}
 }
 
-// newTestHandler builds a WebhookHandler with injected fakes, bypassing the
-// real OIDC provider. verify decides what the token "contains".
-func newTestHandler(sc sessionValidator, verify func(context.Context, string) (*OIDCClaims, error)) *WebhookHandler {
-	return &WebhookHandler{sessionClient: sc, verifyToken: verify}
+func newTestJWTManager(t *testing.T) *jwt.Manager {
+	t.Helper()
+	sigKey := make([]byte, 32)
+	encKey := make([]byte, 32)
+	m, err := jwt.NewManager(sigKey, encKey)
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+	return m
 }
 
 func postTokenReview(t *testing.T, h *WebhookHandler, token string) *httptest.ResponseRecorder {
@@ -67,81 +78,68 @@ func decodeReview(t *testing.T, rr *httptest.ResponseRecorder) authnv1.TokenRevi
 
 func TestHandleTokenReview_Authentication(t *testing.T) {
 	const email = "user@example.com"
-	verifyOK := func(_ context.Context, _ string) (*OIDCClaims, error) {
-		return &OIDCClaims{Email: email, Groups: []string{"devs"}}, nil
-	}
-	verifyFail := func(_ context.Context, _ string) (*OIDCClaims, error) {
-		return nil, fmt.Errorf("bad signature")
+	groups := []string{"devs", "admins"}
+
+	jm := newTestJWTManager(t)
+
+	validToken, err := jm.CreateWebhookToken("sess-abc", 24*60*60*1000000000) // 24h
+	if err != nil {
+		t.Fatalf("CreateWebhookToken: %v", err)
 	}
 
 	tests := []struct {
 		name          string
 		token         string
-		session       sessionValidator
-		verify        func(context.Context, string) (*OIDCClaims, error)
+		session       sessionGetter
 		wantAuthd     bool
 		wantUsername  string
 		wantGroupsLen int
 	}{
 		{
-			name:          "valid compound token with active matching session",
-			token:         "kauth_sess123.header.payload.sig",
-			session:       &fakeSessionClient{session: sessionWithEmail(email)},
-			verify:        verifyOK,
+			name:          "valid token with active session",
+			token:         validToken,
+			session:       &fakeSessionGetter{session: activeSession(email, groups)},
 			wantAuthd:     true,
 			wantUsername:  email,
-			wantGroupsLen: 1,
+			wantGroupsLen: 2,
 		},
 		{
-			name:      "revoked session is rejected",
+			name:      "valid token with revoked session",
+			token:     validToken,
+			session:   &fakeSessionGetter{session: revokedSession(email)},
+			wantAuthd: false,
+		},
+		{
+			name:      "valid token but session lookup fails",
+			token:     validToken,
+			session:   &fakeSessionGetter{err: fmt.Errorf("not found")},
+			wantAuthd: false,
+		},
+		{
+			name:      "garbage token is rejected",
+			token:     "notavalidtoken",
+			session:   &fakeSessionGetter{session: activeSession(email, groups)},
+			wantAuthd: false,
+		},
+		{
+			name:      "empty token is rejected",
+			token:     "",
+			session:   &fakeSessionGetter{session: activeSession(email, groups)},
+			wantAuthd: false,
+		},
+		{
+			name:      "old compound token format is rejected",
 			token:     "kauth_sess123.header.payload.sig",
-			session:   &fakeSessionClient{validateErr: fmt.Errorf("session is Revoked, expected Active")},
-			verify:    verifyOK,
-			wantAuthd: false,
-		},
-		{
-			name:      "session not found is rejected",
-			token:     "kauth_sess123.header.payload.sig",
-			session:   &fakeSessionClient{validateErr: fmt.Errorf("session not found")},
-			verify:    verifyOK,
-			wantAuthd: false,
-		},
-		{
-			name:      "email mismatch is rejected",
-			token:     "kauth_sess123.header.payload.sig",
-			session:   &fakeSessionClient{session: sessionWithEmail("someone-else@example.com")},
-			verify:    verifyOK,
-			wantAuthd: false,
-		},
-		{
-			name:      "bare OIDC token without prefix is rejected",
-			token:     "header.payload.sig",
-			session:   &fakeSessionClient{session: sessionWithEmail(email)},
-			verify:    verifyOK,
-			wantAuthd: false,
-		},
-		{
-			name:      "malformed compound token without separator is rejected",
-			token:     "kauth_sess123",
-			session:   &fakeSessionClient{session: sessionWithEmail(email)},
-			verify:    verifyOK,
-			wantAuthd: false,
-		},
-		{
-			name:      "invalid ID token signature is rejected",
-			token:     "kauth_sess123.header.payload.sig",
-			session:   &fakeSessionClient{session: sessionWithEmail(email)},
-			verify:    verifyFail,
+			session:   &fakeSessionGetter{session: activeSession(email, groups)},
 			wantAuthd: false,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			h := newTestHandler(tt.session, tt.verify)
+			h := &WebhookHandler{jwtManager: jm, sessionClient: tt.session}
 			rr := postTokenReview(t, h, tt.token)
 
-			// Authentication outcomes always return HTTP 200.
 			if rr.Code != http.StatusOK {
 				t.Fatalf("status = %d, want 200", rr.Code)
 			}
@@ -170,7 +168,7 @@ func TestHandleTokenReview_Authentication(t *testing.T) {
 }
 
 func TestHandleTokenReview_WrongMethod(t *testing.T) {
-	h := newTestHandler(&fakeSessionClient{}, nil)
+	h := &WebhookHandler{jwtManager: newTestJWTManager(t), sessionClient: &fakeSessionGetter{}}
 	req := httptest.NewRequest(http.MethodGet, "/webhook/token-review", nil)
 	rr := httptest.NewRecorder()
 	h.HandleTokenReview(rr, req)
@@ -180,7 +178,7 @@ func TestHandleTokenReview_WrongMethod(t *testing.T) {
 }
 
 func TestHandleTokenReview_BadBody(t *testing.T) {
-	h := newTestHandler(&fakeSessionClient{}, nil)
+	h := &WebhookHandler{jwtManager: newTestJWTManager(t), sessionClient: &fakeSessionGetter{}}
 	req := httptest.NewRequest(http.MethodPost, "/webhook/token-review", bytes.NewReader([]byte("not json")))
 	rr := httptest.NewRecorder()
 	h.HandleTokenReview(rr, req)

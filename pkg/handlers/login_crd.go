@@ -102,7 +102,13 @@ func (h *LoginHandler) watchSessions() {
 								Kubeconfig:   kubeconfig,
 								RefreshToken: session.Status.RefreshToken,
 								SessionID:    session.Spec.SessionID,
+								WebhookToken: session.Status.WebhookToken,
 								Error:        session.Status.Error,
+							}
+							if session.Status.WebhookToken != "" {
+								if wt, err := h.jwtManager.DecodeWebhookToken(session.Status.WebhookToken); err == nil {
+									status.SessionExpiry = wt.ExpiresAt
+								}
 							}
 
 							slog.Info("Notifying local listeners for session", "session", sessionID[:8], "count", len(listeners))

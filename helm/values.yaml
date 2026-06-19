@@ -40,17 +40,12 @@ service:
   type: ClusterIP
   port: 8080
 
-# Kubernetes token-review webhook. Served on a SEPARATE TLS listener so the
-# client-facing API stays plain HTTP behind the ingress/gateway (which already
-# terminates TLS), while the API server reaches /webhook/token-review over TLS
-# via the Service DNS name. When enabled, the named kubernetes.io/tls secret
-# (e.g. from cert-manager) is mounted and the webhook listener starts with TLS.
+# Kubernetes token-review webhook. Served on a dedicated HTTP listener so it
+# bypasses the main mux's rate limiter. Application-layer encryption (AES-GCM
+# signed token) makes in-cluster HTTP safe — no TLS cert required.
 webhook:
   enabled: false
-  port: 8443
-  # Name of the kubernetes.io/tls secret to mount. Defaults to "<fullname>-webhook-tls".
-  secretName: ""
-  mountPath: /etc/kauth/webhook-tls
+  port: 8081
 
 httpRoute:
   enabled: false
@@ -91,7 +86,6 @@ readinessProbe:
   failureThreshold: 2
 
 # Node selector for pod assignment
-# Example: { disktype: ssd }
 nodeSelector: {}
 
 # Affinity rules for pod scheduling
@@ -164,5 +158,3 @@ envFrom: []
 
 rbac:
   create: true
-
-
