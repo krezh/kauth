@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.20](https://github.com/krezh/kauth/compare/0.2.19...0.2.20) (2026-06-19)
+
+
+### Features
+
+* Kubernetes webhook token authenticator for session revocation ([#247](https://github.com/krezh/kauth/issues/247)) ([298710a](https://github.com/krezh/kauth/commit/298710a54de9f5c9b89cb6ad7deddd7682ee3963))
+
+
+### Miscellaneous Chores
+
+* **nix:** lock file maintenance flake.lock ([#248](https://github.com/krezh/kauth/issues/248)) ([dd5a164](https://github.com/krezh/kauth/commit/dd5a164543d3dddb881c33aaedb8012465459151))
+
 ## [0.2.19](https://github.com/krezh/kauth/compare/0.2.18...0.2.19) (2026-06-18)
 
 
