@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.21](https://github.com/krezh/kauth/compare/0.2.20...0.2.21) (2026-06-19)
+
+
+### Bug Fixes
+
+* improve session watch and add clusterIP setting ([9c9320d](https://github.com/krezh/kauth/commit/9c9320dc691afef4b143ffa213cefef04e1f3dd6))
+
 ## [0.2.20](https://github.com/krezh/kauth/compare/0.2.19...0.2.20) (2026-06-19)
 
 
