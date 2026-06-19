@@ -321,7 +321,7 @@ func main() {
 
 	// Dedicated TLS listener for the Kubernetes token-review webhook. Kept
 	// separate from the client-facing API (which is TLS-terminated upstream) so
-	// the API server reaches kauth over TLS directly by ClusterIP. No rate
+	// the API server reaches kauth over TLS via the Service DNS name. No rate
 	// limiting or CORS — the API server's webhook cache bounds call frequency.
 	webhookEnabled := cfg.WebhookTLSCertFile != "" && cfg.WebhookTLSKeyFile != ""
 	var webhookServer *http.Server
