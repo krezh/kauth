@@ -3,17 +3,12 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
-	"net/http"
 	"time"
 
 	"kauth/pkg/token"
 
 	"github.com/spf13/cobra"
 )
-
-var httpClient = &http.Client{
-	Timeout: 30 * time.Second,
-}
 
 var getTokenCmd = &cobra.Command{
 	Use:   "get-token",

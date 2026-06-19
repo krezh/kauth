@@ -471,6 +471,10 @@ func hasConflict(data []byte, clusterName string) bool {
 	return false
 }
 
+var httpClient = &http.Client{
+	Timeout: 30 * time.Second,
+}
+
 type RefreshRequest struct {
 	RefreshToken string `json:"refresh_token"`
 }
@@ -489,7 +493,7 @@ func refreshTokenFromServer(baseURL, refreshToken string) (*RefreshResponse, err
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	resp, err := http.DefaultClient.Post(
+	resp, err := httpClient.Post(
 		baseURL+"/refresh",
 		"application/json",
 		strings.NewReader(string(reqBody)),
