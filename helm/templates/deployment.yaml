@@ -34,9 +34,18 @@ spec:
         - name: http
           containerPort: 8080
           protocol: TCP
+        {{- if .Values.webhook.enabled }}
+        - name: webhook
+          containerPort: {{ .Values.webhook.port }}
+          protocol: TCP
+        {{- end }}
         env:
         - name: KAUTH_NAMESPACE
           value: {{ .Release.Namespace | quote }}
+        {{- if .Values.webhook.enabled }}
+        - name: WEBHOOK_LISTEN_ADDR
+          value: ":{{ .Values.webhook.port }}"
+        {{- end }}
         {{- with .Values.env }}
         {{- toYaml . | nindent 8 }}
         {{- end }}

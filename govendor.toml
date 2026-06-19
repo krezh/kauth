@@ -227,6 +227,11 @@ schema = 3
     version = "v3.0.1"
     hash = "sha256-FqL9TKYJ0XkNwJFnq9j0VvJ5ZUU1RvH/52h/f5bkYAU="
     packages = ["gopkg.in/yaml.v3"]
+  [mod."k8s.io/api"]
+    version = "v0.36.2"
+    hash = "sha256-8beHLme8JvMDSKcGgbsVJY3UurJXfXHs9a7qPe/rQFs="
+    go = "1.26.0"
+    packages = ["k8s.io/api/authentication/v1"]
   [mod."k8s.io/apimachinery"]
     version = "v0.36.2"
     hash = "sha256-dhmV5ngN9ksQFhTsevdsznjXnoHt+9UY3n4BzEMYpwQ="

@@ -66,6 +66,14 @@ spec:
                   type: string
                   format: date-time
                   description: Timestamp when OAuth flow completed
+                groups:
+                  type: array
+                  description: User's group memberships from OIDC at login time
+                  items:
+                    type: string
+                webhookToken:
+                  type: string
+                  description: Encrypted webhook credential for Kubernetes exec plugin
       subresources:
         status: {}
       additionalPrinterColumns:

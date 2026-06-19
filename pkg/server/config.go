@@ -20,6 +20,13 @@ type Config struct {
 	TLSCertFile string
 	TLSKeyFile  string
 
+	// WebhookListenAddr is the address for the dedicated webhook HTTP listener.
+	// The token-review webhook is served here so it bypasses the main mux's rate
+	// limiter (which would throttle burst requests from the API server on pod
+	// restart). Application-layer encryption makes in-cluster HTTP safe.
+	// Leave empty to disable the webhook listener.
+	WebhookListenAddr string
+
 	// JWT Configuration (required for stateless operation)
 	JWTSigningKey    []byte        // 32+ bytes for HMAC-SHA256
 	JWTEncryptionKey []byte        // 32 bytes for AES-256

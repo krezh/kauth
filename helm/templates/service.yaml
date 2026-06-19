@@ -11,5 +11,11 @@ spec:
       targetPort: http
       protocol: TCP
       name: http
+    {{- if .Values.webhook.enabled }}
+    - port: {{ .Values.webhook.port }}
+      targetPort: webhook
+      protocol: TCP
+      name: webhook
+    {{- end }}
   selector:
     {{- include "kauth.selectorLabels" . | nindent 4 }}

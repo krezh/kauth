@@ -63,25 +63,26 @@ func main() {
 	}
 
 	cfg := server.Config{
-		IssuerURL:         getEnv("OIDC_ISSUER_URL", ""),
-		ClientID:          getEnv("OIDC_CLIENT_ID", ""),
-		ClientSecret:      getEnv("OIDC_CLIENT_SECRET", ""),
-		ClusterName:       clusterName,
-		BaseURL:           getEnv("BASE_URL", ""),
-		ListenAddr:        getEnv("LISTEN_ADDR", ":8080"),
-		TLSCertFile:       getEnv("TLS_CERT_FILE", ""),
-		TLSKeyFile:        getEnv("TLS_KEY_FILE", ""),
-		JWTSigningKey:     jwtSigningKey,
-		JWTEncryptionKey:  jwtEncryptionKey,
-		SessionTTL:        getEnvDuration("SESSION_TTL", 15*time.Minute),
-		RefreshTokenTTL:   getEnvDuration("REFRESH_TOKEN_TTL", 7*24*time.Hour),
-		AllowedOrigins:    getEnvStringSlice("ALLOWED_ORIGINS", []string{}),
-		AllowedGroups:     getEnvStringSlice("ALLOWED_GROUPS", []string{}),
-		AdminGroups:       getEnvStringSlice("ADMIN_GROUPS", []string{}),
-		RateLimitRPS:      getEnvFloat("RATE_LIMIT_RPS", 10.0),
-		RateLimitBurst:    getEnvInt("RATE_LIMIT_BURST", 20),
-		RotationWindow:    getEnvInt("ROTATION_WINDOW", 2),
-		TrustedProxyCIDRs: getEnvStringSlice("TRUSTED_PROXY_CIDRS", []string{}),
+		IssuerURL:          getEnv("OIDC_ISSUER_URL", ""),
+		ClientID:           getEnv("OIDC_CLIENT_ID", ""),
+		ClientSecret:       getEnv("OIDC_CLIENT_SECRET", ""),
+		ClusterName:        clusterName,
+		BaseURL:            getEnv("BASE_URL", ""),
+		ListenAddr:         getEnv("LISTEN_ADDR", ":8080"),
+		TLSCertFile:        getEnv("TLS_CERT_FILE", ""),
+		TLSKeyFile:         getEnv("TLS_KEY_FILE", ""),
+		WebhookListenAddr: getEnv("WEBHOOK_LISTEN_ADDR", ""),
+		JWTSigningKey:      jwtSigningKey,
+		JWTEncryptionKey:   jwtEncryptionKey,
+		SessionTTL:         getEnvDuration("SESSION_TTL", 15*time.Minute),
+		RefreshTokenTTL:    getEnvDuration("REFRESH_TOKEN_TTL", 7*24*time.Hour),
+		AllowedOrigins:     getEnvStringSlice("ALLOWED_ORIGINS", []string{}),
+		AllowedGroups:      getEnvStringSlice("ALLOWED_GROUPS", []string{}),
+		AdminGroups:        getEnvStringSlice("ADMIN_GROUPS", []string{}),
+		RateLimitRPS:       getEnvFloat("RATE_LIMIT_RPS", 10.0),
+		RateLimitBurst:     getEnvInt("RATE_LIMIT_BURST", 20),
+		RotationWindow:     getEnvInt("ROTATION_WINDOW", 2),
+		TrustedProxyCIDRs:  getEnvStringSlice("TRUSTED_PROXY_CIDRS", []string{}),
 	}
 
 	if cfg.IssuerURL == "" || cfg.ClientID == "" || cfg.ClientSecret == "" {
@@ -145,6 +146,8 @@ func main() {
 	// that reads from providerReady sees fully-initialized handler values.
 	var loginHandler *handlers.LoginHandler
 	var refreshHandler *handlers.RefreshHandler
+
+	webhookHandler := handlers.NewWebhookHandler(jwtManager, sessionClient)
 
 	go func() {
 		maxRetries := 60
@@ -312,6 +315,25 @@ func main() {
 		Handler: handler,
 	}
 
+	// Dedicated HTTP listener for the Kubernetes token-review webhook. Kept
+	// separate from the client-facing API so it bypasses the rate limiter (which
+	// would throttle burst requests from the API server on pod restart or cache
+	// expiry). Application-layer encryption makes in-cluster HTTP safe.
+	var webhookServer *http.Server
+	if cfg.WebhookListenAddr != "" {
+		webhookMux := http.NewServeMux()
+		webhookMux.HandleFunc("/webhook/token-review", func(w http.ResponseWriter, r *http.Request) {
+			webhookHandler.HandleTokenReview(w, r)
+		})
+		var webhookHTTPHandler http.Handler = webhookMux
+		webhookHTTPHandler = middleware.RequestLogger(ipExtractor)(webhookHTTPHandler)
+		webhookHTTPHandler = middleware.RequestID(webhookHTTPHandler)
+		webhookServer = &http.Server{
+			Addr:    cfg.WebhookListenAddr,
+			Handler: webhookHTTPHandler,
+		}
+	}
+
 	// Channel to listen for errors from server
 	serverErrors := make(chan error, 1)
 
@@ -324,6 +346,15 @@ func main() {
 			serverErrors <- server.ListenAndServe()
 		}
 	}()
+
+	if webhookServer != nil {
+		go func() {
+			slog.Info("Starting webhook token-review listener", "listen_addr", cfg.WebhookListenAddr)
+			serverErrors <- webhookServer.ListenAndServe()
+		}()
+	} else {
+		slog.Info("Webhook token-review listener disabled (set WEBHOOK_LISTEN_ADDR to enable)")
+	}
 
 	// Setup signal handling for graceful shutdown
 	stop := make(chan os.Signal, 1)
@@ -346,6 +377,12 @@ func main() {
 		if err := server.Shutdown(shutdownCtx); err != nil {
 			slog.Error("Server forced to shutdown", "error", err)
 			os.Exit(1)
+		}
+		if webhookServer != nil {
+			if err := webhookServer.Shutdown(shutdownCtx); err != nil {
+				slog.Error("Webhook listener forced to shutdown", "error", err)
+				os.Exit(1)
+			}
 		}
 
 		slog.Info("Server stopped gracefully")

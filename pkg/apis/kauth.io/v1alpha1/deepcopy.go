@@ -97,6 +97,10 @@ func (in *OAuthSessionStatus) DeepCopyInto(out *OAuthSessionStatus) {
 		*out = new(metav1.Time)
 		(*in).DeepCopyInto(*out)
 	}
+	if in.Groups != nil {
+		out.Groups = make([]string, len(in.Groups))
+		copy(out.Groups, in.Groups)
+	}
 }
 
 // DeepCopy creates a deep copy

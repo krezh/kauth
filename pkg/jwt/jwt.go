@@ -28,6 +28,14 @@ type SessionToken struct {
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
+// WebhookCredential is an opaque long-lived credential the Kubernetes API server
+// presents to the kauth webhook. It contains only the session ID; the webhook
+// decrypts it and looks up the CRD for current status (email, groups, phase).
+type WebhookCredential struct {
+	SessionID string    `json:"sessionID"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
+
 // RefreshToken contains refresh token data (encrypted, signed)
 type RefreshToken struct {
 	UserEmail        string    `json:"user_email"`
@@ -186,6 +194,64 @@ func (m *Manager) ValidateRefreshToken(token string) (*RefreshToken, error) {
 		return nil, ErrExpiredToken
 	}
 	return refresh, nil
+}
+
+// CreateWebhookToken creates an encrypted and signed webhook credential containing
+// the session ID. The API server presents this opaque blob to the kauth webhook,
+// which decrypts it and performs a CRD lookup for current session status.
+func (m *Manager) CreateWebhookToken(sessionID string, ttl time.Duration) (string, error) {
+	cred := WebhookCredential{
+		SessionID: sessionID,
+		ExpiresAt: time.Now().Add(ttl),
+	}
+
+	data, err := json.Marshal(cred)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal webhook credential: %w", err)
+	}
+
+	encrypted, err := m.encrypt(data)
+	if err != nil {
+		return "", fmt.Errorf("failed to encrypt webhook credential: %w", err)
+	}
+
+	return base64.URLEncoding.EncodeToString(m.sign(encrypted)), nil
+}
+
+// DecodeWebhookToken decrypts and decodes a webhook credential without checking
+// expiry. Use ValidateWebhookToken for request authentication; this is for
+// extracting the ExpiresAt to propagate to clients.
+func (m *Manager) DecodeWebhookToken(token string) (*WebhookCredential, error) {
+	signed, err := base64.URLEncoding.DecodeString(token)
+	if err != nil {
+		return nil, ErrInvalidToken
+	}
+	encrypted, err := m.verify(signed)
+	if err != nil {
+		return nil, err
+	}
+	data, err := m.decrypt(encrypted)
+	if err != nil {
+		return nil, fmt.Errorf("failed to decrypt webhook credential: %w", err)
+	}
+	var cred WebhookCredential
+	if err := json.Unmarshal(data, &cred); err != nil {
+		return nil, ErrInvalidToken
+	}
+	return &cred, nil
+}
+
+// ValidateWebhookToken decrypts and validates a webhook credential, returning
+// the session ID on success.
+func (m *Manager) ValidateWebhookToken(token string) (*WebhookCredential, error) {
+	cred, err := m.DecodeWebhookToken(token)
+	if err != nil {
+		return nil, err
+	}
+	if time.Now().After(cred.ExpiresAt) {
+		return nil, ErrExpiredToken
+	}
+	return cred, nil
 }
 
 // encrypt encrypts data using AES-GCM
