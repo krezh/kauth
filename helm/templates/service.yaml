@@ -6,9 +6,6 @@ metadata:
     {{- include "kauth.labels" . | nindent 4 }}
 spec:
   type: {{ .Values.service.type }}
-  {{- with .Values.service.clusterIP }}
-  clusterIP: {{ . }}
-  {{- end }}
   ports:
     - port: {{ .Values.service.port }}
       targetPort: http

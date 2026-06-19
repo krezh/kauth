@@ -11,10 +11,12 @@ import (
 	"k8s.io/apimachinery/pkg/watch"
 )
 
-// watchIdleTimeout is how long watchSessions will wait without receiving any
-// event (including K8s bookmarks, which flow every ~10 s on a live stream)
-// before declaring the watch stalled and reconnecting.
-const watchIdleTimeout = 60 * time.Second
+// watchIdleTimeout is how long to wait without any event (including bookmarks)
+// before treating the stream as stalled and reconnecting. VPN middleboxes can
+// half-close the TCP socket without EOF, so the range loop would block forever
+// without this safety net. Bookmarks arrive at most every ~60 s on a healthy
+// stream; 90 s gives enough headroom to avoid false positives.
+const watchIdleTimeout = 90 * time.Second
 
 func (h *LoginHandler) watchSessions() {
 	var resourceVersion string
@@ -44,7 +46,6 @@ func (h *LoginHandler) watchSessions() {
 				if !ok {
 					break eventLoop
 				}
-				// Any event (bookmark or otherwise) proves the stream is alive.
 				if !idleTimer.Stop() {
 					select {
 					case <-idleTimer.C:
@@ -117,14 +118,14 @@ func (h *LoginHandler) watchSessions() {
 				}
 
 			case <-idleTimer.C:
-				slog.Info("Session watch idle, reconnecting")
+				slog.Debug("Session watch idle, reconnecting")
 				watcher.Stop()
 				break eventLoop
 			}
 		}
 		idleTimer.Stop()
 
-		slog.Info("Session watch closed, restarting...")
+		slog.Debug("Session watch closed, restarting...")
 		time.Sleep(1 * time.Second)
 	}
 }

@@ -39,15 +39,12 @@ securityContext:
 service:
   type: ClusterIP
   port: 8080
-  # Pin the ClusterIP to a fixed address. Useful when something outside the
-  # cluster DNS (e.g. the kube-apiserver token webhook) must target a stable IP.
-  clusterIP: ""
 
 # Kubernetes token-review webhook. Served on a SEPARATE TLS listener so the
 # client-facing API stays plain HTTP behind the ingress/gateway (which already
 # terminates TLS), while the API server reaches /webhook/token-review over TLS
-# directly by ClusterIP. When enabled, the named kubernetes.io/tls secret (e.g.
-# from cert-manager) is mounted and the webhook listener starts with TLS.
+# via the Service DNS name. When enabled, the named kubernetes.io/tls secret
+# (e.g. from cert-manager) is mounted and the webhook listener starts with TLS.
 webhook:
   enabled: false
   port: 8443
