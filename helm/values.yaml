@@ -39,6 +39,7 @@ securityContext:
 service:
   type: ClusterIP
   port: 8080
+  clusterIP: ""
 
 # Kubernetes token-review webhook. Served on a dedicated HTTP listener so it
 # bypasses the main mux's rate limiter. Application-layer encryption (AES-GCM

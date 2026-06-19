@@ -3,10 +3,12 @@ package handlers
 import (
 	"context"
 	"log/slog"
+	"net/http"
 	"time"
 
 	v1alpha1 "kauth/pkg/apis/kauth.io/v1alpha1"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/watch"
 )
@@ -53,6 +55,19 @@ func (h *LoginHandler) watchSessions() {
 					}
 				}
 				idleTimer.Reset(watchIdleTimeout)
+
+				if event.Type == watch.Error {
+					if status, ok := event.Object.(*metav1.Status); ok {
+						slog.Error("Session watch error", "code", status.Code, "message", status.Message)
+						if status.Code == http.StatusGone {
+							resourceVersion = ""
+						}
+					} else {
+						slog.Error("Session watch error", "event", event.Object)
+					}
+					watcher.Stop()
+					break eventLoop
+				}
 
 				if event.Type == watch.Bookmark {
 					if obj, err := runtime.DefaultUnstructuredConverter.ToUnstructured(event.Object); err == nil {
