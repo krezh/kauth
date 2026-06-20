@@ -73,6 +73,7 @@ contexts:
   context:
     cluster: %s
     user: %s
+    namespace: default
 current-context: %s
 `, kg.ClusterName, kg.ClusterServer, kg.ClusterCA,
 		email,
