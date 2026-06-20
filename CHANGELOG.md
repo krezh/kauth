@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.22](https://github.com/krezh/kauth/compare/0.2.21...0.2.22) (2026-06-20)
+
+
+### Bug Fixes
+
+* address multiple correctness and security bugs ([7f9db41](https://github.com/krezh/kauth/commit/7f9db412b88e10e3463da26da7fa21d8de96553b))
+
+
+### Miscellaneous Chores
+
+* **nix:** lock file maintenance flake.lock ([#252](https://github.com/krezh/kauth/issues/252)) ([a1a2d75](https://github.com/krezh/kauth/commit/a1a2d75927e904baa732f5ade8f318b4eb73085c))
+
 ## [0.2.21](https://github.com/krezh/kauth/compare/0.2.20...0.2.21) (2026-06-19)
 
 
