@@ -54,12 +54,13 @@ func (h *SessionsHandler) HandleListSessions(w http.ResponseWriter, r *http.Requ
 
 	admin := caller.isAdmin(h.adminGroups)
 
-	// Non-admins can only see their own sessions
-	userEmail := caller.Email
+	// Non-admins can only see their own sessions.
+	// Admins with no user_email filter list all active sessions via ListActive.
+	var userEmail string
 	if admin {
-		if q := r.URL.Query().Get("user_email"); q != "" {
-			userEmail = q
-		}
+		userEmail = r.URL.Query().Get("user_email")
+	} else {
+		userEmail = caller.Email
 	}
 
 	var sessions []v1alpha1.OAuthSession

@@ -6,9 +6,11 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"slices"
 	"time"
 
 	v1alpha1 "kauth/pkg/apis/kauth.io/v1alpha1"
+	"kauth/pkg/audit"
 	"kauth/pkg/jwt"
 	"kauth/pkg/oauth"
 	"kauth/pkg/session"
@@ -22,7 +24,8 @@ type RefreshHandler struct {
 	sessionClient   *session.Client
 	kubeconfigGen   *KubeconfigGenerator
 	refreshTokenTTL time.Duration
-	rotationWindow  int // max rotation counter lag to accept (replay-attack window)
+	rotationWindow  int      // max rotation counter lag to accept (replay-attack window)
+	allowedGroups   []string // if non-empty, user must belong to at least one group
 }
 
 type RefreshRequest struct {
@@ -44,6 +47,7 @@ func NewRefreshHandler(
 	clusterName, clusterServer, clusterCA string,
 	refreshTokenTTL time.Duration,
 	rotationWindow int,
+	allowedGroups []string,
 ) *RefreshHandler {
 	return &RefreshHandler{
 		provider:      provider,
@@ -56,6 +60,7 @@ func NewRefreshHandler(
 		},
 		refreshTokenTTL: refreshTokenTTL,
 		rotationWindow:  rotationWindow,
+		allowedGroups:   allowedGroups,
 	}
 }
 
@@ -170,6 +175,24 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Re-check group membership so that users removed from allowed groups
+	// cannot continue refreshing indefinitely until session expiry.
+	if len(h.allowedGroups) > 0 {
+		authorized := false
+		for _, g := range claims.Groups {
+			if slices.Contains(h.allowedGroups, g) {
+				authorized = true
+				break
+			}
+		}
+		if !authorized {
+			audit.AuthorizationDeny(ctx, r, claims.Email, claims.Groups, h.allowedGroups)
+			slog.WarnContext(ctx, "refresh: user no longer in allowed groups", "user", claims.Email, "groups", claims.Groups)
+			http.Error(w, "Forbidden: user not in allowed groups", http.StatusForbidden)
+			return
+		}
+	}
+
 	// Create new rotated refresh token with incremented counter
 	newRefreshToken, err := h.jwtManager.CreateRefreshToken(
 		claims.Email,
@@ -191,6 +214,7 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 			Email:        claims.Email,
 			Username:     claims.PreferredUsername,
 			RefreshToken: newRefreshToken,
+			Groups:       claims.Groups,
 		})
 	}
 

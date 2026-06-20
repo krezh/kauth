@@ -104,7 +104,7 @@ func (h *LoginHandler) watchSessions() {
 						copy(listeners, src)
 						h.sseMutex.Unlock()
 
-						slog.Info("Session went Active, checking for local listeners", "session", sessionID[:8], "listeners", len(listeners))
+						slog.Info("Session went Active, checking for local listeners", "session", sessionID[:min(8, len(sessionID))], "listeners", len(listeners))
 
 						if len(listeners) > 0 {
 							var kubeconfig string
@@ -126,7 +126,7 @@ func (h *LoginHandler) watchSessions() {
 								}
 							}
 
-							slog.Info("Notifying local listeners for session", "session", sessionID[:8], "count", len(listeners))
+							slog.Info("Notifying local listeners for session", "session", sessionID[:min(8, len(sessionID))], "count", len(listeners))
 
 							for _, listener := range listeners {
 								select {
@@ -163,7 +163,7 @@ func (h *LoginHandler) cleanupSessions() {
 			slog.Error("Failed to expire inactive sessions", "error", err)
 		}
 
-		err = h.sessionClient.CleanupOldSessions(ctx, 60*time.Second)
+		err = h.sessionClient.CleanupOldSessions(ctx, h.sessionTTL)
 		if err != nil {
 			slog.Error("Failed to cleanup old sessions", "error", err)
 		}

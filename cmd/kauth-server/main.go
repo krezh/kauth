@@ -183,6 +183,7 @@ func main() {
 					clusterCA,
 					cfg.RefreshTokenTTL,
 					cfg.RotationWindow,
+					cfg.AllowedGroups,
 				)
 				close(providerReady)
 				slog.Info("Successfully connected to OIDC provider", "url", cfg.IssuerURL)

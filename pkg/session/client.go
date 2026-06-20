@@ -125,8 +125,22 @@ func (c *Client) UpdateStatus(ctx context.Context, sessionID string, status v1al
 		return fmt.Errorf("failed to get session: %w", err)
 	}
 
+	// Refuse to re-activate a session that has reached a terminal state.
+	// This closes the TOCTOU window where a concurrent revoke between
+	// ValidateSession and UpdateStatus would be silently undone.
+	if status.Phase == v1alpha1.SessionActive &&
+		(session.Status.Phase == v1alpha1.SessionRevoked || session.Status.Phase == v1alpha1.SessionExpired) {
+		return fmt.Errorf("session is in terminal state %s, cannot reactivate", session.Status.Phase)
+	}
+
+	existingWebhookToken := session.Status.WebhookToken
 	existingCompletedAt := session.Status.CompletedAt
 	session.Status = status
+	// Preserve the WebhookToken across status updates that don't explicitly set one.
+	// The token is created once at login and must survive subsequent refresh cycles.
+	if status.WebhookToken == "" && existingWebhookToken != "" {
+		session.Status.WebhookToken = existingWebhookToken
+	}
 	if status.Phase == v1alpha1.SessionActive && status.CompletedAt == nil {
 		if existingCompletedAt != nil {
 			session.Status.CompletedAt = existingCompletedAt
@@ -306,7 +320,10 @@ func (c *Client) GetByUser(ctx context.Context, userID string) ([]v1alpha1.OAuth
 			continue
 		}
 
-		if session.Status.Email == userID {
+		// Match on Status.Email (set after OAuth callback) or Spec.UserID
+		// (set earlier via UpdateUserID) so that in-progress sessions are
+		// included in bulk revoke operations.
+		if session.Status.Email == userID || session.Spec.UserID == userID {
 			userSessions = append(userSessions, session)
 		}
 	}

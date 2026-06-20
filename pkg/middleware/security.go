@@ -84,9 +84,14 @@ func CORS(allowedOrigins []string) func(http.Handler) http.Handler {
 	}
 }
 
+type rateLimitVisitor struct {
+	limiter  *rate.Limiter
+	lastSeen time.Time
+}
+
 // RateLimiter provides per-IP rate limiting
 type RateLimiter struct {
-	visitors    map[string]*rate.Limiter
+	visitors    map[string]*rateLimitVisitor
 	mu          sync.RWMutex
 	rate        rate.Limit
 	burst       int
@@ -101,7 +106,7 @@ type RateLimiter struct {
 // trustedProxies: CIDR blocks for trusted reverse proxies (e.g., "10.0.0.0/8")
 func NewRateLimiter(rps float64, burst int, cleanup time.Duration, trustedProxies []string) *RateLimiter {
 	rl := &RateLimiter{
-		visitors:    make(map[string]*rate.Limiter),
+		visitors:    make(map[string]*rateLimitVisitor),
 		rate:        rate.Limit(rps),
 		burst:       burst,
 		cleanup:     cleanup,
@@ -114,18 +119,18 @@ func NewRateLimiter(rps float64, burst int, cleanup time.Duration, trustedProxie
 	return rl
 }
 
-// getVisitor returns the rate limiter for a visitor
+// getVisitor returns the rate limiter for a visitor, creating one if needed.
 func (rl *RateLimiter) getVisitor(ip string) *rate.Limiter {
 	rl.mu.Lock()
 	defer rl.mu.Unlock()
 
-	limiter, exists := rl.visitors[ip]
+	v, exists := rl.visitors[ip]
 	if !exists {
-		limiter = rate.NewLimiter(rl.rate, rl.burst)
-		rl.visitors[ip] = limiter
+		v = &rateLimitVisitor{limiter: rate.NewLimiter(rl.rate, rl.burst)}
+		rl.visitors[ip] = v
 	}
-
-	return limiter
+	v.lastSeen = time.Now()
+	return v.limiter
 }
 
 type ClientIPExtractor struct {
@@ -220,16 +225,21 @@ func (rl *RateLimiter) Middleware(next http.Handler) http.Handler {
 	})
 }
 
-// cleanupLoop periodically removes inactive rate limiters
+// cleanupLoop periodically removes rate limiters for IPs that have been idle
+// for longer than the cleanup interval. Previously the entire map was replaced,
+// which reset counters for active IPs and let sustained attackers bypass limits.
 func (rl *RateLimiter) cleanupLoop() {
 	ticker := time.NewTicker(rl.cleanup)
 	defer ticker.Stop()
 
 	for range ticker.C {
+		cutoff := time.Now().Add(-rl.cleanup)
 		rl.mu.Lock()
-		// Clear all visitors - they'll be recreated on next request
-		// This is simple but effective for cleanup
-		rl.visitors = make(map[string]*rate.Limiter)
+		for ip, v := range rl.visitors {
+			if v.lastSeen.Before(cutoff) {
+				delete(rl.visitors, ip)
+			}
+		}
 		rl.mu.Unlock()
 	}
 }
