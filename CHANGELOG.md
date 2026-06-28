@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.2.23](https://github.com/krezh/kauth/compare/0.2.22...0.2.23) (2026-06-28)
+
+
+### Bug Fixes
+
+* set default namespace in generated kubeconfig context ([729a496](https://github.com/krezh/kauth/commit/729a496b2d444a5a8114491ff94fe23b136c42b7))
+
+
+### Miscellaneous Chores
+
+* **nix:** lock file maintenance flake.lock ([#256](https://github.com/krezh/kauth/issues/256)) ([fad4fc8](https://github.com/krezh/kauth/commit/fad4fc8c6989e36d4185c901fcae29278bd9624a))
+* **nix:** lock file maintenance flake.lock ([#257](https://github.com/krezh/kauth/issues/257)) ([dc54d41](https://github.com/krezh/kauth/commit/dc54d41657e1cf2166e43419d555f3812d90d6f0))
+* **nix:** lock file maintenance flake.lock ([#258](https://github.com/krezh/kauth/issues/258)) ([d177f98](https://github.com/krezh/kauth/commit/d177f988f49086fd727096176a007acabc9f7da4))
+* **nix:** lock file maintenance flake.lock ([#259](https://github.com/krezh/kauth/issues/259)) ([1d6a6fc](https://github.com/krezh/kauth/commit/1d6a6fcc60584d8dd6ffdab6f8024ed9e58da0e4))
+* **nix:** lock file maintenance flake.lock ([#260](https://github.com/krezh/kauth/issues/260)) ([7590480](https://github.com/krezh/kauth/commit/75904802ae6ef4074945f05af0363fc8ef25f57f))
+* **nix:** lock file maintenance flake.lock ([#261](https://github.com/krezh/kauth/issues/261)) ([17a4dc2](https://github.com/krezh/kauth/commit/17a4dc2cd91c0cbe110b66e5c89465a31b18e22e))
+
 ## [0.2.22](https://github.com/krezh/kauth/compare/0.2.21...0.2.22) (2026-06-20)
 
 
