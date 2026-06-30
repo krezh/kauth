@@ -88,10 +88,10 @@
         ]
       },
       "locked": {
-        "lastModified": 1782549884,
-        "narHash": "sha256-Pd1Wn0Fn33okT/6WexKdYry5GMRohk0xIuu3TeJ6ro4=",
+        "lastModified": 1782846854,
+        "narHash": "sha256-+bWEs445qDqxKQlS9keMiG0meSFbZso6QW7l4n5ZW0M=",
         "ref": "refs/heads/main",
-        "rev": "64e540368a47fa876824900b54474fa4e99005ae",
+        "rev": "19037c4fad2aa39d4d1f0f06a7138a1efacc0d9d",
         "shallow": true,
         "type": "git",
         "url": "https://github.com/purpleclay/go-overlay"
@@ -104,11 +104,11 @@
     },
     "nixpkgs": {
       "locked": {
-        "lastModified": 1782467914,
-        "narHash": "sha256-pGvFkM8N0xEkIIXDe5YYfbEAvHrk4IxBrjB/x8OomhE=",
+        "lastModified": 1782723713,
+        "narHash": "sha256-oPXCU/SSUokcGaJREHibG1CBX3+s/W7orDWQOZDsEeQ=",
         "owner": "NixOS",
         "repo": "nixpkgs",
-        "rev": "e73de5be04e0eff4190a1432b946d469c794e7b4",
+        "rev": "b5aa0fbd538984f6e3d201be0005b4463d8b09f8",
         "type": "github"
       },
       "original": {
