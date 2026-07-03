@@ -4,8 +4,8 @@ schema = 3
 
 [mod]
   [mod."charm.land/lipgloss/v2"]
-    version = "v2.0.4"
-    hash = "sha256-KrO8Q1/yQZBTMwysp/cAi5Kdz2/ZODBOr3C5X04zG/M="
+    version = "v2.0.5"
+    hash = "sha256-EZCcXcyT9XS93UcZvIF42WUXnPlPYe4YLdhdFwCZ5NI="
     go = "1.25.0"
     packages = ["charm.land/lipgloss/v2"]
   [mod."github.com/charmbracelet/colorprofile"]
