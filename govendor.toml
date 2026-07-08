@@ -191,13 +191,13 @@ schema = 3
     go = "1.25.0"
     packages = ["golang.org/x/sync/errgroup"]
   [mod."golang.org/x/sys"]
-    version = "v0.46.0"
-    hash = "sha256-NzRXMSEk6upeudJvUEPVnw6clJ3d8UdC/vdfANWAc8g="
+    version = "v0.47.0"
+    hash = "sha256-TpbRyWWqHjddP6QzUgAbaLd2EE0S+GYNRUIDJd18r98="
     go = "1.25.0"
     packages = ["golang.org/x/sys/unix", "golang.org/x/sys/windows"]
   [mod."golang.org/x/term"]
-    version = "v0.44.0"
-    hash = "sha256-nzbvOgvGRbx1qpq1rbk7b6zNsNeNj8mOGoyZLtnzq3w="
+    version = "v0.45.0"
+    hash = "sha256-vPBeJkepEZ1D9k4oaV20IuQlVmfAFv15KQgnhl9MNgw="
     go = "1.25.0"
     packages = ["golang.org/x/term"]
   [mod."golang.org/x/text"]
