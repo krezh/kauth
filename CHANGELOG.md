@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.28](https://github.com/krezh/kauth/compare/0.2.27...0.2.28) (2026-07-26)
+
+
+### Bug Fixes
+
+* **cli:** accept generated kubeconfig round trips ([66533f0](https://github.com/krezh/kauth/commit/66533f0ac7425a12b7d87f76e39760946bfd53d5))
+
 ## [0.2.27](https://github.com/krezh/kauth/compare/0.2.26...0.2.27) (2026-07-26)
 
 
