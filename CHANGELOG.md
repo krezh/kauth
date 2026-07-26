@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.25](https://github.com/krezh/kauth/compare/0.2.24...0.2.25) (2026-07-26)
+
+
+### Features
+
+* add sliding sessions and harden authentication ([6e5b71d](https://github.com/krezh/kauth/commit/6e5b71daf56275addeb89b789ed33a5c2d857e31))
+
+
+### Miscellaneous Chores
+
+* **nix:** lock file maintenance flake.lock ([#291](https://github.com/krezh/kauth/issues/291)) ([eaf3864](https://github.com/krezh/kauth/commit/eaf386425a299e45606b06d57755a96d25e7f93a))
+
 ## [0.2.24](https://github.com/krezh/kauth/compare/0.2.23...0.2.24) (2026-07-23)
 
 
