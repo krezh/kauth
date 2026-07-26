@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.29](https://github.com/krezh/kauth/compare/0.2.28...0.2.29) (2026-07-26)
+
+
+### Bug Fixes
+
+* **refresh:** rotate webhook token and require request_id on every refresh ([65e6e4a](https://github.com/krezh/kauth/commit/65e6e4aa4014a852e9da141bce01446208b5f0f4))
+
 ## [0.2.28](https://github.com/krezh/kauth/compare/0.2.27...0.2.28) (2026-07-26)
 
 
