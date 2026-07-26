@@ -33,7 +33,8 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	}
 
 	cachedToken, _ := storage.Load()
-	if cachedToken == nil || cachedToken.RefreshToken == "" {
+	if cachedToken == nil || cachedToken.RefreshToken == "" || cachedToken.WebhookToken == "" ||
+		!cachedToken.Expiry.IsZero() && !time.Now().Before(cachedToken.Expiry) {
 		fmt.Printf("\n  %s %s\n", errorIcon, muted.Render("Not authenticated"))
 		fmt.Printf("\n  Run %s to authenticate.\n\n", accent.Render("kauth login"))
 		return nil
@@ -97,16 +98,10 @@ func credentialStorageForCurrentContext() (*token.Storage, error) {
 
 func credentialStorageForKubeInfo(kubeInfo *kubeconfigStatus, kubeInfoErr error) (*token.Storage, error) {
 	if kubeInfoErr != nil {
-		if token.HasProfileCaches() {
-			return nil, fmt.Errorf("no profile-aware kauth context is currently selected")
-		}
-		return token.NewStorage(token.DefaultCachePath()), nil
+		return nil, fmt.Errorf("no profile-aware kauth context is currently selected: %w", kubeInfoErr)
 	}
 	if kubeInfo.profile == "" {
-		if token.HasProfileCaches() {
-			return nil, fmt.Errorf("current context uses the legacy shared credential cache; run kauth login again to assign it a cluster profile")
-		}
-		return token.NewStorage(token.DefaultCachePath()), nil
+		return nil, fmt.Errorf("current context has no credential cache profile; run kauth login again")
 	}
 	profilePath, err := token.ProfileCachePath(kubeInfo.profile)
 	if err != nil {

@@ -38,8 +38,8 @@ docker-build: build
 helm-lint:
     helm lint helm/
 
-# Format, vet, test, lint
-check: fmt vet test lint
+# Format, vet, test, lint, and validate deployment manifests
+check: fmt vet test lint helm-lint
 
 # Update flake
 update:

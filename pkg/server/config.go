@@ -23,7 +23,8 @@ type Config struct {
 	// WebhookListenAddr is the address for the dedicated webhook HTTP listener.
 	// The token-review webhook is served here so it bypasses the main mux's rate
 	// limiter (which would throttle burst requests from the API server on pod
-	// restart). Application-layer encryption makes in-cluster HTTP safe.
+	// restart). The listener must be protected by a trusted network path or TLS
+	// termination outside this process.
 	// Leave empty to disable the webhook listener.
 	WebhookListenAddr string
 

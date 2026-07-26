@@ -30,15 +30,17 @@ type RefreshHandler struct {
 
 type RefreshRequest struct {
 	RefreshToken string `json:"refresh_token"`
-	RequestID    string `json:"request_id,omitempty"`
+	RequestID    string `json:"request_id"`
 }
 
 type RefreshResponse struct {
-	IDToken      string `json:"id_token"`      // New ID token for management API calls
-	RefreshToken string `json:"refresh_token"` // New rotated refresh token
-	ExpiresIn    int64  `json:"expires_in"`    // ID token expiry in seconds
-	TokenType    string `json:"token_type"`    // Always "Bearer"
-	Kubeconfig   string `json:"kubeconfig"`    // Updated kubeconfig
+	IDToken       string    `json:"id_token"`      // New ID token for management API calls
+	RefreshToken  string    `json:"refresh_token"` // New rotated refresh token
+	WebhookToken  string    `json:"webhook_token"` // New Kubernetes webhook credential
+	SessionExpiry time.Time `json:"session_expiry"`
+	ExpiresIn     int64     `json:"expires_in"` // ID token expiry in seconds
+	TokenType     string    `json:"token_type"` // Always "Bearer"
+	Kubeconfig    string    `json:"kubeconfig"` // Updated kubeconfig
 }
 
 func NewRefreshHandler(
@@ -79,7 +81,7 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Missing refresh_token", http.StatusBadRequest)
 		return
 	}
-	if req.RequestID != "" && (len(req.RequestID) < 20 || len(req.RequestID) > 128) {
+	if len(req.RequestID) < 20 || len(req.RequestID) > 128 {
 		http.Error(w, "Invalid request_id", http.StatusBadRequest)
 		return
 	}
@@ -111,47 +113,46 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Invalid refresh token", http.StatusUnauthorized)
 		return
 	}
-	if req.RequestID != "" {
-		sess, encryptedResult, resultErr := h.sessionClient.GetRefreshResult(ctx, refreshToken.SessionID, h.refreshTokenTTL)
-		if resultErr == nil {
-			result, decodeErr := h.jwtManager.DecodeRefreshResult(encryptedResult)
-			if decodeErr == nil &&
-				subtle.ConstantTimeCompare([]byte(result.RequestID), []byte(req.RequestID)) == 1 &&
-				subtle.ConstantTimeCompare([]byte(result.PreviousRefreshToken), []byte(req.RefreshToken)) == 1 {
-				if subtle.ConstantTimeCompare([]byte(result.RefreshToken), []byte(sess.Status.RefreshToken)) == 1 {
-					h.writeRefreshResponse(w, result.IDToken, result.RefreshToken, result.IDTokenExpiresAt, result.Email, result.Username)
-					return
-				}
-				if subtle.ConstantTimeCompare([]byte(result.PreviousRefreshToken), []byte(sess.Status.RefreshToken)) == 1 {
-					lockID, claimErr := h.sessionClient.ClaimRefreshToken(ctx, refreshToken.SessionID, req.RefreshToken, time.Minute, h.refreshTokenTTL)
-					if claimErr != nil {
-						http.Error(w, "Refresh recovery is already in progress", http.StatusConflict)
-						return
-					}
-					defer h.releaseRefreshClaim(refreshToken.SessionID, lockID)
-					if err := h.sessionClient.ExtendRefreshTokenClaim(ctx, refreshToken.SessionID, lockID, h.refreshTokenTTL); err != nil {
-						http.Error(w, "Session is no longer active", http.StatusUnauthorized)
-						return
-					}
-					if err := h.sessionClient.RotateRefreshToken(ctx, refreshToken.SessionID, req.RefreshToken, lockID, v1alpha1.OAuthSessionStatus{
-						Phase:        v1alpha1.SessionActive,
-						Email:        result.Email,
-						Username:     result.Username,
-						RefreshToken: result.RefreshToken,
-						Groups:       result.Groups,
-					}); err != nil {
-						http.Error(w, "Failed to complete refresh recovery", http.StatusInternalServerError)
-						return
-					}
-					h.writeRefreshResponse(w, result.IDToken, result.RefreshToken, result.IDTokenExpiresAt, result.Email, result.Username)
-					return
-				}
+	sess, encryptedResult, resultErr := h.sessionClient.GetRefreshResult(ctx, refreshToken.SessionID, h.refreshTokenTTL)
+	if resultErr == nil {
+		result, decodeErr := h.jwtManager.DecodeRefreshResult(encryptedResult)
+		if decodeErr == nil &&
+			subtle.ConstantTimeCompare([]byte(result.RequestID), []byte(req.RequestID)) == 1 &&
+			subtle.ConstantTimeCompare([]byte(result.PreviousRefreshToken), []byte(req.RefreshToken)) == 1 {
+			if subtle.ConstantTimeCompare([]byte(result.RefreshToken), []byte(sess.Status.RefreshToken)) == 1 {
+				h.writeRefreshResponse(w, result.IDToken, result.RefreshToken, result.WebhookToken, result.IDTokenExpiresAt, result.SessionExpiresAt, result.Email, result.Username)
+				return
 			}
-		} else if !errors.Is(resultErr, session.ErrPreconditionFailed) {
-			slog.ErrorContext(ctx, "refresh: failed to check prior result", "error", resultErr)
-			http.Error(w, "Failed to refresh token", http.StatusInternalServerError)
-			return
+			if subtle.ConstantTimeCompare([]byte(result.PreviousRefreshToken), []byte(sess.Status.RefreshToken)) == 1 {
+				lockID, claimErr := h.sessionClient.ClaimRefreshToken(ctx, refreshToken.SessionID, req.RefreshToken, time.Minute, h.refreshTokenTTL)
+				if claimErr != nil {
+					http.Error(w, "Refresh recovery is already in progress", http.StatusConflict)
+					return
+				}
+				defer h.releaseRefreshClaim(refreshToken.SessionID, lockID)
+				if err := h.sessionClient.ExtendRefreshTokenClaim(ctx, refreshToken.SessionID, lockID, h.refreshTokenTTL); err != nil {
+					http.Error(w, "Session is no longer active", http.StatusUnauthorized)
+					return
+				}
+				if err := h.sessionClient.RotateRefreshToken(ctx, refreshToken.SessionID, req.RefreshToken, lockID, v1alpha1.OAuthSessionStatus{
+					Phase:        v1alpha1.SessionActive,
+					Email:        result.Email,
+					Username:     result.Username,
+					RefreshToken: result.RefreshToken,
+					WebhookToken: result.WebhookToken,
+					Groups:       result.Groups,
+				}); err != nil {
+					http.Error(w, "Failed to complete refresh recovery", http.StatusInternalServerError)
+					return
+				}
+				h.writeRefreshResponse(w, result.IDToken, result.RefreshToken, result.WebhookToken, result.IDTokenExpiresAt, result.SessionExpiresAt, result.Email, result.Username)
+				return
+			}
 		}
+	} else if !errors.Is(resultErr, session.ErrPreconditionFailed) {
+		slog.ErrorContext(ctx, "refresh: failed to check prior result", "error", resultErr)
+		http.Error(w, "Failed to refresh token", http.StatusInternalServerError)
+		return
 	}
 	lockID, err := h.sessionClient.ClaimRefreshToken(ctx, refreshToken.SessionID, req.RefreshToken, time.Minute, h.refreshTokenTTL)
 	if err != nil {
@@ -190,6 +191,7 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 	idToken, ok := newToken.Extra("id_token").(string)
 	if !ok {
 		slog.ErrorContext(ctx, "refresh: no ID token in response", "user", refreshToken.UserEmail)
+		_ = h.revokeRefreshSession(commitCtx, refreshToken.SessionID, "provider returned no ID token after refresh")
 		http.Error(w, "No ID token in refresh response", http.StatusInternalServerError)
 		return
 	}
@@ -198,6 +200,7 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 	claims, verifiedIDToken, err := VerifyAndExtractClaims(commitCtx, h.provider, idToken)
 	if err != nil {
 		slog.WarnContext(ctx, "refresh: ID token verification failed", "user", refreshToken.UserEmail, "error", err)
+		_ = h.revokeRefreshSession(commitCtx, refreshToken.SessionID, "provider returned an invalid ID token after refresh")
 		http.Error(w, "Token verification failed", http.StatusInternalServerError)
 		return
 	}
@@ -205,6 +208,10 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 	// Verify the user email matches (security check)
 	if claims.Email != refreshToken.UserEmail {
 		slog.WarnContext(ctx, "refresh: user mismatch", "token_user", refreshToken.UserEmail, "claimed_email", claims.Email)
+		if err := h.revokeRefreshSession(commitCtx, refreshToken.SessionID, "identity changed during refresh"); err != nil {
+			http.Error(w, "Failed to revoke denied session", http.StatusServiceUnavailable)
+			return
+		}
 		http.Error(w, "Token user mismatch", http.StatusUnauthorized)
 		return
 	}
@@ -222,6 +229,10 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 		if !authorized {
 			audit.AuthorizationDeny(ctx, r, claims.Email, claims.Groups, h.allowedGroups)
 			slog.WarnContext(ctx, "refresh: user no longer in allowed groups", "user", claims.Email, "groups", claims.Groups)
+			if err := h.revokeRefreshSession(commitCtx, refreshToken.SessionID, "user no longer belongs to an allowed group"); err != nil {
+				http.Error(w, "Failed to revoke denied session", http.StatusServiceUnavailable)
+				return
+			}
 			http.Error(w, "Forbidden: user not in allowed groups", http.StatusForbidden)
 			return
 		}
@@ -242,30 +253,46 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 	)
 	if err != nil {
 		slog.ErrorContext(ctx, "refresh: failed to create refresh token", "user", claims.Email, "error", err)
+		_ = h.revokeRefreshSession(commitCtx, refreshToken.SessionID, "failed to persist refreshed provider credential")
 		http.Error(w, "Failed to create new refresh token", http.StatusInternalServerError)
 		return
 	}
+	newWebhookToken, err := h.jwtManager.CreateWebhookToken(refreshToken.SessionID, h.refreshTokenTTL)
+	if err != nil {
+		slog.ErrorContext(ctx, "refresh: failed to create webhook token", "user", claims.Email, "error", err)
+		_ = h.revokeRefreshSession(commitCtx, refreshToken.SessionID, "failed to create replacement webhook credential")
+		http.Error(w, "Failed to create new webhook token", http.StatusInternalServerError)
+		return
+	}
+	webhookCredential, err := h.jwtManager.DecodeWebhookToken(newWebhookToken)
+	if err != nil {
+		_ = h.revokeRefreshSession(commitCtx, refreshToken.SessionID, "failed to validate replacement webhook credential")
+		http.Error(w, "Failed to validate new webhook token", http.StatusInternalServerError)
+		return
+	}
 	idTokenExpiry := verifiedIDToken.Expiry
-	if req.RequestID != "" {
-		encryptedResult, err := h.jwtManager.CreateRefreshResult(jwt.RefreshResult{
-			RequestID:            req.RequestID,
-			PreviousRefreshToken: req.RefreshToken,
-			RefreshToken:         newRefreshToken,
-			IDToken:              idToken,
-			IDTokenExpiresAt:     idTokenExpiry,
-			Email:                claims.Email,
-			Username:             claims.PreferredUsername,
-			Groups:               claims.Groups,
-		})
-		if err != nil {
-			http.Error(w, "Failed to stage refresh result", http.StatusInternalServerError)
-			return
-		}
-		if err := h.sessionClient.StageRefreshResult(commitCtx, refreshToken.SessionID, lockID, encryptedResult); err != nil {
-			slog.ErrorContext(ctx, "refresh: failed to stage retry result", "error", err)
-			http.Error(w, "Failed to stage refresh result", http.StatusInternalServerError)
-			return
-		}
+	stagedResult, err := h.jwtManager.CreateRefreshResult(jwt.RefreshResult{
+		RequestID:            req.RequestID,
+		PreviousRefreshToken: req.RefreshToken,
+		RefreshToken:         newRefreshToken,
+		WebhookToken:         newWebhookToken,
+		IDToken:              idToken,
+		IDTokenExpiresAt:     idTokenExpiry,
+		SessionExpiresAt:     webhookCredential.ExpiresAt,
+		Email:                claims.Email,
+		Username:             claims.PreferredUsername,
+		Groups:               claims.Groups,
+	})
+	if err != nil {
+		_ = h.revokeRefreshSession(commitCtx, refreshToken.SessionID, "failed to encode refresh recovery result")
+		http.Error(w, "Failed to stage refresh result", http.StatusInternalServerError)
+		return
+	}
+	if err := h.sessionClient.StageRefreshResult(commitCtx, refreshToken.SessionID, lockID, stagedResult); err != nil {
+		slog.ErrorContext(ctx, "refresh: failed to stage retry result", "error", err)
+		_ = h.revokeRefreshSession(commitCtx, refreshToken.SessionID, "failed to stage refresh recovery result")
+		http.Error(w, "Failed to stage refresh result", http.StatusInternalServerError)
+		return
 	}
 	// Commit rotation before returning the new credential. A concurrent refresh,
 	// revoke, or expiry causes the exact-token precondition to fail.
@@ -274,6 +301,7 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 		Email:        claims.Email,
 		Username:     claims.PreferredUsername,
 		RefreshToken: newRefreshToken,
+		WebhookToken: newWebhookToken,
 		Groups:       claims.Groups,
 	})
 	if err != nil {
@@ -298,7 +326,15 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 		"expires_in", fmt.Sprintf("%ds", expiresIn),
 	)
 
-	h.writeRefreshResponse(w, idToken, newRefreshToken, idTokenExpiry, claims.Email, claims.PreferredUsername)
+	h.writeRefreshResponse(w, idToken, newRefreshToken, newWebhookToken, idTokenExpiry, webhookCredential.ExpiresAt, claims.Email, claims.PreferredUsername)
+}
+
+func (h *RefreshHandler) revokeRefreshSession(ctx context.Context, sessionID, reason string) error {
+	if err := h.sessionClient.Revoke(ctx, sessionID); err != nil {
+		slog.ErrorContext(ctx, "refresh: failed to revoke denied session", "session", sessionID, "reason", reason, "error", err)
+		return err
+	}
+	return nil
 }
 
 func (h *RefreshHandler) releaseRefreshClaim(sessionID, lockID string) {
@@ -309,13 +345,15 @@ func (h *RefreshHandler) releaseRefreshClaim(sessionID, lockID string) {
 	}
 }
 
-func (h *RefreshHandler) writeRefreshResponse(w http.ResponseWriter, idToken, refreshToken string, idTokenExpiry time.Time, email, username string) {
+func (h *RefreshHandler) writeRefreshResponse(w http.ResponseWriter, idToken, refreshToken, webhookToken string, idTokenExpiry, sessionExpiry time.Time, email, username string) {
 	expiresIn := max(int64(time.Until(idTokenExpiry).Seconds()), 0)
 	writeJSON(w, RefreshResponse{
-		IDToken:      idToken,
-		RefreshToken: refreshToken,
-		ExpiresIn:    expiresIn,
-		TokenType:    "Bearer",
-		Kubeconfig:   h.kubeconfigGen.Generate(email, username),
+		IDToken:       idToken,
+		RefreshToken:  refreshToken,
+		WebhookToken:  webhookToken,
+		SessionExpiry: sessionExpiry,
+		ExpiresIn:     expiresIn,
+		TokenType:     "Bearer",
+		Kubeconfig:    h.kubeconfigGen.Generate(email, username),
 	})
 }

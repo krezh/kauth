@@ -102,6 +102,9 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to start login: %w", err)
 	}
 	defer func() { _ = loginResp.Body.Close() }()
+	if loginResp.StatusCode != http.StatusOK {
+		return fmt.Errorf("server returned %s while starting login", loginResp.Status)
+	}
 
 	var loginData StartLoginResponse
 	if err := json.NewDecoder(loginResp.Body).Decode(&loginData); err != nil {
@@ -109,6 +112,9 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	}
 	if err := validateHTTPSURL(loginData.LoginURL); err != nil {
 		return fmt.Errorf("unsafe login URL from server: %w", err)
+	}
+	if loginData.SessionToken == "" {
+		return fmt.Errorf("server returned an empty login session token")
 	}
 	client.Timeout = 0
 	ctx, cancel := context.WithTimeout(cmd.Context(), 15*time.Minute)
@@ -134,22 +140,11 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	if err := validateRemoteKubeconfig(incomingConfig); err != nil {
 		return err
 	}
-	profile := token.ProfileID(serverURL)
+	if status.SessionID == "" || status.RefreshToken == "" || status.WebhookToken == "" {
+		return fmt.Errorf("server returned incomplete login credentials")
+	}
+	profile := token.ProfileID(serverURL, status.SessionID)
 	setKubeconfigProfile(incomingConfig, profile)
-
-	kubeconfigPath := filepath.Join(os.Getenv("HOME"), ".kube", "config")
-	if err := os.MkdirAll(filepath.Dir(kubeconfigPath), 0755); err != nil {
-		return fmt.Errorf("failed to create .kube directory: %w", err)
-	}
-
-	cancelled, err := updateKubeconfig(kubeconfigPath, incomingConfig, info.ClusterName)
-	if err != nil {
-		return err
-	}
-	if cancelled {
-		return nil
-	}
-
 	newCache := &token.Cache{
 		ServerURL:    serverURL,
 		RefreshToken: status.RefreshToken,
@@ -172,6 +167,25 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	if err := profileStorage.WithLock(5*time.Second, func() error { return profileStorage.Save(newCache) }); err != nil {
 		return fmt.Errorf("failed to cache cluster credential: %w", err)
 	}
+	removeProfile := func() {
+		_ = profileStorage.WithLock(5*time.Second, profileStorage.Delete)
+	}
+
+	kubeconfigPath := kubeconfigWritePath()
+	if err := os.MkdirAll(filepath.Dir(kubeconfigPath), 0755); err != nil {
+		removeProfile()
+		return fmt.Errorf("failed to create kubeconfig directory: %w", err)
+	}
+	cancelled, err := updateKubeconfig(kubeconfigPath, incomingConfig, info.ClusterName)
+	if err != nil {
+		removeProfile()
+		return err
+	}
+	if cancelled {
+		removeProfile()
+		return nil
+	}
+
 	if status.RefreshToken != "" {
 		if err := ensureFreshIDToken(profileStorage, newCache); err != nil {
 			fmt.Fprintf(os.Stderr, "warning: failed to get management token: %v\n", err)
@@ -187,18 +201,30 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func kubeconfigWritePath() string {
+	return clientcmd.NewDefaultPathOptions().GetDefaultFilename()
+}
+
 func updateKubeconfig(kubeconfigPath string, incomingConfig *clientcmdapi.Config, clusterName string) (bool, error) {
+	resolvedPath, err := resolveKubeconfigPath(kubeconfigPath)
+	if err != nil {
+		return false, err
+	}
+	kubeconfigPath = resolvedPath
 	cancelled := false
-	err := token.WithFileLock(kubeconfigPath+".kauth.lock", 5*time.Minute, func() error {
+	err = token.WithFileLock(kubeconfigPath+".kauth.lock", 5*time.Minute, func() error {
 		fileExists := false
 		shouldMerge := false
-		if existingData, err := os.ReadFile(kubeconfigPath); err == nil && len(existingData) > 0 {
+		existingData, readErr := os.ReadFile(kubeconfigPath)
+		if readErr != nil && !errors.Is(readErr, os.ErrNotExist) {
+			return fmt.Errorf("failed to read existing kubeconfig: %w", readErr)
+		}
+		if readErr == nil && len(existingData) > 0 {
 			fileExists = true
 			if hasConflict(existingData, incomingConfig) {
-				fmt.Printf("\n  %s %s\n", warningIcon, muted.Render(fmt.Sprintf("Context %q already exists", clusterName)))
+				fmt.Printf("\n  %s %s\n", warningIcon, muted.Render(fmt.Sprintf("Kubeconfig entries for %q already exist", clusterName)))
 				choice, err := promptMenu([]promptOption{
-					{key: "m", label: "merge"},
-					{key: "o", label: "overwrite"},
+					{key: "r", label: "replace entries"},
 					{key: "c", label: "cancel"},
 				}, "  ")
 				if err != nil {
@@ -209,10 +235,8 @@ func updateKubeconfig(kubeconfigPath string, incomingConfig *clientcmdapi.Config
 					return err
 				}
 				switch choice {
-				case "m":
+				case "r":
 					shouldMerge = true
-				case "o":
-					shouldMerge = false
 				case "c":
 					cancelled = true
 					return nil
@@ -232,6 +256,40 @@ func updateKubeconfig(kubeconfigPath string, incomingConfig *clientcmdapi.Config
 		return nil
 	})
 	return cancelled, err
+}
+
+func resolveKubeconfigPath(path string) (string, error) {
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return "", fmt.Errorf("failed to resolve kubeconfig path: %w", err)
+	}
+	seen := make(map[string]struct{})
+	for range 32 {
+		path = filepath.Clean(path)
+		if _, found := seen[path]; found {
+			return "", fmt.Errorf("kubeconfig symlink cycle detected")
+		}
+		seen[path] = struct{}{}
+		info, err := os.Lstat(path)
+		if errors.Is(err, os.ErrNotExist) {
+			return path, nil
+		}
+		if err != nil {
+			return "", fmt.Errorf("failed to inspect kubeconfig path: %w", err)
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			return path, nil
+		}
+		target, err := os.Readlink(path)
+		if err != nil {
+			return "", fmt.Errorf("failed to read kubeconfig symlink: %w", err)
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(path), target)
+		}
+		path = target
+	}
+	return "", fmt.Errorf("kubeconfig symlink chain is too long")
 }
 
 func setKubeconfigProfile(config *clientcmdapi.Config, profile string) {
@@ -500,15 +558,17 @@ var httpClient = &http.Client{
 
 type RefreshRequest struct {
 	RefreshToken string `json:"refresh_token"`
-	RequestID    string `json:"request_id,omitempty"`
+	RequestID    string `json:"request_id"`
 }
 
 type RefreshResponse struct {
-	IDToken      string `json:"id_token"`
-	RefreshToken string `json:"refresh_token"`
-	ExpiresIn    int64  `json:"expires_in"`
-	TokenType    string `json:"token_type"`
-	Kubeconfig   string `json:"kubeconfig"`
+	IDToken       string    `json:"id_token"`
+	RefreshToken  string    `json:"refresh_token"`
+	WebhookToken  string    `json:"webhook_token"`
+	SessionExpiry time.Time `json:"session_expiry"`
+	ExpiresIn     int64     `json:"expires_in"`
+	TokenType     string    `json:"token_type"`
+	Kubeconfig    string    `json:"kubeconfig"`
 }
 
 func refreshTokenFromServer(baseURL, refreshToken, requestID string) (*RefreshResponse, error) {
@@ -540,6 +600,14 @@ func refreshTokenFromServer(baseURL, refreshToken, requestID string) (*RefreshRe
 }
 
 func ensureFreshIDToken(storage *token.Storage, cached *token.Cache) error {
+	return ensureFreshCredentials(storage, cached, true)
+}
+
+func ensureFreshWebhookToken(storage *token.Storage, cached *token.Cache) error {
+	return ensureFreshCredentials(storage, cached, false)
+}
+
+func ensureFreshCredentials(storage *token.Storage, cached *token.Cache, requireIDToken bool) error {
 	expectedServerURL := cached.ServerURL
 	expectedSessionID := cached.SessionID
 	return storage.WithLock(35*time.Second, func() error {
@@ -556,10 +624,13 @@ func ensureFreshIDToken(storage *token.Storage, cached *token.Cache) error {
 		*cached = *latest
 		for range 2 {
 			claims := decodeJWTClaims(cached.IDToken)
-			if cached.IDToken != "" {
-				if exp, ok := claims["exp"].(float64); ok && time.Unix(int64(exp), 0).After(time.Now().Add(time.Minute)) {
-					return nil
-				}
+			idTokenFresh := false
+			if exp, ok := claims["exp"].(float64); ok {
+				idTokenFresh = time.Unix(int64(exp), 0).After(time.Now().Add(time.Minute))
+			}
+			webhookTokenFresh := cached.WebhookToken != "" && !cached.Expiry.IsZero() && cached.Expiry.After(time.Now().Add(time.Minute))
+			if webhookTokenFresh && (!requireIDToken || idTokenFresh) {
+				return nil
 			}
 			if cached.RefreshToken == "" {
 				return fmt.Errorf("no refresh token available")
@@ -574,11 +645,13 @@ func ensureFreshIDToken(storage *token.Storage, cached *token.Cache) error {
 			if err != nil {
 				return err
 			}
-			if refreshed.IDToken == "" || refreshed.RefreshToken == "" {
+			if refreshed.IDToken == "" || refreshed.RefreshToken == "" || refreshed.WebhookToken == "" || refreshed.SessionExpiry.IsZero() {
 				return fmt.Errorf("server returned incomplete refresh response")
 			}
 			cached.IDToken = refreshed.IDToken
 			cached.RefreshToken = refreshed.RefreshToken
+			cached.WebhookToken = refreshed.WebhookToken
+			cached.Expiry = refreshed.SessionExpiry
 			cached.RefreshRequestID = ""
 			if err := storage.Save(cached); err != nil {
 				return err
@@ -588,7 +661,7 @@ func ensureFreshIDToken(storage *token.Storage, cached *token.Cache) error {
 			if !ok {
 				return fmt.Errorf("server returned an invalid ID token")
 			}
-			if time.Unix(int64(exp), 0).After(time.Now().Add(time.Minute)) {
+			if time.Unix(int64(exp), 0).After(time.Now().Add(time.Minute)) || !requireIDToken {
 				return nil
 			}
 		}
@@ -673,23 +746,11 @@ func mergeKubeconfig(existingPath string, incoming *clientcmdapi.Config) error {
 }
 
 func writeKubeconfigAtomic(path string, config *clientcmdapi.Config) error {
-	for range 8 {
-		info, err := os.Lstat(path)
-		if errors.Is(err, os.ErrNotExist) || err == nil && info.Mode()&os.ModeSymlink == 0 {
-			break
-		}
-		if err != nil {
-			return fmt.Errorf("failed to inspect kubeconfig path: %w", err)
-		}
-		target, err := os.Readlink(path)
-		if err != nil {
-			return fmt.Errorf("failed to read kubeconfig symlink: %w", err)
-		}
-		if !filepath.IsAbs(target) {
-			target = filepath.Join(filepath.Dir(path), target)
-		}
-		path = filepath.Clean(target)
+	resolvedPath, err := resolveKubeconfigPath(path)
+	if err != nil {
+		return err
 	}
+	path = resolvedPath
 	data, err := clientcmd.Write(*config)
 	if err != nil {
 		return fmt.Errorf("failed to marshal kubeconfig: %w", err)
@@ -716,6 +777,14 @@ func writeKubeconfigAtomic(path string, config *clientcmdapi.Config) error {
 		return err
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
+		return err
+	}
+	dir, err := os.Open(filepath.Dir(path))
+	if err != nil {
+		return err
+	}
+	defer func() { _ = dir.Close() }()
+	if err := dir.Sync(); err != nil {
 		return err
 	}
 	return nil

@@ -9,12 +9,15 @@ import (
 )
 
 func TestProfileID(t *testing.T) {
-	first := ProfileID("https://kauth.example.com")
-	if len(first) != 16 || first != ProfileID("https://kauth.example.com") {
+	first := ProfileID("https://kauth.example.com", "session-a")
+	if len(first) != 16 || first != ProfileID("https://kauth.example.com", "session-a") {
 		t.Fatalf("ProfileID() = %q", first)
 	}
-	if first == ProfileID("https://other.example.com") {
+	if first == ProfileID("https://other.example.com", "session-a") {
 		t.Error("different servers produced the same profile")
+	}
+	if first == ProfileID("https://kauth.example.com", "session-b") {
+		t.Error("different sessions produced the same profile")
 	}
 }
 

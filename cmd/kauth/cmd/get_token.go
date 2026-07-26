@@ -40,15 +40,12 @@ type ExecCredentialStatus struct {
 }
 
 func runGetToken(cmd *cobra.Command, args []string) error {
-	cachePath := token.DefaultCachePath()
-	if tokenProfile != "" {
-		profilePath, err := token.ProfileCachePath(tokenProfile)
-		if err != nil {
-			return err
-		}
-		cachePath = profilePath
-	} else if token.HasProfileCaches() {
-		return fmt.Errorf("this kubeconfig uses the legacy shared credential cache; run kauth login again to assign it a cluster profile")
+	if tokenProfile == "" {
+		return fmt.Errorf("credential cache profile is required; run kauth login again")
+	}
+	cachePath, err := token.ProfileCachePath(tokenProfile)
+	if err != nil {
+		return err
 	}
 	storage := token.NewStorage(cachePath)
 
@@ -56,9 +53,18 @@ func runGetToken(cmd *cobra.Command, args []string) error {
 	if err != nil || cachedToken == nil || cachedToken.ServerURL == "" {
 		return fmt.Errorf("not authenticated.\n\nTo authenticate, run:\n  kauth login --url <server-url>\n\nExample:\n  kauth login --url https://kauth.example.com")
 	}
+	if cachedToken.RefreshToken == "" && !cachedToken.Expiry.IsZero() && !time.Now().Before(cachedToken.Expiry) {
+		return fmt.Errorf("authentication session expired; run kauth login again")
+	}
+	if err := ensureFreshWebhookToken(storage, cachedToken); err != nil {
+		return fmt.Errorf("failed to refresh authentication session: %w", err)
+	}
 
 	if cachedToken.WebhookToken != "" {
-		return outputExecCredential(cachedToken.WebhookToken, time.Time{})
+		if !cachedToken.Expiry.IsZero() && !time.Now().Before(cachedToken.Expiry) {
+			return fmt.Errorf("authentication session expired; run kauth login again")
+		}
+		return outputExecCredential(cachedToken.WebhookToken, cachedToken.Expiry)
 	}
 
 	return fmt.Errorf("no webhook token found.\n\nYour authentication session may be from an older version of kauth.\nTo re-authenticate, run:\n  kauth login")

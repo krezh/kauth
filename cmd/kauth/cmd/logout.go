@@ -41,6 +41,7 @@ func runLogout(cmd *cobra.Command, args []string) error {
 	}
 
 	serverURL := cachedToken.ServerURL
+	var remoteRevokeErr error
 	if err := ensureFreshIDToken(storage, cachedToken); err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: failed to refresh management token: %v\n", err)
 	}
@@ -64,11 +65,13 @@ func runLogout(cmd *cobra.Command, args []string) error {
 
 		resp, err := httpClient.Do(req)
 		if err != nil {
+			remoteRevokeErr = err
 			fmt.Fprintf(os.Stderr, "Warning: failed to contact server: %v\n", err)
 			fmt.Fprintf(os.Stderr, "Local cache will still be cleared.\n")
 		} else {
 			_ = resp.Body.Close()
 			if resp.StatusCode != http.StatusOK {
+				remoteRevokeErr = fmt.Errorf("server returned status %d", resp.StatusCode)
 				fmt.Fprintf(os.Stderr, "Warning: server returned status %d\n", resp.StatusCode)
 			}
 		}
@@ -103,6 +106,9 @@ func runLogout(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to clear current-login cache: %w", err)
 	}
 
+	if remoteRevokeErr != nil {
+		return fmt.Errorf("local credentials removed, but remote session revocation failed: %w", remoteRevokeErr)
+	}
 	fmt.Println("Logged out successfully.")
 	return nil
 }

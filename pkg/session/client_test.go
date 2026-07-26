@@ -8,10 +8,13 @@ import (
 
 	v1alpha1 "kauth/pkg/apis/kauth.io/v1alpha1"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	dynamicfake "k8s.io/client-go/dynamic/fake"
+	clienttesting "k8s.io/client-go/testing"
 )
 
 func newFakeClient(t *testing.T) *Client {
@@ -207,6 +210,39 @@ func TestClient_RotateRefreshToken(t *testing.T) {
 	}
 }
 
+func TestClient_ClaimRefreshTokenReplacesMalformedLock(t *testing.T) {
+	client := newFakeClient(t)
+	ctx := context.Background()
+	_, err := client.Create(ctx, "malformed-lock", "verifier", "user@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.UpdateStatus(ctx, "malformed-lock", v1alpha1.OAuthSessionStatus{
+		Phase:        v1alpha1.SessionActive,
+		RefreshToken: "refresh-token",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	sess, err := client.Get(ctx, "malformed-lock")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess.Annotations = map[string]string{
+		refreshLockAnnotation:       "abandoned-lock",
+		refreshLockExpiryAnnotation: "not-a-time",
+	}
+	object, err := runtime.DefaultUnstructuredConverter.ToUnstructured(sess)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.dynamicClient.Resource(client.gvr()).Namespace(client.namespace).Update(ctx, &unstructured.Unstructured{Object: object}, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.ClaimRefreshToken(ctx, "malformed-lock", "refresh-token", time.Minute, time.Hour); err != nil {
+		t.Fatalf("ClaimRefreshToken() did not replace malformed lock: %v", err)
+	}
+}
+
 func TestClient_UpdateStatus(t *testing.T) {
 	client := newFakeClient(t)
 	ctx := context.Background()
@@ -297,6 +333,34 @@ func TestClient_Revoke(t *testing.T) {
 	}
 }
 
+func TestClient_RevokeRetriesConflicts(t *testing.T) {
+	client := newFakeClient(t)
+	ctx := context.Background()
+	_, err := client.Create(ctx, "revoke-conflict", "verifier", "user@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	fakeClient := client.dynamicClient.(*dynamicfake.FakeDynamicClient)
+	attempts := 0
+	fakeClient.PrependReactor("update", "oauthsessions", func(action clienttesting.Action) (bool, runtime.Object, error) {
+		update := action.(clienttesting.UpdateAction)
+		if update.GetSubresource() != "status" {
+			return false, nil, nil
+		}
+		attempts++
+		if attempts == 1 {
+			return true, nil, apierrors.NewConflict(schema.GroupResource{Group: "kauth.io", Resource: "oauthsessions"}, "revoke-conflict", errors.New("concurrent touch"))
+		}
+		return false, nil, nil
+	})
+	if err := client.Revoke(ctx, "revoke-conflict"); err != nil {
+		t.Fatal(err)
+	}
+	if attempts != 2 {
+		t.Fatalf("UpdateStatus attempts = %d, want 2", attempts)
+	}
+}
+
 func TestClient_ValidateSession(t *testing.T) {
 	client := newFakeClient(t)
 	ctx := context.Background()
@@ -376,11 +440,30 @@ func TestClient_TouchActiveSession(t *testing.T) {
 	if touched.Spec.ExpiresAt.IsZero() || !touched.Spec.ExpiresAt.After(touched.Spec.LastUsed.Time) {
 		t.Error("TouchActiveSession() did not extend ExpiresAt")
 	}
+	if touched.Annotations[sessionExpiryAnnotation] == "" {
+		t.Error("TouchActiveSession() did not persist the schema-independent expiry annotation")
+	}
 	if err := client.Revoke(ctx, "touch-test"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := client.TouchActiveSession(ctx, "touch-test", "webhook-token", time.Hour); !errors.Is(err, ErrPreconditionFailed) {
 		t.Errorf("TouchActiveSession() on revoked session error = %v, want ErrPreconditionFailed", err)
+	}
+}
+
+func TestSessionExpiredUsesPersistedAnnotation(t *testing.T) {
+	session := &v1alpha1.OAuthSession{ObjectMeta: metav1.ObjectMeta{Annotations: map[string]string{}}}
+	session.Annotations[sessionExpiryAnnotation] = time.Now().Add(time.Hour).Format(time.RFC3339Nano)
+	if sessionExpired(session, 0) {
+		t.Error("future annotated expiry was treated as expired")
+	}
+	session.Annotations[sessionExpiryAnnotation] = time.Now().Add(-time.Hour).Format(time.RFC3339Nano)
+	if !sessionExpired(session, time.Hour) {
+		t.Error("past annotated expiry was treated as active")
+	}
+	session.Annotations[sessionExpiryAnnotation] = "invalid"
+	if !sessionExpired(session, time.Hour) {
+		t.Error("malformed annotated expiry did not fail closed")
 	}
 }
 

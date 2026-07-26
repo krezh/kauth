@@ -28,6 +28,7 @@ const (
 	refreshLockAnnotation       = "kauth.io/refresh-lock"
 	refreshLockExpiryAnnotation = "kauth.io/refresh-lock-expiry"
 	refreshResultAnnotation     = "kauth.io/refresh-result"
+	sessionExpiryAnnotation     = "kauth.io/session-expires-at"
 )
 
 // Client wraps Kubernetes dynamic client for OAuthSession operations
@@ -47,6 +48,14 @@ func NewClient(config *rest.Config, namespace string) (*Client, error) {
 		dynamicClient: dynamicClient,
 		namespace:     namespace,
 	}, nil
+}
+
+// NewClientForDynamic creates an OAuthSession client from an existing dynamic client.
+func NewClientForDynamic(dynamicClient dynamic.Interface, namespace string) *Client {
+	return &Client{
+		dynamicClient: dynamicClient,
+		namespace:     namespace,
+	}
 }
 
 // gvr returns the GroupVersionResource for OAuthSession
@@ -194,7 +203,7 @@ func (c *Client) ClaimRefreshToken(ctx context.Context, sessionID, expectedRefre
 		}
 		if current := session.Annotations[refreshLockAnnotation]; current != "" {
 			expiresAt, parseErr := time.Parse(time.RFC3339Nano, session.Annotations[refreshLockExpiryAnnotation])
-			if parseErr != nil || time.Now().Before(expiresAt) {
+			if parseErr == nil && time.Now().Before(expiresAt) {
 				return ErrPreconditionFailed
 			}
 		}
@@ -231,7 +240,7 @@ func (c *Client) ExtendRefreshTokenClaim(ctx context.Context, sessionID, lockID 
 		}
 		now := metav1.Now()
 		session.Spec.LastUsed = now
-		session.Spec.ExpiresAt = metav1.NewTime(now.Add(ttl))
+		setSessionExpiry(session, now.Add(ttl))
 
 		unstructuredMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(session)
 		if err != nil {
@@ -324,7 +333,7 @@ func (c *Client) RotateRefreshToken(ctx context.Context, sessionID, expectedRefr
 			session.Annotations[refreshLockAnnotation] != lockID {
 			return ErrPreconditionFailed
 		}
-		if !session.Spec.ExpiresAt.IsZero() && !time.Now().Before(session.Spec.ExpiresAt.Time) {
+		if sessionExpired(session, 0) {
 			return ErrPreconditionFailed
 		}
 
@@ -408,31 +417,29 @@ func (c *Client) UpdateStatus(ctx context.Context, sessionID string, status v1al
 
 // Revoke marks a session as revoked
 func (c *Client) Revoke(ctx context.Context, sessionID string) error {
-	session, err := c.Get(ctx, sessionID)
-	if err != nil {
-		return fmt.Errorf("failed to get session: %w", err)
-	}
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		session, err := c.Get(ctx, sessionID)
+		if err != nil {
+			return err
+		}
+		if session.Status.Phase == v1alpha1.SessionRevoked {
+			return nil
+		}
 
-	if session.Status.Phase == v1alpha1.SessionRevoked {
-		return nil
-	}
-
-	now := metav1.Now()
-	session.Status.Phase = v1alpha1.SessionRevoked
-	session.Status.RevokedAt = &now
-
-	unstructuredObj := &unstructured.Unstructured{}
-	unstructuredMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(session)
-	if err != nil {
-		return fmt.Errorf("failed to convert to unstructured: %w", err)
-	}
-	unstructuredObj.Object = unstructuredMap
-
-	_, err = c.dynamicClient.Resource(c.gvr()).Namespace(c.namespace).UpdateStatus(
-		ctx,
-		unstructuredObj,
-		metav1.UpdateOptions{},
-	)
+		now := metav1.Now()
+		session.Status.Phase = v1alpha1.SessionRevoked
+		session.Status.RevokedAt = &now
+		unstructuredMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(session)
+		if err != nil {
+			return fmt.Errorf("failed to convert to unstructured: %w", err)
+		}
+		_, err = c.dynamicClient.Resource(c.gvr()).Namespace(c.namespace).UpdateStatus(
+			ctx,
+			&unstructured.Unstructured{Object: unstructuredMap},
+			metav1.UpdateOptions{},
+		)
+		return err
+	})
 	if err != nil {
 		return fmt.Errorf("failed to revoke session: %w", err)
 	}
@@ -524,7 +531,7 @@ func (c *Client) TouchActiveSession(ctx context.Context, sessionID, expectedWebh
 		}
 		now := metav1.Now()
 		session.Spec.LastUsed = now
-		session.Spec.ExpiresAt = metav1.NewTime(now.Add(ttl))
+		setSessionExpiry(session, now.Add(ttl))
 
 		unstructuredMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(session)
 		if err != nil {
@@ -552,6 +559,10 @@ func (c *Client) TouchActiveSession(ctx context.Context, sessionID, expectedWebh
 }
 
 func sessionExpired(session *v1alpha1.OAuthSession, ttl time.Duration) bool {
+	if rawExpiry, found := session.Annotations[sessionExpiryAnnotation]; found {
+		expiresAt, err := time.Parse(time.RFC3339Nano, rawExpiry)
+		return err != nil || !time.Now().Before(expiresAt)
+	}
 	if !session.Spec.ExpiresAt.IsZero() {
 		return !time.Now().Before(session.Spec.ExpiresAt.Time)
 	}
@@ -560,6 +571,14 @@ func sessionExpired(session *v1alpha1.OAuthSession, ttl time.Duration) bool {
 		lastActivity = session.Spec.LastUsed.Time
 	}
 	return lastActivity.IsZero() || !time.Now().Before(lastActivity.Add(ttl))
+}
+
+func setSessionExpiry(session *v1alpha1.OAuthSession, expiresAt time.Time) {
+	if session.Annotations == nil {
+		session.Annotations = make(map[string]string)
+	}
+	session.Annotations[sessionExpiryAnnotation] = expiresAt.UTC().Format(time.RFC3339Nano)
+	session.Spec.ExpiresAt = metav1.NewTime(expiresAt)
 }
 
 // UpdateUserID updates the user ID in the session spec
@@ -572,7 +591,7 @@ func (c *Client) UpdateUserID(ctx context.Context, sessionID, userID string, ttl
 	session.Spec.UserID = userID
 	now := metav1.Now()
 	session.Spec.LastUsed = now
-	session.Spec.ExpiresAt = metav1.NewTime(now.Add(ttl))
+	setSessionExpiry(session, now.Add(ttl))
 
 	unstructuredObj := &unstructured.Unstructured{}
 	unstructuredMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(session)
@@ -660,7 +679,6 @@ func (c *Client) CleanupOldSessions(ctx context.Context, ttl time.Duration) erro
 	if err != nil {
 		return fmt.Errorf("failed to list sessions: %w", err)
 	}
-
 	cutoff := time.Now().Add(-ttl)
 
 	for _, item := range list.Items {
@@ -704,8 +722,6 @@ func (c *Client) ExpireInactiveSessions(ctx context.Context, ttl time.Duration) 
 		return fmt.Errorf("failed to list sessions: %w", err)
 	}
 
-	cutoff := time.Now().Add(-ttl)
-
 	for _, item := range list.Items {
 		var session v1alpha1.OAuthSession
 		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(item.Object, &session); err != nil {
@@ -717,14 +733,7 @@ func (c *Client) ExpireInactiveSessions(ctx context.Context, ttl time.Duration) 
 			continue
 		}
 
-		expired := !session.Spec.ExpiresAt.IsZero() && time.Now().After(session.Spec.ExpiresAt.Time)
-		if session.Spec.ExpiresAt.IsZero() {
-			lastActivity := session.Spec.CreatedAt.Time
-			if !session.Spec.LastUsed.IsZero() {
-				lastActivity = session.Spec.LastUsed.Time
-			}
-			expired = lastActivity.Before(cutoff)
-		}
+		expired := sessionExpired(&session, ttl)
 
 		if expired {
 			session.Status.Phase = v1alpha1.SessionExpired

@@ -1,0 +1,20 @@
+{{- if .Values.webhook.enabled }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "kauth.fullname" . }}-webhook
+  labels:
+    {{- include "kauth.labels" . | nindent 4 }}
+spec:
+  # Existing Kubernetes authentication must remain available while OIDC
+  # initialization keeps the client-facing API pod unready.
+  publishNotReadyAddresses: true
+  type: ClusterIP
+  ports:
+    - port: {{ .Values.webhook.port }}
+      targetPort: webhook
+      protocol: TCP
+      name: webhook
+  selector:
+    {{- include "kauth.selectorLabels" . | nindent 4 }}
+{{- end }}

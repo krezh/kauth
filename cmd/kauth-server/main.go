@@ -164,17 +164,18 @@ func main() {
 	webhookHandler := handlers.NewWebhookHandler(jwtManager, sessionClient, cfg.RefreshTokenTTL)
 
 	go func() {
-		maxRetries := 60
 		retryDelay := 5 * time.Second
 		maxRetryDelay := 2 * time.Minute
 
-		for attempt := 1; attempt <= maxRetries; attempt++ {
-			p, err := oauth.NewProvider(ctx, oauth.Config{
+		for attempt := 1; ; attempt++ {
+			attemptCtx, attemptCancel := context.WithTimeout(ctx, 30*time.Second)
+			p, err := oauth.NewProvider(attemptCtx, oauth.Config{
 				IssuerURL:    cfg.IssuerURL,
 				ClientID:     cfg.ClientID,
 				ClientSecret: cfg.ClientSecret,
 				RedirectURL:  cfg.BaseURL + "/callback",
 			})
+			attemptCancel()
 			if err == nil {
 				provider = p
 				loginHandler = handlers.NewLoginHandler(
@@ -203,12 +204,7 @@ func main() {
 				return
 			}
 
-			slog.Warn("Failed to connect to OIDC provider", "attempt", attempt, "max_attempts", maxRetries, "error", err)
-
-			if attempt == maxRetries {
-				slog.Error("Failed to setup OIDC provider after all retries", "attempts", maxRetries)
-				return
-			}
+			slog.Warn("Failed to connect to OIDC provider", "attempt", attempt, "error", err)
 
 			// Exponential backoff with max delay
 			currentDelay := retryDelay * time.Duration(attempt)
@@ -266,6 +262,7 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("OK"))
 	})
+	mux.HandleFunc("/ready", readinessHandler(providerReady))
 	// Apply middleware
 	var handler http.Handler = mux
 
@@ -334,7 +331,8 @@ func main() {
 	// Dedicated HTTP listener for the Kubernetes token-review webhook. Kept
 	// separate from the client-facing API so it bypasses the rate limiter (which
 	// would throttle burst requests from the API server on pod restart or cache
-	// expiry). Application-layer encryption makes in-cluster HTTP safe.
+	// expiry). Deployments must protect this listener with a trusted network path
+	// or TLS termination because TokenReview requests contain bearer credentials.
 	var webhookServer *http.Server
 	if cfg.WebhookListenAddr != "" {
 		webhookMux := http.NewServeMux()
@@ -405,6 +403,18 @@ func main() {
 		}
 
 		slog.Info("Server stopped gracefully")
+	}
+}
+
+func readinessHandler(providerReady <-chan struct{}) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-providerReady:
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("OK"))
+		default:
+			http.Error(w, "OIDC provider is not ready", http.StatusServiceUnavailable)
+		}
 	}
 }
 

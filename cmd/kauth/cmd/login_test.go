@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -41,7 +42,12 @@ func TestEnsureFreshIDTokenRetriesRequestID(t *testing.T) {
 			return
 		}
 		writeJSON := json.NewEncoder(w)
-		_ = writeJSON.Encode(RefreshResponse{IDToken: testJWT(time.Now().Add(time.Hour)), RefreshToken: "new-refresh"})
+		_ = writeJSON.Encode(RefreshResponse{
+			IDToken:       testJWT(time.Now().Add(time.Hour)),
+			RefreshToken:  "new-refresh",
+			WebhookToken:  "new-webhook",
+			SessionExpiry: time.Now().Add(24 * time.Hour),
+		})
 	}))
 	defer server.Close()
 
@@ -67,7 +73,7 @@ func TestEnsureFreshIDTokenRetriesRequestID(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if updated.RefreshToken != "new-refresh" || updated.IDToken == "" || updated.RefreshRequestID != "" {
+	if updated.RefreshToken != "new-refresh" || updated.WebhookToken != "new-webhook" || updated.IDToken == "" || updated.RefreshRequestID != "" {
 		t.Errorf("updated cache = %+v", updated)
 	}
 }
@@ -81,8 +87,10 @@ func TestEnsureFreshIDTokenReplacesExpiredReplay(t *testing.T) {
 			expiry = time.Now().Add(time.Hour)
 		}
 		_ = json.NewEncoder(w).Encode(RefreshResponse{
-			IDToken:      testJWT(expiry),
-			RefreshToken: fmt.Sprintf("refresh-%d", attempt),
+			IDToken:       testJWT(expiry),
+			RefreshToken:  fmt.Sprintf("refresh-%d", attempt),
+			WebhookToken:  fmt.Sprintf("webhook-%d", attempt),
+			SessionExpiry: time.Now().Add(24 * time.Hour),
 		})
 	}))
 	defer server.Close()
@@ -97,6 +105,55 @@ func TestEnsureFreshIDTokenReplacesExpiredReplay(t *testing.T) {
 	}
 	if attempt != 2 || cache.RefreshToken != "refresh-2" {
 		t.Errorf("attempts = %d, cache = %+v", attempt, cache)
+	}
+}
+
+func TestEnsureFreshIDTokenRotatesExpiringWebhookCredential(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		_ = json.NewEncoder(w).Encode(RefreshResponse{
+			IDToken:       testJWT(time.Now().Add(time.Hour)),
+			RefreshToken:  "new-refresh",
+			WebhookToken:  "new-webhook",
+			SessionExpiry: time.Now().Add(24 * time.Hour),
+		})
+	}))
+	defer server.Close()
+
+	storage := token.NewStorage(filepath.Join(t.TempDir(), "token.json"))
+	cache := &token.Cache{
+		ServerURL:    server.URL,
+		IDToken:      testJWT(time.Now().Add(time.Hour)),
+		RefreshToken: "old-refresh",
+		WebhookToken: "old-webhook",
+		Expiry:       time.Now().Add(30 * time.Second),
+	}
+	if err := storage.Save(cache); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureFreshIDToken(storage, cache); err != nil {
+		t.Fatal(err)
+	}
+	if requests != 1 || cache.WebhookToken != "new-webhook" || cache.RefreshToken != "new-refresh" {
+		t.Errorf("requests = %d, cache = %+v", requests, cache)
+	}
+}
+
+func TestEnsureFreshWebhookTokenDoesNotRefreshForExpiredIDToken(t *testing.T) {
+	storage := token.NewStorage(filepath.Join(t.TempDir(), "token.json"))
+	cache := &token.Cache{
+		ServerURL:    "http://127.0.0.1:1",
+		IDToken:      testJWT(time.Now().Add(-time.Hour)),
+		RefreshToken: "refresh",
+		WebhookToken: "webhook",
+		Expiry:       time.Now().Add(time.Hour),
+	}
+	if err := storage.Save(cache); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureFreshWebhookToken(storage, cache); err != nil {
+		t.Fatalf("ensureFreshWebhookToken() unnecessarily refreshed the management token: %v", err)
 	}
 }
 
@@ -224,6 +281,21 @@ func TestWriteKubeconfigAtomicCreatesDanglingSymlinkTarget(t *testing.T) {
 	}
 }
 
+func TestWriteKubeconfigAtomicRejectsSymlinkCycle(t *testing.T) {
+	dir := t.TempDir()
+	first := filepath.Join(dir, "first")
+	second := filepath.Join(dir, "second")
+	if err := os.Symlink(second, first); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(first, second); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeKubeconfigAtomic(first, clientcmdapi.NewConfig()); err == nil {
+		t.Fatal("writeKubeconfigAtomic() accepted a symlink cycle")
+	}
+}
+
 func TestMergeKubeconfigPreservesFields(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config")
@@ -337,6 +409,26 @@ func TestUpdateKubeconfigSerializesConcurrentMerges(t *testing.T) {
 	}
 	if len(merged.Clusters) != 2 || len(merged.Contexts) != 2 || len(merged.AuthInfos) != 2 {
 		t.Errorf("concurrent merge lost entries: %+v", merged)
+	}
+}
+
+func TestKubeconfigWritePathUsesKubeconfigEnvironment(t *testing.T) {
+	paths := []string{filepath.Join(t.TempDir(), "first"), filepath.Join(t.TempDir(), "second")}
+	if err := os.WriteFile(paths[1], []byte{}, 0600); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("KUBECONFIG", strings.Join(paths, string(os.PathListSeparator)))
+	if got := kubeconfigWritePath(); got != paths[1] {
+		t.Errorf("kubeconfigWritePath() = %q, want existing path %q", got, paths[1])
+	}
+}
+
+func TestUpdateKubeconfigReturnsReadErrors(t *testing.T) {
+	path := t.TempDir()
+	config := clientcmdapi.NewConfig()
+	config.Clusters["cluster"] = &clientcmdapi.Cluster{Server: "https://cluster.example"}
+	if _, err := updateKubeconfig(path, config, "cluster"); err == nil {
+		t.Fatal("updateKubeconfig() ignored an existing-path read error")
 	}
 }
 

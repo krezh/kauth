@@ -4,6 +4,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -670,7 +671,7 @@ func TestTokensAreIndependent(t *testing.T) {
 	}
 }
 
-func TestLegacyTokensRemainTypeSafe(t *testing.T) {
+func TestTokensWithoutPurposeAreRejected(t *testing.T) {
 	signingKey := make([]byte, 32)
 	encryptionKey := make([]byte, 32)
 	_, _ = rand.Read(signingKey)
@@ -692,20 +693,14 @@ func TestLegacyTokensRemainTypeSafe(t *testing.T) {
 		SessionID: "session", ExpiresAt: now.Add(time.Hour),
 	})
 
-	if _, err := mgr.ValidateSessionToken(legacySession); err != nil {
-		t.Errorf("legacy session token rejected: %v", err)
+	if _, err := mgr.ValidateSessionToken(legacySession); err == nil {
+		t.Error("session token without purpose was accepted")
 	}
-	if _, err := mgr.ValidateRefreshToken(legacyRefresh); err != nil {
-		t.Errorf("legacy refresh token rejected: %v", err)
+	if _, err := mgr.ValidateRefreshToken(legacyRefresh); err == nil {
+		t.Error("refresh token without purpose was accepted")
 	}
-	if _, err := mgr.ValidateWebhookToken(legacyWebhook); err != nil {
-		t.Errorf("legacy webhook token rejected: %v", err)
-	}
-	if _, err := mgr.ValidateSessionToken(legacyWebhook); err == nil {
-		t.Error("legacy webhook token accepted as session token")
-	}
-	if _, err := mgr.ValidateWebhookToken(legacySession); err == nil {
-		t.Error("legacy session token accepted as webhook token")
+	if _, err := mgr.ValidateWebhookToken(legacyWebhook); err == nil {
+		t.Error("webhook token without purpose was accepted")
 	}
 }
 
@@ -722,8 +717,10 @@ func TestRefreshResultRoundTrip(t *testing.T) {
 		RequestID:            "request-id-0123456789",
 		PreviousRefreshToken: "previous",
 		RefreshToken:         "current",
+		WebhookToken:         "webhook",
 		IDToken:              "id-token",
 		IDTokenExpiresAt:     time.Now().Add(time.Hour).Round(0),
+		SessionExpiresAt:     time.Now().Add(24 * time.Hour).Round(0),
 		Email:                "user@example.com",
 		Username:             "user",
 	}
@@ -735,10 +732,29 @@ func TestRefreshResultRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got.RequestID != want.RequestID || got.RefreshToken != want.RefreshToken || got.IDToken != want.IDToken || !got.IDTokenExpiresAt.Equal(want.IDTokenExpiresAt) {
+	if got.RequestID != want.RequestID || got.RefreshToken != want.RefreshToken || got.WebhookToken != want.WebhookToken || got.IDToken != want.IDToken ||
+		!got.IDTokenExpiresAt.Equal(want.IDTokenExpiresAt) || !got.SessionExpiresAt.Equal(want.SessionExpiresAt) {
 		t.Errorf("DecodeRefreshResult() = %+v, want %+v", got, want)
 	}
 	if _, err := mgr.ValidateRefreshToken(token); err == nil {
 		t.Error("ValidateRefreshToken() accepted a refresh result")
+	}
+}
+
+func TestValidateWebhookTokenRejectsExpiredCredential(t *testing.T) {
+	signingKey := make([]byte, 32)
+	encryptionKey := make([]byte, 32)
+	_, _ = rand.Read(signingKey)
+	_, _ = rand.Read(encryptionKey)
+	mgr, err := NewManager(signingKey, encryptionKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	token, err := mgr.CreateWebhookToken("session", -time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mgr.ValidateWebhookToken(token); !errors.Is(err, ErrExpiredToken) {
+		t.Fatalf("ValidateWebhookToken() error = %v, want ErrExpiredToken", err)
 	}
 }

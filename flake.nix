@@ -15,7 +15,7 @@
       go-overlay,
     }:
     let
-      systems = [ "x86_64-linux" "x86_64-darwin" ];
+      systems = [ "x86_64-linux" ];
       forAllSystems = nixpkgs.lib.genAttrs systems;
       pkgsFor =
         system:
@@ -47,8 +47,8 @@
             ldflags = [
               "-s"
               "-w"
-              "-X github.com/krezh/kauth/cmd/kauth/cmd.Version=${version}"
-              "-X github.com/krezh/kauth/cmd/kauth/cmd.GitCommit=${self.rev or "unknown"}"
+              "-X kauth/cmd/kauth/cmd.Version=${version}"
+              "-X kauth/cmd/kauth/cmd.GitCommit=${self.rev or "unknown"}"
             ];
 
             nativeBuildInputs = [ pkgs.installShellFiles ];
@@ -73,8 +73,6 @@
             ldflags = [
               "-s"
               "-w"
-              "-X github.com/krezh/kauth/cmd/kauth/cmd.Version=${version}"
-              "-X github.com/krezh/kauth/cmd/kauth/cmd.GitCommit=${self.rev or "unknown"}"
             ];
           };
         }

@@ -1,4 +1,9 @@
 {{- if .Values.podDisruptionBudget.enabled }}
+{{- $hasMin := and (hasKey .Values.podDisruptionBudget "minAvailable") (ne .Values.podDisruptionBudget.minAvailable nil) }}
+{{- $hasMax := and (hasKey .Values.podDisruptionBudget "maxUnavailable") (ne .Values.podDisruptionBudget.maxUnavailable nil) }}
+{{- if eq $hasMin $hasMax }}
+{{- fail "podDisruptionBudget must set exactly one of minAvailable or maxUnavailable" }}
+{{- end }}
 apiVersion: policy/v1
 kind: PodDisruptionBudget
 metadata:
@@ -6,10 +11,10 @@ metadata:
   labels:
     {{- include "kauth.labels" . | nindent 4 }}
 spec:
-  {{- if .Values.podDisruptionBudget.minAvailable }}
+  {{- if $hasMin }}
   minAvailable: {{ .Values.podDisruptionBudget.minAvailable }}
   {{- end }}
-  {{- if .Values.podDisruptionBudget.maxUnavailable }}
+  {{- if $hasMax }}
   maxUnavailable: {{ .Values.podDisruptionBudget.maxUnavailable }}
   {{- end }}
   selector:

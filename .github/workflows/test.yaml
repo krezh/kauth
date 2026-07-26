@@ -27,7 +27,24 @@ jobs:
           cache: true
 
       - name: Run tests
-        run: go test ./...
+        run: go test -race ./...
+
+      - name: Verify release version injection
+        run: |
+          go build -ldflags "-X kauth/cmd/kauth/cmd.Version=release-test -X kauth/cmd/kauth/cmd.GitCommit=test-commit" -o "$RUNNER_TEMP/kauth" ./cmd/kauth
+          "$RUNNER_TEMP/kauth" version | tee "$RUNNER_TEMP/version.txt"
+          grep -q 'vrelease-test' "$RUNNER_TEMP/version.txt"
+          grep -q 'test-commit' "$RUNNER_TEMP/version.txt"
+
+      - name: Install Helm
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4.3.1
+
+      - name: Validate Helm chart
+        run: |
+          helm lint helm/
+          helm template kauth helm/ --include-crds >/dev/null
+          helm template kauth helm/ --set strategy.type=Recreate >/dev/null
+          helm template kauth helm/ --set podDisruptionBudget.maxUnavailable=null --set podDisruptionBudget.minAvailable=0 >/dev/null
 
       - name: Run golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0

@@ -81,9 +81,9 @@ func DefaultCachePath() string {
 	return filepath.Join(homeDir, ".kube", "cache", "kauth-token.json")
 }
 
-// ProfileID returns a stable, non-secret cache profile for a kauth server URL.
-func ProfileID(serverURL string) string {
-	sum := sha256.Sum256([]byte(serverURL))
+// ProfileID returns a stable, non-secret cache profile for one login session.
+func ProfileID(serverURL, sessionID string) string {
+	sum := sha256.Sum256([]byte(serverURL + "\x00" + sessionID))
 	return fmt.Sprintf("%x", sum[:8])
 }
 
@@ -93,12 +93,6 @@ func ProfileCachePath(profile string) (string, error) {
 		return "", fmt.Errorf("invalid token cache profile")
 	}
 	return filepath.Join(filepath.Dir(DefaultCachePath()), "kauth-"+profile+".json"), nil
-}
-
-// HasProfileCaches reports whether profile-aware logins exist on this machine.
-func HasProfileCaches() bool {
-	matches, err := filepath.Glob(filepath.Join(filepath.Dir(DefaultCachePath()), "kauth-????????????????.json"))
-	return err == nil && len(matches) > 0
 }
 
 // Load loads a token from the cache
@@ -162,12 +156,7 @@ func (s *Storage) Save(cache *Cache) error {
 	if err := os.Rename(tmpPath, s.cachePath); err != nil {
 		return fmt.Errorf("failed to rename token cache: %w", err)
 	}
-	dirHandle, err := os.Open(dir)
-	if err != nil {
-		return fmt.Errorf("failed to open token cache directory: %w", err)
-	}
-	defer func() { _ = dirHandle.Close() }()
-	if err := dirHandle.Sync(); err != nil {
+	if err := syncDirectory(dir); err != nil {
 		return fmt.Errorf("failed to sync token cache directory: %w", err)
 	}
 
@@ -182,7 +171,19 @@ func (s *Storage) Delete() error {
 		}
 		return fmt.Errorf("failed to delete token cache: %w", err)
 	}
+	if err := syncDirectory(filepath.Dir(s.cachePath)); err != nil {
+		return fmt.Errorf("failed to sync token cache directory: %w", err)
+	}
 	return nil
+}
+
+func syncDirectory(path string) error {
+	dir, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = dir.Close() }()
+	return dir.Sync()
 }
 
 // Exists checks if a token cache file exists

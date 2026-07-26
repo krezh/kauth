@@ -45,9 +45,10 @@ service:
   port: 8080
   clusterIP: ""
 
-# Kubernetes token-review webhook. Served on a dedicated HTTP listener so it
-# bypasses the main mux's rate limiter. Application-layer encryption (AES-GCM
-# signed token) makes in-cluster HTTP safe — no TLS cert required.
+# Kubernetes token-review webhook. The dedicated listener is plain HTTP and
+# must be protected by a trusted network path or TLS-terminating service mesh.
+# When enabled, it is exposed as <release-name>-webhook and remains reachable
+# while the client-facing API waits for OIDC readiness.
 webhook:
   enabled: false
   port: 8081
@@ -83,7 +84,7 @@ livenessProbe:
 
 readinessProbe:
   httpGet:
-    path: /health
+    path: /ready
     port: http
   initialDelaySeconds: 1
   periodSeconds: 5
