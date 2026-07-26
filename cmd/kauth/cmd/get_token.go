@@ -10,6 +10,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+var tokenProfile string
+
 var getTokenCmd = &cobra.Command{
 	Use:   "get-token",
 	Short: "Get current authentication token (for kubectl exec plugin)",
@@ -23,6 +25,7 @@ the API server's webhook cache TTL.`,
 
 func init() {
 	rootCmd.AddCommand(getTokenCmd)
+	getTokenCmd.Flags().StringVar(&tokenProfile, "profile", "", "credential cache profile")
 }
 
 type ExecCredential struct {
@@ -37,7 +40,17 @@ type ExecCredentialStatus struct {
 }
 
 func runGetToken(cmd *cobra.Command, args []string) error {
-	storage := token.NewStorage(token.DefaultCachePath())
+	cachePath := token.DefaultCachePath()
+	if tokenProfile != "" {
+		profilePath, err := token.ProfileCachePath(tokenProfile)
+		if err != nil {
+			return err
+		}
+		cachePath = profilePath
+	} else if token.HasProfileCaches() {
+		return fmt.Errorf("this kubeconfig uses the legacy shared credential cache; run kauth login again to assign it a cluster profile")
+	}
+	storage := token.NewStorage(cachePath)
 
 	cachedToken, err := storage.Load()
 	if err != nil || cachedToken == nil || cachedToken.ServerURL == "" {

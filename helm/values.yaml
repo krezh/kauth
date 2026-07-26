@@ -2,6 +2,11 @@
 # For HA, run at least 3 replicas across different zones
 replicaCount: 3
 
+# Refresh rotation is stateful across versions, so old and new server binaries
+# must not serve concurrently during an upgrade.
+strategy:
+  type: Recreate
+
 # Container image configuration
 image:
   repository: ghcr.io/krezh/kauth-server

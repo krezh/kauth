@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"time"
 
 	"kauth/pkg/token"
 
@@ -28,7 +29,10 @@ type RevokeRequest struct {
 }
 
 func runLogout(cmd *cobra.Command, args []string) error {
-	storage := token.NewStorage(token.DefaultCachePath())
+	storage, err := credentialStorageForCurrentContext()
+	if err != nil {
+		return err
+	}
 
 	cachedToken, err := storage.Load()
 	if err != nil || cachedToken == nil || (cachedToken.RefreshToken == "" && cachedToken.WebhookToken == "") {
@@ -70,8 +74,33 @@ func runLogout(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	if err := storage.Save(&token.Cache{ServerURL: serverURL}); err != nil {
+	if err := storage.WithLock(5*time.Second, func() error {
+		current, loadErr := storage.Load()
+		if loadErr != nil {
+			return loadErr
+		}
+		if current == nil {
+			return nil
+		}
+		if current.SessionID != cachedToken.SessionID {
+			return fmt.Errorf("credentials changed during logout; the newer login was preserved")
+		}
+		return storage.Delete()
+	}); err != nil {
 		return fmt.Errorf("failed to clear local cache: %w", err)
+	}
+	defaultStorage := token.NewStorage(token.DefaultCachePath())
+	if err := defaultStorage.WithLock(5*time.Second, func() error {
+		current, loadErr := defaultStorage.Load()
+		if loadErr != nil {
+			return loadErr
+		}
+		if current != nil && current.ServerURL == serverURL && current.SessionID == cachedToken.SessionID {
+			return defaultStorage.Delete()
+		}
+		return nil
+	}); err != nil {
+		return fmt.Errorf("failed to clear current-login cache: %w", err)
 	}
 
 	fmt.Println("Logged out successfully.")

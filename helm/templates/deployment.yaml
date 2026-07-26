@@ -6,6 +6,8 @@ metadata:
     {{- include "kauth.labels" . | nindent 4 }}
 spec:
   replicas: {{ .Values.replicaCount }}
+  strategy:
+    {{- toYaml .Values.strategy | nindent 4 }}
   selector:
     matchLabels:
       {{- include "kauth.selectorLabels" . | nindent 6 }}

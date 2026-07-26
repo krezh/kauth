@@ -173,9 +173,13 @@ func TestClient_RotateRefreshToken(t *testing.T) {
 	if err := client.ExtendRefreshTokenClaim(ctx, "rotate-test", lockID, time.Hour); err != nil {
 		t.Fatalf("ExtendRefreshTokenClaim() error = %v", err)
 	}
+	if err := client.StageRefreshResult(ctx, "rotate-test", lockID, "encrypted-result"); err != nil {
+		t.Fatalf("StageRefreshResult() error = %v", err)
+	}
 	err = client.RotateRefreshToken(ctx, "rotate-test", "old-token", lockID, v1alpha1.OAuthSessionStatus{
 		Phase:        v1alpha1.SessionActive,
 		Email:        "user@example.com",
+		Username:     "test-user",
 		RefreshToken: "new-token",
 	})
 	if err != nil {
@@ -187,6 +191,13 @@ func TestClient_RotateRefreshToken(t *testing.T) {
 	}
 	if got.Status.RefreshToken != "new-token" || got.Status.WebhookToken != "webhook-token" || got.Status.CompletedAt == nil {
 		t.Errorf("RotateRefreshToken() stored unexpected status: %+v", got.Status)
+	}
+	resultSession, result, err := client.GetRefreshResult(ctx, "rotate-test", time.Hour)
+	if err != nil {
+		t.Fatalf("GetRefreshResult() error = %v", err)
+	}
+	if result != "encrypted-result" || resultSession.Status.RefreshToken != "new-token" {
+		t.Errorf("GetRefreshResult() = session=%+v result=%q", resultSession, result)
 	}
 	if err := client.RotateRefreshToken(ctx, "rotate-test", "old-token", lockID, v1alpha1.OAuthSessionStatus{Phase: v1alpha1.SessionActive}); !errors.Is(err, ErrPreconditionFailed) {
 		t.Errorf("stale RotateRefreshToken() error = %v, want ErrPreconditionFailed", err)

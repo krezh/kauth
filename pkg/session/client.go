@@ -27,6 +27,7 @@ var ErrPreconditionFailed = errors.New("session precondition failed")
 const (
 	refreshLockAnnotation       = "kauth.io/refresh-lock"
 	refreshLockExpiryAnnotation = "kauth.io/refresh-lock-expiry"
+	refreshResultAnnotation     = "kauth.io/refresh-result"
 )
 
 // Client wraps Kubernetes dynamic client for OAuthSession operations
@@ -127,6 +128,19 @@ func (c *Client) Get(ctx context.Context, sessionID string) (*v1alpha1.OAuthSess
 	}
 
 	return &session, nil
+}
+
+// GetRefreshResult returns the encrypted previous result and current session state.
+func (c *Client) GetRefreshResult(ctx context.Context, sessionID string, ttl time.Duration) (*v1alpha1.OAuthSession, string, error) {
+	session, err := c.Get(ctx, sessionID)
+	if err != nil {
+		return nil, "", err
+	}
+	result := session.Annotations[refreshResultAnnotation]
+	if session.Status.Phase != v1alpha1.SessionActive || sessionExpired(session, ttl) || result == "" {
+		return nil, "", ErrPreconditionFailed
+	}
+	return session, result, nil
 }
 
 // ConsumePendingVerifier atomically claims a pending OAuth callback.
@@ -232,6 +246,38 @@ func (c *Client) ExtendRefreshTokenClaim(ctx context.Context, sessionID, lockID 
 	})
 	if err != nil {
 		return fmt.Errorf("failed to extend refresh claim: %w", err)
+	}
+	return nil
+}
+
+// StageRefreshResult persists an encrypted retry result before committing rotation.
+func (c *Client) StageRefreshResult(ctx context.Context, sessionID, lockID, encryptedResult string) error {
+	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		session, err := c.Get(ctx, sessionID)
+		if err != nil {
+			return err
+		}
+		if session.Status.Phase != v1alpha1.SessionActive || session.Annotations[refreshLockAnnotation] != lockID {
+			return ErrPreconditionFailed
+		}
+		if session.Annotations == nil {
+			session.Annotations = make(map[string]string)
+		}
+		session.Annotations[refreshResultAnnotation] = encryptedResult
+
+		unstructuredMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(session)
+		if err != nil {
+			return fmt.Errorf("failed to convert to unstructured: %w", err)
+		}
+		_, err = c.dynamicClient.Resource(c.gvr()).Namespace(c.namespace).Update(
+			ctx,
+			&unstructured.Unstructured{Object: unstructuredMap},
+			metav1.UpdateOptions{},
+		)
+		return err
+	})
+	if err != nil {
+		return fmt.Errorf("failed to stage refresh result: %w", err)
 	}
 	return nil
 }

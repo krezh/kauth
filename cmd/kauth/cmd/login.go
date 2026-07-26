@@ -3,6 +3,7 @@ package cmd
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -133,55 +134,25 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	if err := validateRemoteKubeconfig(incomingConfig); err != nil {
 		return err
 	}
+	profile := token.ProfileID(serverURL)
+	setKubeconfigProfile(incomingConfig, profile)
 
 	kubeconfigPath := filepath.Join(os.Getenv("HOME"), ".kube", "config")
 	if err := os.MkdirAll(filepath.Dir(kubeconfigPath), 0755); err != nil {
 		return fmt.Errorf("failed to create .kube directory: %w", err)
 	}
 
-	fileExists := false
-	shouldMerge := false
-	if existingData, err := os.ReadFile(kubeconfigPath); err == nil && len(existingData) > 0 {
-		fileExists = true
-		if hasConflict(existingData, incomingConfig) {
-			fmt.Printf("\n  %s %s\n", warningIcon, muted.Render(fmt.Sprintf("Context %q already exists", info.ClusterName)))
-			choice, err := promptMenu([]promptOption{
-				{key: "m", label: "merge"},
-				{key: "o", label: "overwrite"},
-				{key: "c", label: "cancel"},
-			}, "  ")
-			if err != nil {
-				if err.Error() == "interrupted" {
-					return nil
-				}
-				return err
-			}
-			switch choice {
-			case "m":
-				shouldMerge = true
-			case "o":
-				shouldMerge = false
-			case "c":
-				return nil
-			}
-		} else {
-			shouldMerge = true
-		}
+	cancelled, err := updateKubeconfig(kubeconfigPath, incomingConfig, info.ClusterName)
+	if err != nil {
+		return err
+	}
+	if cancelled {
+		return nil
 	}
 
-	if shouldMerge && fileExists {
-		if err := mergeKubeconfig(kubeconfigPath, incomingConfig); err != nil {
-			return fmt.Errorf("failed to merge kubeconfig: %w", err)
-		}
-	} else {
-		if err := writeKubeconfigAtomic(kubeconfigPath, incomingConfig); err != nil {
-			return fmt.Errorf("failed to save kubeconfig: %w", err)
-		}
-	}
-
-	storage := token.NewStorage(token.DefaultCachePath())
 	newCache := &token.Cache{
 		ServerURL:    serverURL,
+		RefreshToken: status.RefreshToken,
 		SessionID:    status.SessionID,
 		WebhookToken: status.WebhookToken,
 	}
@@ -193,21 +164,93 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		newCache.Expiry = time.Now().Add(7 * 24 * time.Hour)
 	}
 
+	profilePath, err := token.ProfileCachePath(profile)
+	if err != nil {
+		return err
+	}
+	profileStorage := token.NewStorage(profilePath)
+	if err := profileStorage.WithLock(5*time.Second, func() error { return profileStorage.Save(newCache) }); err != nil {
+		return fmt.Errorf("failed to cache cluster credential: %w", err)
+	}
 	if status.RefreshToken != "" {
-		refreshResp, err := refreshTokenFromServer(serverURL, status.RefreshToken)
-		if err == nil {
-			newCache.IDToken = refreshResp.IDToken
-			newCache.RefreshToken = refreshResp.RefreshToken
+		if err := ensureFreshIDToken(profileStorage, newCache); err != nil {
+			fmt.Fprintf(os.Stderr, "warning: failed to get management token: %v\n", err)
 		}
 	}
 
-	if err := storage.Save(newCache); err != nil {
-		fmt.Fprintf(os.Stderr, "warning: failed to cache token: %v\n", err)
+	storage := token.NewStorage(token.DefaultCachePath())
+	if err := storage.WithLock(5*time.Second, func() error { return storage.Save(newCache) }); err != nil {
+		return fmt.Errorf("failed to cache current login: %w", err)
 	}
-
 	fmt.Printf("\n  %s %s %s\n", successIcon, green.Render("Logged in to "+info.ClusterName), muted.Render(kubeconfigPath))
 
 	return nil
+}
+
+func updateKubeconfig(kubeconfigPath string, incomingConfig *clientcmdapi.Config, clusterName string) (bool, error) {
+	cancelled := false
+	err := token.WithFileLock(kubeconfigPath+".kauth.lock", 5*time.Minute, func() error {
+		fileExists := false
+		shouldMerge := false
+		if existingData, err := os.ReadFile(kubeconfigPath); err == nil && len(existingData) > 0 {
+			fileExists = true
+			if hasConflict(existingData, incomingConfig) {
+				fmt.Printf("\n  %s %s\n", warningIcon, muted.Render(fmt.Sprintf("Context %q already exists", clusterName)))
+				choice, err := promptMenu([]promptOption{
+					{key: "m", label: "merge"},
+					{key: "o", label: "overwrite"},
+					{key: "c", label: "cancel"},
+				}, "  ")
+				if err != nil {
+					if err.Error() == "interrupted" {
+						cancelled = true
+						return nil
+					}
+					return err
+				}
+				switch choice {
+				case "m":
+					shouldMerge = true
+				case "o":
+					shouldMerge = false
+				case "c":
+					cancelled = true
+					return nil
+				}
+			} else {
+				shouldMerge = true
+			}
+		}
+
+		if shouldMerge && fileExists {
+			if err := mergeKubeconfig(kubeconfigPath, incomingConfig); err != nil {
+				return fmt.Errorf("failed to merge kubeconfig: %w", err)
+			}
+		} else if err := writeKubeconfigAtomic(kubeconfigPath, incomingConfig); err != nil {
+			return fmt.Errorf("failed to save kubeconfig: %w", err)
+		}
+		return nil
+	})
+	return cancelled, err
+}
+
+func setKubeconfigProfile(config *clientcmdapi.Config, profile string) {
+	renamed := make(map[string]string, len(config.AuthInfos))
+	profiledAuthInfos := make(map[string]*clientcmdapi.AuthInfo, len(config.AuthInfos))
+	for name, authInfo := range config.AuthInfos {
+		if authInfo != nil && authInfo.Exec != nil {
+			authInfo.Exec.Args = []string{"get-token", "--profile", profile}
+		}
+		profiledName := name + "@" + profile
+		profiledAuthInfos[profiledName] = authInfo
+		renamed[name] = profiledName
+	}
+	config.AuthInfos = profiledAuthInfos
+	for _, kubeContext := range config.Contexts {
+		if profiledName, found := renamed[kubeContext.AuthInfo]; found {
+			kubeContext.AuthInfo = profiledName
+		}
+	}
 }
 
 func resolveServerURL() (string, error) {
@@ -457,6 +500,7 @@ var httpClient = &http.Client{
 
 type RefreshRequest struct {
 	RefreshToken string `json:"refresh_token"`
+	RequestID    string `json:"request_id,omitempty"`
 }
 
 type RefreshResponse struct {
@@ -467,8 +511,8 @@ type RefreshResponse struct {
 	Kubeconfig   string `json:"kubeconfig"`
 }
 
-func refreshTokenFromServer(baseURL, refreshToken string) (*RefreshResponse, error) {
-	reqBody, err := json.Marshal(RefreshRequest{RefreshToken: refreshToken})
+func refreshTokenFromServer(baseURL, refreshToken, requestID string) (*RefreshResponse, error) {
+	reqBody, err := json.Marshal(RefreshRequest{RefreshToken: refreshToken, RequestID: requestID})
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal request: %w", err)
 	}
@@ -496,23 +540,60 @@ func refreshTokenFromServer(baseURL, refreshToken string) (*RefreshResponse, err
 }
 
 func ensureFreshIDToken(storage *token.Storage, cached *token.Cache) error {
-	claims := decodeJWTClaims(cached.IDToken)
-	if exp, ok := claims["exp"].(float64); ok && time.Unix(int64(exp), 0).After(time.Now().Add(time.Minute)) {
-		return nil
-	}
-	if cached.RefreshToken == "" {
-		return fmt.Errorf("no refresh token available")
-	}
-	refreshed, err := refreshTokenFromServer(cached.ServerURL, cached.RefreshToken)
-	if err != nil {
-		return err
-	}
-	if refreshed.IDToken == "" || refreshed.RefreshToken == "" {
-		return fmt.Errorf("server returned incomplete refresh response")
-	}
-	cached.IDToken = refreshed.IDToken
-	cached.RefreshToken = refreshed.RefreshToken
-	return storage.Save(cached)
+	expectedServerURL := cached.ServerURL
+	expectedSessionID := cached.SessionID
+	return storage.WithLock(35*time.Second, func() error {
+		latest, err := storage.Load()
+		if err != nil {
+			return err
+		}
+		if latest == nil {
+			return fmt.Errorf("token cache disappeared")
+		}
+		if latest.ServerURL != expectedServerURL || latest.SessionID != expectedSessionID {
+			return fmt.Errorf("credentials changed while waiting for the token cache lock")
+		}
+		*cached = *latest
+		for range 2 {
+			claims := decodeJWTClaims(cached.IDToken)
+			if cached.IDToken != "" {
+				if exp, ok := claims["exp"].(float64); ok && time.Unix(int64(exp), 0).After(time.Now().Add(time.Minute)) {
+					return nil
+				}
+			}
+			if cached.RefreshToken == "" {
+				return fmt.Errorf("no refresh token available")
+			}
+			if cached.RefreshRequestID == "" {
+				cached.RefreshRequestID = rand.Text()
+				if err := storage.Save(cached); err != nil {
+					return err
+				}
+			}
+			refreshed, err := refreshTokenFromServer(cached.ServerURL, cached.RefreshToken, cached.RefreshRequestID)
+			if err != nil {
+				return err
+			}
+			if refreshed.IDToken == "" || refreshed.RefreshToken == "" {
+				return fmt.Errorf("server returned incomplete refresh response")
+			}
+			cached.IDToken = refreshed.IDToken
+			cached.RefreshToken = refreshed.RefreshToken
+			cached.RefreshRequestID = ""
+			if err := storage.Save(cached); err != nil {
+				return err
+			}
+			claims = decodeJWTClaims(cached.IDToken)
+			exp, ok := claims["exp"].(float64)
+			if !ok {
+				return fmt.Errorf("server returned an invalid ID token")
+			}
+			if time.Unix(int64(exp), 0).After(time.Now().Add(time.Minute)) {
+				return nil
+			}
+		}
+		return fmt.Errorf("server replayed an expired management token")
+	})
 }
 
 func validateRemoteKubeconfig(config *clientcmdapi.Config) error {

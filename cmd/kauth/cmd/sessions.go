@@ -7,8 +7,6 @@ import (
 	"net/http"
 	"time"
 
-	"kauth/pkg/token"
-
 	"charm.land/lipgloss/v2"
 	"github.com/spf13/cobra"
 )
@@ -50,7 +48,10 @@ type RevokeSessionRequest struct {
 }
 
 func runSessions(cmd *cobra.Command, args []string) error {
-	storage := token.NewStorage(token.DefaultCachePath())
+	storage, err := credentialStorageForCurrentContext()
+	if err != nil {
+		return err
+	}
 	cachedToken, _ := storage.Load()
 
 	if cachedToken == nil {

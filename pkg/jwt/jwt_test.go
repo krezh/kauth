@@ -708,3 +708,37 @@ func TestLegacyTokensRemainTypeSafe(t *testing.T) {
 		t.Error("legacy session token accepted as webhook token")
 	}
 }
+
+func TestRefreshResultRoundTrip(t *testing.T) {
+	signingKey := make([]byte, 32)
+	encryptionKey := make([]byte, 32)
+	_, _ = rand.Read(signingKey)
+	_, _ = rand.Read(encryptionKey)
+	mgr, err := NewManager(signingKey, encryptionKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := RefreshResult{
+		RequestID:            "request-id-0123456789",
+		PreviousRefreshToken: "previous",
+		RefreshToken:         "current",
+		IDToken:              "id-token",
+		IDTokenExpiresAt:     time.Now().Add(time.Hour).Round(0),
+		Email:                "user@example.com",
+		Username:             "user",
+	}
+	token, err := mgr.CreateRefreshResult(want)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := mgr.DecodeRefreshResult(token)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.RequestID != want.RequestID || got.RefreshToken != want.RefreshToken || got.IDToken != want.IDToken || !got.IDTokenExpiresAt.Equal(want.IDTokenExpiresAt) {
+		t.Errorf("DecodeRefreshResult() = %+v, want %+v", got, want)
+	}
+	if _, err := mgr.ValidateRefreshToken(token); err == nil {
+		t.Error("ValidateRefreshToken() accepted a refresh result")
+	}
+}

@@ -1,13 +1,124 @@
 package cmd
 
 import (
+	"encoding/base64"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sync"
 	"testing"
+	"time"
+
+	"kauth/pkg/token"
 
 	"k8s.io/client-go/tools/clientcmd"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
+
+func testJWT(exp time.Time) string {
+	payload, _ := json.Marshal(map[string]int64{"exp": exp.Unix()})
+	return "e30." + base64.RawURLEncoding.EncodeToString(payload) + ".signature"
+}
+
+func TestEnsureFreshIDTokenRetriesRequestID(t *testing.T) {
+	var requestIDs []string
+	attempt := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req RefreshRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			t.Errorf("decode request: %v", err)
+			return
+		}
+		requestIDs = append(requestIDs, req.RequestID)
+		attempt++
+		if attempt == 1 {
+			http.Error(w, "lost response", http.StatusInternalServerError)
+			return
+		}
+		writeJSON := json.NewEncoder(w)
+		_ = writeJSON.Encode(RefreshResponse{IDToken: testJWT(time.Now().Add(time.Hour)), RefreshToken: "new-refresh"})
+	}))
+	defer server.Close()
+
+	storage := token.NewStorage(filepath.Join(t.TempDir(), "token.json"))
+	cache := &token.Cache{ServerURL: server.URL, RefreshToken: "old-refresh"}
+	if err := storage.Save(cache); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureFreshIDToken(storage, cache); err == nil {
+		t.Fatal("first refresh unexpectedly succeeded")
+	}
+	pending, err := storage.Load()
+	if err != nil || pending.RefreshRequestID == "" {
+		t.Fatalf("pending request was not persisted: cache=%+v err=%v", pending, err)
+	}
+	if err := ensureFreshIDToken(storage, cache); err != nil {
+		t.Fatalf("retry failed: %v", err)
+	}
+	if len(requestIDs) != 2 || requestIDs[0] == "" || requestIDs[0] != requestIDs[1] {
+		t.Errorf("request IDs = %v, want the same non-empty ID", requestIDs)
+	}
+	updated, err := storage.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if updated.RefreshToken != "new-refresh" || updated.IDToken == "" || updated.RefreshRequestID != "" {
+		t.Errorf("updated cache = %+v", updated)
+	}
+}
+
+func TestEnsureFreshIDTokenReplacesExpiredReplay(t *testing.T) {
+	attempt := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		attempt++
+		expiry := time.Now().Add(-time.Minute)
+		if attempt == 2 {
+			expiry = time.Now().Add(time.Hour)
+		}
+		_ = json.NewEncoder(w).Encode(RefreshResponse{
+			IDToken:      testJWT(expiry),
+			RefreshToken: fmt.Sprintf("refresh-%d", attempt),
+		})
+	}))
+	defer server.Close()
+
+	storage := token.NewStorage(filepath.Join(t.TempDir(), "token.json"))
+	cache := &token.Cache{ServerURL: server.URL, RefreshToken: "old-refresh", RefreshRequestID: "request-id-0123456789"}
+	if err := storage.Save(cache); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureFreshIDToken(storage, cache); err != nil {
+		t.Fatal(err)
+	}
+	if attempt != 2 || cache.RefreshToken != "refresh-2" {
+		t.Errorf("attempts = %d, cache = %+v", attempt, cache)
+	}
+}
+
+func TestEnsureFreshIDTokenRejectsChangedSession(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		http.Error(w, "unexpected request", http.StatusInternalServerError)
+	}))
+	defer server.Close()
+
+	storage := token.NewStorage(filepath.Join(t.TempDir(), "token.json"))
+	oldCache := &token.Cache{ServerURL: server.URL, SessionID: "old-session", RefreshToken: "old-refresh"}
+	if err := storage.Save(&token.Cache{ServerURL: server.URL, SessionID: "new-session", RefreshToken: "new-refresh"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := ensureFreshIDToken(storage, oldCache); err == nil {
+		t.Fatal("ensureFreshIDToken() accepted a replaced session")
+	}
+	if requests != 0 || oldCache.SessionID != "old-session" {
+		t.Errorf("requests = %d, cache = %+v", requests, oldCache)
+	}
+}
 
 func TestValidateRemoteKubeconfig(t *testing.T) {
 	valid := clientcmdapi.NewConfig()
@@ -36,6 +147,24 @@ func TestValidateRemoteKubeconfig(t *testing.T) {
 				t.Error("validateRemoteKubeconfig() accepted unsafe exec configuration")
 			}
 		})
+	}
+}
+
+func TestSetKubeconfigProfile(t *testing.T) {
+	config := clientcmdapi.NewConfig()
+	config.AuthInfos["user"] = &clientcmdapi.AuthInfo{Exec: &clientcmdapi.ExecConfig{
+		Command: "kauth",
+		Args:    []string{"get-token"},
+	}}
+	config.Contexts["context"] = &clientcmdapi.Context{AuthInfo: "user"}
+	setKubeconfigProfile(config, "0123456789abcdef")
+	want := []string{"get-token", "--profile", "0123456789abcdef"}
+	profiledUser := "user@0123456789abcdef"
+	if !reflect.DeepEqual(config.AuthInfos[profiledUser].Exec.Args, want) {
+		t.Errorf("exec args = %v, want %v", config.AuthInfos[profiledUser].Exec.Args, want)
+	}
+	if config.Contexts["context"].AuthInfo != profiledUser || config.AuthInfos["user"] != nil {
+		t.Errorf("profiled auth info was not isolated: %+v", config)
 	}
 }
 
@@ -156,6 +285,42 @@ contexts: []
 	incoming.Clusters["production"] = &clientcmdapi.Cluster{Server: "https://replacement.example"}
 	if !hasConflict(existing, incoming) {
 		t.Error("hasConflict() missed an incoming name collision")
+	}
+}
+
+func TestUpdateKubeconfigSerializesConcurrentMerges(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config")
+	configs := []*clientcmdapi.Config{clientcmdapi.NewConfig(), clientcmdapi.NewConfig()}
+	for i, config := range configs {
+		name := fmt.Sprintf("cluster-%d", i)
+		config.Clusters[name] = &clientcmdapi.Cluster{Server: "https://" + name + ".example"}
+		config.AuthInfos[name] = &clientcmdapi.AuthInfo{Token: name}
+		config.Contexts[name] = &clientcmdapi.Context{Cluster: name, AuthInfo: name}
+	}
+
+	var wg sync.WaitGroup
+	errs := make(chan error, len(configs))
+	for _, config := range configs {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			_, err := updateKubeconfig(path, config, "unique")
+			errs <- err
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	merged, err := clientcmd.LoadFromFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(merged.Clusters) != 2 || len(merged.Contexts) != 2 || len(merged.AuthInfos) != 2 {
+		t.Errorf("concurrent merge lost entries: %+v", merged)
 	}
 }
 

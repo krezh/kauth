@@ -21,9 +21,10 @@ var (
 )
 
 const (
-	purposeSession = "session"
-	purposeRefresh = "refresh"
-	purposeWebhook = "webhook"
+	purposeSession       = "session"
+	purposeRefresh       = "refresh"
+	purposeRefreshResult = "refresh_result"
+	purposeWebhook       = "webhook"
 )
 
 // SessionToken contains OAuth flow state (encrypted, signed)
@@ -53,6 +54,19 @@ type RefreshToken struct {
 	SessionID        string    `json:"session_id"`
 	IssuedAt         time.Time `json:"issued_at"`
 	ExpiresAt        time.Time `json:"expires_at"`
+}
+
+// RefreshResult stores an encrypted idempotent response for one refresh request.
+type RefreshResult struct {
+	Purpose              string    `json:"purpose"`
+	RequestID            string    `json:"request_id"`
+	PreviousRefreshToken string    `json:"previous_refresh_token"`
+	RefreshToken         string    `json:"refresh_token"`
+	IDToken              string    `json:"id_token"`
+	IDTokenExpiresAt     time.Time `json:"id_token_expires_at"`
+	Email                string    `json:"email"`
+	Username             string    `json:"username"`
+	Groups               []string  `json:"groups,omitempty"`
 }
 
 // Manager handles JWT creation and validation
@@ -217,6 +231,43 @@ func (m *Manager) ValidateRefreshToken(token string) (*RefreshToken, error) {
 		return nil, ErrExpiredToken
 	}
 	return refresh, nil
+}
+
+// CreateRefreshResult encrypts the response needed to retry one refresh request.
+func (m *Manager) CreateRefreshResult(result RefreshResult) (string, error) {
+	result.Purpose = purposeRefreshResult
+	data, err := json.Marshal(result)
+	if err != nil {
+		return "", fmt.Errorf("failed to marshal refresh result: %w", err)
+	}
+	encrypted, err := m.encrypt(data)
+	if err != nil {
+		return "", fmt.Errorf("failed to encrypt refresh result: %w", err)
+	}
+	return base64.URLEncoding.EncodeToString(m.sign(encrypted)), nil
+}
+
+// DecodeRefreshResult decrypts and validates an idempotent refresh result.
+func (m *Manager) DecodeRefreshResult(token string) (*RefreshResult, error) {
+	signed, err := base64.URLEncoding.DecodeString(token)
+	if err != nil {
+		return nil, ErrInvalidToken
+	}
+	encrypted, err := m.verify(signed)
+	if err != nil {
+		return nil, err
+	}
+	data, err := m.decrypt(encrypted)
+	if err != nil {
+		return nil, ErrInvalidToken
+	}
+	var result RefreshResult
+	if err := json.Unmarshal(data, &result); err != nil || result.Purpose != purposeRefreshResult ||
+		result.RequestID == "" || result.PreviousRefreshToken == "" || result.RefreshToken == "" || result.IDToken == "" ||
+		result.IDTokenExpiresAt.IsZero() || result.Email == "" {
+		return nil, ErrInvalidToken
+	}
+	return &result, nil
 }
 
 // CreateWebhookToken creates an encrypted and signed webhook credential containing

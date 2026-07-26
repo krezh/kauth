@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
-	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -28,7 +26,11 @@ func init() {
 }
 
 func runStatus(cmd *cobra.Command, args []string) error {
-	storage := token.NewStorage(token.DefaultCachePath())
+	kubeInfo, kubeInfoErr := getKubeconfigInfo()
+	storage, err := credentialStorageForKubeInfo(kubeInfo, kubeInfoErr)
+	if err != nil {
+		return err
+	}
 
 	cachedToken, _ := storage.Load()
 	if cachedToken == nil || cachedToken.RefreshToken == "" {
@@ -48,8 +50,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	user := getUserFromToken(cachedToken.IDToken)
 	fmt.Printf("  %s %s\n", accent.Render("User"), orange.Render(user))
 
-	kubeInfo, err := getKubeconfigInfo()
-	if err == nil {
+	if kubeInfoErr == nil {
 		fmt.Printf("  %s %s\n", accent.Render("Cluster"), orange.Render(kubeInfo.clusterName))
 		fmt.Printf("  %s %s\n", accent.Render("Context"), orange.Render(kubeInfo.contextName))
 		fmt.Printf("  %s %s\n", accent.Render("API Server"), orange.Render(kubeInfo.apiServer))
@@ -87,6 +88,31 @@ func runStatus(cmd *cobra.Command, args []string) error {
 
 	fmt.Println()
 	return nil
+}
+
+func credentialStorageForCurrentContext() (*token.Storage, error) {
+	kubeInfo, err := getKubeconfigInfo()
+	return credentialStorageForKubeInfo(kubeInfo, err)
+}
+
+func credentialStorageForKubeInfo(kubeInfo *kubeconfigStatus, kubeInfoErr error) (*token.Storage, error) {
+	if kubeInfoErr != nil {
+		if token.HasProfileCaches() {
+			return nil, fmt.Errorf("no profile-aware kauth context is currently selected")
+		}
+		return token.NewStorage(token.DefaultCachePath()), nil
+	}
+	if kubeInfo.profile == "" {
+		if token.HasProfileCaches() {
+			return nil, fmt.Errorf("current context uses the legacy shared credential cache; run kauth login again to assign it a cluster profile")
+		}
+		return token.NewStorage(token.DefaultCachePath()), nil
+	}
+	profilePath, err := token.ProfileCachePath(kubeInfo.profile)
+	if err != nil {
+		return nil, err
+	}
+	return token.NewStorage(profilePath), nil
 }
 
 func formatDuration(d time.Duration) string {
@@ -215,21 +241,11 @@ type kubeconfigStatus struct {
 	clusterName string
 	apiServer   string
 	contextName string
+	profile     string
 }
 
 func getKubeconfigInfo() (*kubeconfigStatus, error) {
-	homeDir, err := os.UserHomeDir()
-	if err != nil {
-		return nil, err
-	}
-
-	kubeconfigPath := filepath.Join(homeDir, ".kube", "config")
-	data, err := os.ReadFile(kubeconfigPath)
-	if err != nil {
-		return nil, err
-	}
-
-	kc, err := clientcmd.Load(data)
+	kc, err := clientcmd.NewDefaultClientConfigLoadingRules().Load()
 	if err != nil {
 		return nil, err
 	}
@@ -244,10 +260,20 @@ func getKubeconfigInfo() (*kubeconfigStatus, error) {
 	kubeContext := kc.Contexts[kc.CurrentContext]
 	if kubeContext != nil && kauthUsers[kubeContext.AuthInfo] {
 		if cluster := kc.Clusters[kubeContext.Cluster]; cluster != nil {
+			profile := ""
+			if authInfo := kc.AuthInfos[kubeContext.AuthInfo]; authInfo != nil && authInfo.Exec != nil {
+				for i, arg := range authInfo.Exec.Args {
+					if arg == "--profile" && i+1 < len(authInfo.Exec.Args) {
+						profile = authInfo.Exec.Args[i+1]
+						break
+					}
+				}
+			}
 			return &kubeconfigStatus{
 				clusterName: kubeContext.Cluster,
 				apiServer:   cluster.Server,
 				contextName: kc.CurrentContext,
+				profile:     profile,
 			}, nil
 		}
 	}
