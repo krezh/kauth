@@ -72,6 +72,7 @@ func (in *OAuthSessionSpec) DeepCopyInto(out *OAuthSessionSpec) {
 	*out = *in
 	in.CreatedAt.DeepCopyInto(&out.CreatedAt)
 	in.LastUsed.DeepCopyInto(&out.LastUsed)
+	in.ExpiresAt.DeepCopyInto(&out.ExpiresAt)
 }
 
 // DeepCopy creates a deep copy

@@ -1,9 +1,29 @@
 package handlers
 
 import (
+	"encoding/base64"
 	"fmt"
 	"testing"
+
+	"k8s.io/client-go/tools/clientcmd"
 )
+
+func TestKubeconfigGeneratorEscapesOIDCClaims(t *testing.T) {
+	generator := KubeconfigGenerator{
+		ClusterName:   "production",
+		ClusterServer: "https://kubernetes.example.com",
+		ClusterCA:     base64.StdEncoding.EncodeToString([]byte("test-ca")),
+	}
+	data := generator.Generate("ops: admin@example.com", "ops: admin")
+	config, err := clientcmd.Load([]byte(data))
+	if err != nil {
+		t.Fatalf("generated kubeconfig is invalid: %v", err)
+	}
+	contextName := "ops: admin@production"
+	if config.Contexts[contextName] == nil || config.AuthInfos["ops: admin@example.com"] == nil {
+		t.Fatalf("generated kubeconfig lost claim values: %+v", config)
+	}
+}
 
 func TestLoginHandler_isUserAuthorized(t *testing.T) {
 	tests := []struct {

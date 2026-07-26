@@ -2,13 +2,17 @@ package cmd
 
 import (
 	"bufio"
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/cookiejar"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strconv"
 	"strings"
@@ -16,9 +20,9 @@ import (
 
 	"kauth/pkg/token"
 
-	"gopkg.in/yaml.v3"
-
 	"github.com/spf13/cobra"
+	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
 
 var serverURL string
@@ -72,9 +76,9 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("failed to create cookie jar: %w", err)
 	}
-	client := &http.Client{Jar: jar}
+	client := &http.Client{Jar: jar, Timeout: 30 * time.Second}
 
-	resp, err := client.Get(serverURL + "/info")
+	resp, err := getWithContext(cmd.Context(), client, serverURL+"/info")
 	if err != nil {
 		return fmt.Errorf("could not reach kauth at %s: %w", serverURL, err)
 	}
@@ -92,7 +96,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	serverLink := hyperlink(muted.Render(urlHost(serverURL)), serverURL)
 	fmt.Printf("\n  %s %s %s\n\n", accent.Render("◆"), accent.Render(info.ClusterName), serverLink)
 
-	loginResp, err := client.Get(serverURL + "/start-login")
+	loginResp, err := getWithContext(cmd.Context(), client, serverURL+"/start-login")
 	if err != nil {
 		return fmt.Errorf("failed to start login: %w", err)
 	}
@@ -102,6 +106,12 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	if err := json.NewDecoder(loginResp.Body).Decode(&loginData); err != nil {
 		return fmt.Errorf("invalid login response: %w", err)
 	}
+	if err := validateHTTPSURL(loginData.LoginURL); err != nil {
+		return fmt.Errorf("unsafe login URL from server: %w", err)
+	}
+	client.Timeout = 0
+	ctx, cancel := context.WithTimeout(cmd.Context(), 15*time.Minute)
+	defer cancel()
 
 	loginLink := hyperlink(link.Render("login page"), loginData.LoginURL)
 	if err := openBrowser(loginData.LoginURL); err != nil {
@@ -112,8 +122,15 @@ func runLogin(cmd *cobra.Command, args []string) error {
 
 	fmt.Printf("  %s %s\n", accent.Render("◌"), muted.Render("Waiting for authentication…"))
 
-	status, err := watchForCompletion(client, serverURL, loginData.SessionToken)
+	status, err := watchForCompletion(ctx, client, serverURL, loginData.SessionToken)
 	if err != nil {
+		return err
+	}
+	incomingConfig, err := clientcmd.Load([]byte(status.Kubeconfig))
+	if err != nil {
+		return fmt.Errorf("invalid kubeconfig from server: %w", err)
+	}
+	if err := validateRemoteKubeconfig(incomingConfig); err != nil {
 		return err
 	}
 
@@ -126,7 +143,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	shouldMerge := false
 	if existingData, err := os.ReadFile(kubeconfigPath); err == nil && len(existingData) > 0 {
 		fileExists = true
-		if hasConflict(existingData, info.ClusterName) {
+		if hasConflict(existingData, incomingConfig) {
 			fmt.Printf("\n  %s %s\n", warningIcon, muted.Render(fmt.Sprintf("Context %q already exists", info.ClusterName)))
 			choice, err := promptMenu([]promptOption{
 				{key: "m", label: "merge"},
@@ -153,11 +170,11 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	}
 
 	if shouldMerge && fileExists {
-		if err := mergeKubeconfig(kubeconfigPath, status.Kubeconfig); err != nil {
+		if err := mergeKubeconfig(kubeconfigPath, incomingConfig); err != nil {
 			return fmt.Errorf("failed to merge kubeconfig: %w", err)
 		}
 	} else {
-		if err := os.WriteFile(kubeconfigPath, []byte(status.Kubeconfig), 0600); err != nil {
+		if err := writeKubeconfigAtomic(kubeconfigPath, incomingConfig); err != nil {
 			return fmt.Errorf("failed to save kubeconfig: %w", err)
 		}
 	}
@@ -181,9 +198,6 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		if err == nil {
 			newCache.IDToken = refreshResp.IDToken
 			newCache.RefreshToken = refreshResp.RefreshToken
-			if newCache.Expiry.IsZero() {
-				newCache.Expiry = time.Now().Add(time.Duration(refreshResp.ExpiresIn) * time.Second)
-			}
 		}
 	}
 
@@ -198,23 +212,44 @@ func runLogin(cmd *cobra.Command, args []string) error {
 
 func resolveServerURL() (string, error) {
 	if serverURL != "" {
-		return serverURL, nil
+		return validateServerURL(serverURL)
 	}
 
 	if domain, err := detectDomain(); err == nil {
 		for d := domain; strings.Contains(d, "."); {
 			if servers := discoverDNS(d); len(servers) > 0 {
-				return selectServer(servers)
+				selected, err := selectServer(servers)
+				if err != nil {
+					return "", err
+				}
+				return validateServerURL(selected)
 			}
 			_, d, _ = strings.Cut(d, ".")
 		}
 	}
 
 	if cached, err := token.NewStorage(token.DefaultCachePath()).Load(); err == nil && cached != nil && cached.ServerURL != "" {
-		return cached.ServerURL, nil
+		return validateServerURL(cached.ServerURL)
 	}
 
 	return "", fmt.Errorf("no kauth servers found.\n\nConfigure DNS TXT records at _kauth.<domain> or run:\n  kauth login --url <server-url>")
+}
+
+func validateServerURL(rawURL string) (string, error) {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", fmt.Errorf("kauth server URL must be an HTTPS origin")
+	}
+	parsed.Path = strings.TrimRight(parsed.Path, "/")
+	return parsed.String(), nil
+}
+
+func validateHTTPSURL(rawURL string) error {
+	parsed, err := url.Parse(rawURL)
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil {
+		return fmt.Errorf("URL must use HTTPS")
+	}
+	return nil
 }
 
 func selectServer(servers []discoveredServer) (string, error) {
@@ -254,10 +289,9 @@ func selectServer(servers []discoveredServer) (string, error) {
 // we reconnect. This is safe because the server immediately re-sends the final
 // status when the session is already active, so a reconnect recovers any result
 // that was missed during a drop.
-func watchForCompletion(client *http.Client, baseURL, sessionToken string) (*StatusResponse, error) {
-	deadline := time.Now().Add(15 * time.Minute)
+func watchForCompletion(ctx context.Context, client *http.Client, baseURL, sessionToken string) (*StatusResponse, error) {
 	for {
-		status, retriable, err := watchOnce(client, baseURL, sessionToken)
+		status, retriable, err := watchOnce(ctx, client, baseURL, sessionToken)
 		switch {
 		case err != nil && !retriable:
 			return nil, err
@@ -265,22 +299,27 @@ func watchForCompletion(client *http.Client, baseURL, sessionToken string) (*Sta
 			return status, nil
 		}
 
-		if !time.Now().Before(deadline) {
-			return nil, fmt.Errorf("timed out waiting for authentication.\n\nPlease try logging in again")
-		}
 		if debug {
 			fmt.Fprintf(os.Stderr, "  [debug] reconnecting in 2s...\n")
 		}
-		time.Sleep(2 * time.Second)
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("timed out waiting for authentication.\n\nPlease try logging in again")
+		case <-time.After(2 * time.Second):
+		}
 	}
 }
 
 // watchOnce makes a single /watch connection. It returns a non-nil status on
 // success. retriable is true when the connection dropped or idled without a
 // result, signalling the caller to reconnect.
-func watchOnce(client *http.Client, baseURL, sessionToken string) (status *StatusResponse, retriable bool, err error) {
-	resp, err := client.Get(fmt.Sprintf("%s/watch?session_token=%s", baseURL, sessionToken))
+func watchOnce(ctx context.Context, client *http.Client, baseURL, sessionToken string) (status *StatusResponse, retriable bool, err error) {
+	watchURL := fmt.Sprintf("%s/watch?session_token=%s", baseURL, url.QueryEscape(sessionToken))
+	resp, err := getWithContext(ctx, client, watchURL)
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, false, fmt.Errorf("timed out waiting for authentication.\n\nPlease try logging in again")
+		}
 		return nil, true, nil // connection failure: reconnect
 	}
 	defer func() { _ = resp.Body.Close() }()
@@ -359,6 +398,14 @@ func watchOnce(client *http.Client, baseURL, sessionToken string) (status *Statu
 	}
 }
 
+func getWithContext(ctx context.Context, client *http.Client, requestURL string) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	return client.Do(req)
+}
+
 func openBrowser(url string) error {
 	var cmd string
 	var args []string
@@ -381,90 +428,23 @@ func openBrowser(url string) error {
 	return exec.Command(cmd, args...).Start()
 }
 
-// Kubeconfig structures for parsing and merging
-type kubeconfig struct {
-	APIVersion     string         `yaml:"apiVersion"`
-	Kind           string         `yaml:"kind"`
-	CurrentContext string         `yaml:"current-context,omitempty"`
-	Clusters       []namedCluster `yaml:"clusters"`
-	Contexts       []namedContext `yaml:"contexts"`
-	Users          []namedUser    `yaml:"users"`
-}
-
-type namedCluster struct {
-	Name    string  `yaml:"name"`
-	Cluster cluster `yaml:"cluster"`
-}
-
-type cluster struct {
-	Server                   string `yaml:"server"`
-	CertificateAuthorityData string `yaml:"certificate-authority-data,omitempty"`
-	CertificateAuthority     string `yaml:"certificate-authority,omitempty"`
-	InsecureSkipTLSVerify    bool   `yaml:"insecure-skip-tls-verify,omitempty"`
-}
-
-type namedContext struct {
-	Name    string  `yaml:"name"`
-	Context context `yaml:"context"`
-}
-
-type context struct {
-	Cluster   string `yaml:"cluster"`
-	User      string `yaml:"user"`
-	Namespace string `yaml:"namespace,omitempty"`
-}
-
-type namedUser struct {
-	Name string `yaml:"name"`
-	User user   `yaml:"user"`
-}
-
-type user struct {
-	Exec                  *execConfig         `yaml:"exec,omitempty"`
-	Token                 string              `yaml:"token,omitempty"`
-	ClientCertificate     string              `yaml:"client-certificate,omitempty"`
-	ClientKey             string              `yaml:"client-key,omitempty"`
-	ClientCertificateData string              `yaml:"client-certificate-data,omitempty"`
-	ClientKeyData         string              `yaml:"client-key-data,omitempty"`
-	AuthProvider          *authProviderConfig `yaml:"auth-provider,omitempty"`
-}
-
-type execConfig struct {
-	APIVersion      string   `yaml:"apiVersion"`
-	Command         string   `yaml:"command"`
-	Args            []string `yaml:"args"`
-	Env             []envVar `yaml:"env,omitempty"`
-	InteractiveMode string   `yaml:"interactiveMode,omitempty"`
-}
-
-type envVar struct {
-	Name  string `yaml:"name"`
-	Value string `yaml:"value"`
-}
-
-type authProviderConfig struct {
-	Name   string            `yaml:"name"`
-	Config map[string]string `yaml:"config,omitempty"`
-}
-
-func hasConflict(data []byte, clusterName string) bool {
-	var kc kubeconfig
-	if err := yaml.Unmarshal(data, &kc); err != nil {
+func hasConflict(data []byte, incoming *clientcmdapi.Config) bool {
+	existing, err := clientcmd.Load(data)
+	if err != nil {
 		return false
 	}
-	suffix := "@" + clusterName
-	for _, c := range kc.Contexts {
-		if c.Name == clusterName || strings.HasSuffix(c.Name, suffix) {
+	for name := range incoming.Contexts {
+		if _, found := existing.Contexts[name]; found {
 			return true
 		}
 	}
-	for _, c := range kc.Clusters {
-		if c.Name == clusterName {
+	for name := range incoming.Clusters {
+		if _, found := existing.Clusters[name]; found {
 			return true
 		}
 	}
-	for _, u := range kc.Users {
-		if u.Name == clusterName {
+	for name := range incoming.AuthInfos {
+		if _, found := existing.AuthInfos[name]; found {
 			return true
 		}
 	}
@@ -515,83 +495,139 @@ func refreshTokenFromServer(baseURL, refreshToken string) (*RefreshResponse, err
 	return &refreshResp, nil
 }
 
-func mergeKubeconfig(existingPath, newConfigYAML string) error {
-	// Parse existing kubeconfig
-	existingData, err := os.ReadFile(existingPath)
+func ensureFreshIDToken(storage *token.Storage, cached *token.Cache) error {
+	claims := decodeJWTClaims(cached.IDToken)
+	if exp, ok := claims["exp"].(float64); ok && time.Unix(int64(exp), 0).After(time.Now().Add(time.Minute)) {
+		return nil
+	}
+	if cached.RefreshToken == "" {
+		return fmt.Errorf("no refresh token available")
+	}
+	refreshed, err := refreshTokenFromServer(cached.ServerURL, cached.RefreshToken)
 	if err != nil {
-		return fmt.Errorf("failed to read existing kubeconfig: %w", err)
+		return err
 	}
-
-	var existing kubeconfig
-	if err := yaml.Unmarshal(existingData, &existing); err != nil {
-		return fmt.Errorf("failed to parse existing kubeconfig (may be invalid YAML): %w", err)
+	if refreshed.IDToken == "" || refreshed.RefreshToken == "" {
+		return fmt.Errorf("server returned incomplete refresh response")
 	}
+	cached.IDToken = refreshed.IDToken
+	cached.RefreshToken = refreshed.RefreshToken
+	return storage.Save(cached)
+}
 
-	// Parse new kubeconfig
-	var newConfig kubeconfig
-	if err := yaml.Unmarshal([]byte(newConfigYAML), &newConfig); err != nil {
-		return fmt.Errorf("failed to parse new kubeconfig from server: %w", err)
+func validateRemoteKubeconfig(config *clientcmdapi.Config) error {
+	if config.APIVersion != "v1" || config.Kind != "Config" || len(config.Clusters) != 1 ||
+		len(config.AuthInfos) != 1 || len(config.Contexts) != 1 || len(config.Extensions) != 0 ||
+		config.Preferences.Colors || len(config.Preferences.Extensions) != 0 {
+		return fmt.Errorf("unexpected kubeconfig structure from server")
 	}
-
-	// Merge clusters (upsert by name)
-	for _, newCluster := range newConfig.Clusters {
-		found := false
-		for i, existingCluster := range existing.Clusters {
-			if existingCluster.Name == newCluster.Name {
-				existing.Clusters[i] = newCluster
-				found = true
-				break
-			}
-		}
-		if !found {
-			existing.Clusters = append(existing.Clusters, newCluster)
-		}
+	kubeContext := config.Contexts[config.CurrentContext]
+	if kubeContext == nil {
+		return fmt.Errorf("kubeconfig current context is missing")
 	}
-
-	// Merge users (upsert by name)
-	for _, newUser := range newConfig.Users {
-		found := false
-		for i, existingUser := range existing.Users {
-			if existingUser.Name == newUser.Name {
-				existing.Users[i] = newUser
-				found = true
-				break
-			}
-		}
-		if !found {
-			existing.Users = append(existing.Users, newUser)
-		}
+	cluster := config.Clusters[kubeContext.Cluster]
+	authInfo := config.AuthInfos[kubeContext.AuthInfo]
+	if cluster == nil || authInfo == nil {
+		return fmt.Errorf("kubeconfig current context has missing references")
 	}
-
-	// Merge contexts (upsert by name)
-	for _, newContext := range newConfig.Contexts {
-		found := false
-		for i, existingContext := range existing.Contexts {
-			if existingContext.Name == newContext.Name {
-				existing.Contexts[i] = newContext
-				found = true
-				break
-			}
-		}
-		if !found {
-			existing.Contexts = append(existing.Contexts, newContext)
+	serverURL, err := url.Parse(cluster.Server)
+	if err != nil || serverURL.Scheme != "https" || serverURL.Host == "" || len(cluster.CertificateAuthorityData) == 0 {
+		return fmt.Errorf("unsafe cluster endpoint in kubeconfig")
+	}
+	expectedCluster := &clientcmdapi.Cluster{
+		Server:                   cluster.Server,
+		CertificateAuthorityData: cluster.CertificateAuthorityData,
+	}
+	if !reflect.DeepEqual(cluster, expectedCluster) {
+		return fmt.Errorf("unexpected cluster configuration in kubeconfig")
+	}
+	expectedContext := &clientcmdapi.Context{
+		Cluster:   kubeContext.Cluster,
+		AuthInfo:  kubeContext.AuthInfo,
+		Namespace: "default",
+	}
+	if !reflect.DeepEqual(kubeContext, expectedContext) {
+		return fmt.Errorf("unexpected context configuration in kubeconfig")
+	}
+	expectedAuthInfo := &clientcmdapi.AuthInfo{Exec: &clientcmdapi.ExecConfig{
+		APIVersion:      "client.authentication.k8s.io/v1",
+		Command:         "kauth",
+		Args:            []string{"get-token"},
+		InteractiveMode: clientcmdapi.NeverExecInteractiveMode,
+	}}
+	for name, authInfo := range config.AuthInfos {
+		if !reflect.DeepEqual(authInfo, expectedAuthInfo) {
+			return fmt.Errorf("unsafe exec configuration for user %q", name)
 		}
 	}
+	return nil
+}
 
-	// Update current-context to the new one
-	if newConfig.CurrentContext != "" {
-		existing.CurrentContext = newConfig.CurrentContext
-	}
-
-	// Save merged kubeconfig
-	mergedData, err := yaml.Marshal(&existing)
+func mergeKubeconfig(existingPath string, incoming *clientcmdapi.Config) error {
+	existing, err := clientcmd.LoadFromFile(existingPath)
 	if err != nil {
-		return fmt.Errorf("failed to marshal merged kubeconfig: %w", err)
+		return fmt.Errorf("failed to parse existing kubeconfig: %w", err)
 	}
-
-	if err := os.WriteFile(existingPath, mergedData, 0600); err != nil {
-		return fmt.Errorf("failed to write merged kubeconfig (check permissions): %w", err)
+	for name, cluster := range incoming.Clusters {
+		existing.Clusters[name] = cluster
 	}
+	for name, authInfo := range incoming.AuthInfos {
+		existing.AuthInfos[name] = authInfo
+	}
+	for name, kubeContext := range incoming.Contexts {
+		existing.Contexts[name] = kubeContext
+	}
+	if incoming.CurrentContext != "" {
+		existing.CurrentContext = incoming.CurrentContext
+	}
+	return writeKubeconfigAtomic(existingPath, existing)
+}
 
+func writeKubeconfigAtomic(path string, config *clientcmdapi.Config) error {
+	for range 8 {
+		info, err := os.Lstat(path)
+		if errors.Is(err, os.ErrNotExist) || err == nil && info.Mode()&os.ModeSymlink == 0 {
+			break
+		}
+		if err != nil {
+			return fmt.Errorf("failed to inspect kubeconfig path: %w", err)
+		}
+		target, err := os.Readlink(path)
+		if err != nil {
+			return fmt.Errorf("failed to read kubeconfig symlink: %w", err)
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(path), target)
+		}
+		path = filepath.Clean(target)
+	}
+	data, err := clientcmd.Write(*config)
+	if err != nil {
+		return fmt.Errorf("failed to marshal kubeconfig: %w", err)
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".kauth-kubeconfig-*")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer func() { _ = os.Remove(tmpPath) }()
+	if err := tmp.Chmod(0600); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Sync(); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return err
+	}
 	return nil
 }

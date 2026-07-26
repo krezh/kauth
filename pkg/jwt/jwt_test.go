@@ -3,10 +3,24 @@ package jwt
 import (
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 )
+
+func encodeTestToken(t *testing.T, mgr *Manager, value any) string {
+	t.Helper()
+	data, err := json.Marshal(value)
+	if err != nil {
+		t.Fatal(err)
+	}
+	encrypted, err := mgr.encrypt(data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return base64.URLEncoding.EncodeToString(mgr.sign(encrypted))
+}
 
 func TestNewManager(t *testing.T) {
 	tests := []struct {
@@ -633,21 +647,64 @@ func TestTokensAreIndependent(t *testing.T) {
 		t.Errorf("Session and refresh tokens are identical")
 	}
 
-	// Note: The JWT manager doesn't enforce token type at the cryptographic level.
-	// Both token types can be decrypted/verified, but they will fail to unmarshal
-	// into the wrong struct type. This is acceptable as the JSON structure differs.
-
-	// Session token will fail to parse as refresh token (different JSON structure)
+	// Token purpose is enforced even though all token types share cryptographic keys.
 	_, err = mgr.ValidateRefreshToken(sessionToken)
 	if err == nil {
-		t.Logf("Note: ValidateRefreshToken may accept session token structurally but will fail in practice")
-		// This is acceptable - the unmarshal will fail due to different JSON fields
+		t.Error("ValidateRefreshToken() accepted a session token")
 	}
 
-	// Refresh token will fail to parse as session token (different JSON structure)
 	_, err = mgr.ValidateSessionToken(refreshToken)
 	if err == nil {
-		t.Logf("Note: ValidateSessionToken may accept refresh token structurally but will fail in practice")
-		// This is acceptable - the unmarshal will fail due to different JSON fields
+		t.Error("ValidateSessionToken() accepted a refresh token")
+	}
+
+	webhookToken, err := mgr.CreateWebhookToken("test-session", 24*time.Hour)
+	if err != nil {
+		t.Fatalf("CreateWebhookToken() error = %v", err)
+	}
+	if _, err := mgr.ValidateSessionToken(webhookToken); err == nil {
+		t.Error("ValidateSessionToken() accepted a webhook token")
+	}
+	if _, err := mgr.ValidateWebhookToken(sessionToken); err == nil {
+		t.Error("ValidateWebhookToken() accepted a session token")
+	}
+}
+
+func TestLegacyTokensRemainTypeSafe(t *testing.T) {
+	signingKey := make([]byte, 32)
+	encryptionKey := make([]byte, 32)
+	_, _ = rand.Read(signingKey)
+	_, _ = rand.Read(encryptionKey)
+	mgr, err := NewManager(signingKey, encryptionKey)
+	if err != nil {
+		t.Fatal(err)
+	}
+	now := time.Now()
+
+	legacySession := encodeTestToken(t, mgr, SessionToken{
+		SessionID: "session", Verifier: "verifier", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	})
+	legacyRefresh := encodeTestToken(t, mgr, RefreshToken{
+		UserEmail: "user@example.com", OIDCRefreshToken: "oidc", RotationCounter: 1,
+		SessionID: "session", IssuedAt: now, ExpiresAt: now.Add(time.Hour),
+	})
+	legacyWebhook := encodeTestToken(t, mgr, WebhookCredential{
+		SessionID: "session", ExpiresAt: now.Add(time.Hour),
+	})
+
+	if _, err := mgr.ValidateSessionToken(legacySession); err != nil {
+		t.Errorf("legacy session token rejected: %v", err)
+	}
+	if _, err := mgr.ValidateRefreshToken(legacyRefresh); err != nil {
+		t.Errorf("legacy refresh token rejected: %v", err)
+	}
+	if _, err := mgr.ValidateWebhookToken(legacyWebhook); err != nil {
+		t.Errorf("legacy webhook token rejected: %v", err)
+	}
+	if _, err := mgr.ValidateSessionToken(legacyWebhook); err == nil {
+		t.Error("legacy webhook token accepted as session token")
+	}
+	if _, err := mgr.ValidateWebhookToken(legacySession); err == nil {
+		t.Error("legacy session token accepted as webhook token")
 	}
 }

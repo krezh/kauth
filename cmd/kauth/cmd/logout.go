@@ -31,12 +31,15 @@ func runLogout(cmd *cobra.Command, args []string) error {
 	storage := token.NewStorage(token.DefaultCachePath())
 
 	cachedToken, err := storage.Load()
-	if err != nil || cachedToken == nil || cachedToken.RefreshToken == "" {
+	if err != nil || cachedToken == nil || (cachedToken.RefreshToken == "" && cachedToken.WebhookToken == "") {
 		fmt.Println("Not authenticated.")
 		return nil
 	}
 
 	serverURL := cachedToken.ServerURL
+	if err := ensureFreshIDToken(storage, cachedToken); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to refresh management token: %v\n", err)
+	}
 
 	if cachedToken.SessionID != "" {
 		reqBody := RevokeRequest{

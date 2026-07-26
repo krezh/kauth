@@ -261,31 +261,27 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 
-	// Get session from CRD to retrieve verifier
-	crdSession, err := h.sessionClient.Get(ctx, state)
+	// Atomically consume the verifier so the authorization request can complete once.
+	verifier, err := h.sessionClient.ConsumePendingVerifier(ctx, state, h.sessionTTL)
 	if err != nil {
 		if apierrors.IsNotFound(err) {
 			http.Error(w, "Session not found or expired", http.StatusBadRequest)
 		} else {
-			http.Error(w, "Failed to get session", http.StatusInternalServerError)
+			slog.WarnContext(ctx, "callback rejected", "error", err)
+			http.Error(w, "Invalid or expired session", http.StatusBadRequest)
 		}
 		return
 	}
-
-	verifier := crdSession.Spec.Verifier
-	if verifier == "" {
-		_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
-			Phase: v1alpha1.SessionPending,
-			Error: "Invalid session",
-		})
-		http.Error(w, "Invalid session", http.StatusInternalServerError)
-		return
+	updateStatus := func(status v1alpha1.OAuthSessionStatus) error {
+		statusCtx, statusCancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer statusCancel()
+		return h.sessionClient.UpdateStatus(statusCtx, state, status)
 	}
 
 	// Handle OAuth errors
 	if errParam := r.URL.Query().Get("error"); errParam != "" {
 		errDesc := r.URL.Query().Get("error_description")
-		_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
+		_ = updateStatus(v1alpha1.OAuthSessionStatus{
 			Phase: v1alpha1.SessionPending,
 			Error: fmt.Sprintf("%s: %s", errParam, errDesc),
 		})
@@ -295,7 +291,7 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 
 	code := r.URL.Query().Get("code")
 	if code == "" {
-		_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
+		_ = updateStatus(v1alpha1.OAuthSessionStatus{
 			Phase: v1alpha1.SessionPending,
 			Error: "No authorization code returned",
 		})
@@ -313,7 +309,7 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	)
 	if err != nil {
 		slog.ErrorContext(ctx, "token exchange failed", "error", err)
-		_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
+		_ = updateStatus(v1alpha1.OAuthSessionStatus{
 			Phase: v1alpha1.SessionPending,
 			Error: "Token exchange failed",
 		})
@@ -323,7 +319,7 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 
 	idToken, ok := token.Extra("id_token").(string)
 	if !ok {
-		_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
+		_ = updateStatus(v1alpha1.OAuthSessionStatus{
 			Phase: v1alpha1.SessionPending,
 			Error: "No ID token returned",
 		})
@@ -334,7 +330,7 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	claims, _, err := VerifyAndExtractClaims(ctx, h.provider, idToken)
 	if err != nil {
 		slog.ErrorContext(ctx, "ID token verification failed", "error", err)
-		_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
+		_ = updateStatus(v1alpha1.OAuthSessionStatus{
 			Phase: v1alpha1.SessionPending,
 			Error: "Token verification failed",
 		})
@@ -346,7 +342,7 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	if len(h.allowedGroups) > 0 {
 		if !h.isUserAuthorized(claims.Groups) {
 			audit.AuthorizationDeny(ctx, r, claims.Email, claims.Groups, h.allowedGroups)
-			_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
+			_ = updateStatus(v1alpha1.OAuthSessionStatus{
 				Phase: v1alpha1.SessionPending,
 				Error: "User is not a member of allowed groups",
 			})
@@ -375,7 +371,7 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		h.refreshTokenTTL,
 	)
 	if err != nil {
-		_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
+		_ = updateStatus(v1alpha1.OAuthSessionStatus{
 			Phase: v1alpha1.SessionPending,
 			Error: "Failed to create refresh token",
 		})
@@ -385,7 +381,7 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 
 	webhookToken, err := h.jwtManager.CreateWebhookToken(state, h.refreshTokenTTL)
 	if err != nil {
-		_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
+		_ = updateStatus(v1alpha1.OAuthSessionStatus{
 			Phase: v1alpha1.SessionPending,
 			Error: "Failed to create webhook token",
 		})
@@ -393,7 +389,7 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
+	err = updateStatus(v1alpha1.OAuthSessionStatus{
 		Phase:        v1alpha1.SessionActive,
 		Email:        claims.Email,
 		Username:     claims.PreferredUsername,
@@ -407,7 +403,7 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := h.sessionClient.UpdateUserID(ctx, state, claims.Email); err != nil {
+	if err := h.sessionClient.UpdateUserID(ctx, state, claims.Email, h.refreshTokenTTL); err != nil {
 		slog.WarnContext(ctx, "failed to set session user ID", "session", state[:8], "error", err)
 	}
 

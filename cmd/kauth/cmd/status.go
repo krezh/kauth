@@ -13,9 +13,8 @@ import (
 
 	"kauth/pkg/token"
 
-	"gopkg.in/yaml.v3"
-
 	"github.com/spf13/cobra"
+	"k8s.io/client-go/tools/clientcmd"
 )
 
 var statusCmd = &cobra.Command{
@@ -59,7 +58,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 	if kubeInfo != nil {
 		user := getUserFromToken(cachedToken.IDToken)
 		groups := getGroupsFromToken(cachedToken.IDToken)
-		roles := getClusterRoles(kubeInfo.apiServer, cachedToken.IDToken, user, groups)
+		roles := getClusterRoles(kubeInfo.apiServer, cachedToken.WebhookToken, user, groups)
 		if len(roles) > 0 {
 			fmt.Printf("  %s %s\n", accent.Render("Roles"), orange.Render(strings.Join(roles, ", ")))
 		}
@@ -74,15 +73,7 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  %s %s %s\n", accent.Render("Health"), errorIcon, red.Render("Unreachable"))
 	}
 
-	now := time.Now()
-	timeUntilExpiry := cachedToken.Expiry.Sub(now)
-	expired := timeUntilExpiry <= 0
-
-	if expired {
-		fmt.Printf("  %s %s %s %s\n", accent.Render("Token"), errorIcon, red.Render("Expired"), muted.Render(fmt.Sprintf("(%s ago)", formatDuration(-timeUntilExpiry))))
-	} else {
-		fmt.Printf("  %s %s %s %s\n", accent.Render("Token"), successIcon, green.Render("Valid"), muted.Render(fmt.Sprintf("(expires in %s)", formatDuration(timeUntilExpiry))))
-	}
+	fmt.Printf("  %s %s %s %s\n", accent.Render("Token"), successIcon, green.Render("Available"), muted.Render("(lifetime managed by server session)"))
 
 	fmt.Printf("  %s %s %s\n", accent.Render("Refresh"), successIcon, green.Render("Available"))
 
@@ -92,16 +83,6 @@ func runStatus(cmd *cobra.Command, args []string) error {
 		fmt.Printf("  %s %s\n", warningIcon, yellow.Render("Kubeconfig not found or invalid."))
 	} else {
 		fmt.Printf("  %s %s\n", successIcon, green.Render("kubectl ready."))
-	}
-
-	now = time.Now()
-	timeUntilExpiry = cachedToken.Expiry.Sub(now)
-	expired = timeUntilExpiry <= 0
-
-	if expired {
-		fmt.Printf("  %s %s\n", infoIcon, yellow.Render("Token expired — will auto-refresh on next kubectl use."))
-	} else if timeUntilExpiry < 5*time.Minute {
-		fmt.Printf("  %s %s\n", warningIcon, yellow.Render("Token expires soon."))
 	}
 
 	fmt.Println()
@@ -248,29 +229,26 @@ func getKubeconfigInfo() (*kubeconfigStatus, error) {
 		return nil, err
 	}
 
-	var kc kubeconfig
-	if err := yaml.Unmarshal(data, &kc); err != nil {
+	kc, err := clientcmd.Load(data)
+	if err != nil {
 		return nil, err
 	}
 
 	kauthUsers := make(map[string]bool)
-	for _, u := range kc.Users {
-		if u.User.Exec != nil && u.User.Exec.Command == "kauth" {
-			kauthUsers[u.Name] = true
+	for name, authInfo := range kc.AuthInfos {
+		if authInfo.Exec != nil && authInfo.Exec.Command == "kauth" {
+			kauthUsers[name] = true
 		}
 	}
 
-	for _, ctx := range kc.Contexts {
-		if kauthUsers[ctx.Context.User] {
-			for _, cluster := range kc.Clusters {
-				if cluster.Name == ctx.Context.Cluster {
-					return &kubeconfigStatus{
-						clusterName: cluster.Name,
-						apiServer:   cluster.Cluster.Server,
-						contextName: ctx.Name,
-					}, nil
-				}
-			}
+	kubeContext := kc.Contexts[kc.CurrentContext]
+	if kubeContext != nil && kauthUsers[kubeContext.AuthInfo] {
+		if cluster := kc.Clusters[kubeContext.Cluster]; cluster != nil {
+			return &kubeconfigStatus{
+				clusterName: kubeContext.Cluster,
+				apiServer:   cluster.Server,
+				contextName: kc.CurrentContext,
+			}, nil
 		}
 	}
 

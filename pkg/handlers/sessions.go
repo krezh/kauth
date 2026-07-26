@@ -12,6 +12,7 @@ import (
 type SessionsHandler struct {
 	sessionClient *session.Client
 	adminGroups   []string
+	sessionTTL    time.Duration
 }
 
 type SessionInfo struct {
@@ -24,16 +25,18 @@ type SessionInfo struct {
 	LastUsed    time.Time `json:"last_used"`
 	RevokedAt   time.Time `json:"revoked_at,omitempty"`
 	CompletedAt time.Time `json:"completed_at,omitempty"`
+	ExpiresAt   time.Time `json:"expires_at,omitempty"`
 }
 
 type SessionsResponse struct {
 	Sessions []SessionInfo `json:"sessions"`
 }
 
-func NewSessionsHandler(sessionClient *session.Client, adminGroups []string) *SessionsHandler {
+func NewSessionsHandler(sessionClient *session.Client, adminGroups []string, sessionTTL time.Duration) *SessionsHandler {
 	return &SessionsHandler{
 		sessionClient: sessionClient,
 		adminGroups:   adminGroups,
+		sessionTTL:    sessionTTL,
 	}
 }
 
@@ -79,6 +82,19 @@ func (h *SessionsHandler) HandleListSessions(w http.ResponseWriter, r *http.Requ
 
 	sessionInfos := make([]SessionInfo, 0, len(sessions))
 	for _, s := range sessions {
+		if s.Status.Phase != v1alpha1.SessionActive {
+			continue
+		}
+		expiresAt := s.Spec.ExpiresAt.Time
+		if s.Spec.ExpiresAt.IsZero() {
+			expiresAt = s.Spec.CreatedAt.Add(h.sessionTTL)
+			if !s.Spec.LastUsed.IsZero() {
+				expiresAt = s.Spec.LastUsed.Add(h.sessionTTL)
+			}
+		}
+		if expiresAt.IsZero() || !time.Now().Before(expiresAt) {
+			continue
+		}
 		info := SessionInfo{
 			SessionID: s.Spec.SessionID,
 			UserID:    s.Spec.UserID,
@@ -90,6 +106,7 @@ func (h *SessionsHandler) HandleListSessions(w http.ResponseWriter, r *http.Requ
 		if !s.Spec.LastUsed.IsZero() {
 			info.LastUsed = s.Spec.LastUsed.Time
 		}
+		info.ExpiresAt = expiresAt
 		if s.Status.RevokedAt != nil {
 			info.RevokedAt = s.Status.RevokedAt.Time
 		}

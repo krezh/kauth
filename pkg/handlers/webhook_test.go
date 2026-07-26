@@ -8,20 +8,27 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	v1alpha1 "kauth/pkg/apis/kauth.io/v1alpha1"
 	"kauth/pkg/jwt"
+	"kauth/pkg/session"
 
 	authnv1 "k8s.io/api/authentication/v1"
 )
 
-// fakeSessionGetter implements sessionGetter for webhook tests.
+// fakeSessionGetter implements sessionStore for webhook tests.
 type fakeSessionGetter struct {
-	session *v1alpha1.OAuthSession
-	err     error
+	session    *v1alpha1.OAuthSession
+	err        error
+	touchCount int
 }
 
-func (f *fakeSessionGetter) Get(_ context.Context, _ string) (*v1alpha1.OAuthSession, error) {
+func (f *fakeSessionGetter) TouchActiveSession(_ context.Context, _ string, _ string, _ time.Duration) (*v1alpha1.OAuthSession, error) {
+	f.touchCount++
+	if f.session != nil && f.session.Status.Phase != v1alpha1.SessionActive {
+		return nil, session.ErrPreconditionFailed
+	}
 	return f.session, f.err
 }
 
@@ -90,7 +97,7 @@ func TestHandleTokenReview_Authentication(t *testing.T) {
 	tests := []struct {
 		name          string
 		token         string
-		session       sessionGetter
+		session       sessionStore
 		wantAuthd     bool
 		wantUsername  string
 		wantGroupsLen int
@@ -164,6 +171,23 @@ func TestHandleTokenReview_Authentication(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestHandleTokenReview_TouchesActiveSession(t *testing.T) {
+	jm := newTestJWTManager(t)
+	token, err := jm.CreateWebhookToken("sess-abc", 24*60*60*1000000000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &fakeSessionGetter{session: activeSession("user@example.com", nil)}
+	h := &WebhookHandler{jwtManager: jm, sessionClient: store}
+	rr := postTokenReview(t, h, token)
+	if !decodeReview(t, rr).Status.Authenticated {
+		t.Fatal("token review was not authenticated")
+	}
+	if store.touchCount != 1 {
+		t.Errorf("TouchActiveSession() calls = %d, want 1", store.touchCount)
 	}
 }
 

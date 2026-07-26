@@ -45,7 +45,7 @@ func (h *RevokeHandler) HandleRevoke(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req RevokeRequest
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}

@@ -37,6 +37,7 @@ type SessionInfo struct {
 	LastUsed    time.Time `json:"last_used"`
 	RevokedAt   time.Time `json:"revoked_at"`
 	CompletedAt time.Time `json:"completed_at"`
+	ExpiresAt   time.Time `json:"expires_at"`
 }
 
 type SessionsResponse struct {
@@ -52,8 +53,11 @@ func runSessions(cmd *cobra.Command, args []string) error {
 	storage := token.NewStorage(token.DefaultCachePath())
 	cachedToken, _ := storage.Load()
 
-	if cachedToken == nil || cachedToken.IDToken == "" {
+	if cachedToken == nil {
 		return fmt.Errorf("no valid token found.\n\nTo authenticate, run:\n  kauth login --url <server-url>")
+	}
+	if err := ensureFreshIDToken(storage, cachedToken); err != nil {
+		return fmt.Errorf("failed to refresh management token: %w", err)
 	}
 
 	serverURL := cachedToken.ServerURL
@@ -178,8 +182,21 @@ func printSessions(sessions []SessionInfo) {
 		fmt.Printf("    %s %s\n",
 			muted.Render("created:"), formatTimeAgo(s.CreatedAt),
 		)
+		if !s.ExpiresAt.IsZero() {
+			fmt.Printf("    %s %s\n",
+				muted.Render("expires:"), formatTimeUntil(s.ExpiresAt),
+			)
+		}
 		fmt.Println()
 	}
+}
+
+func formatTimeUntil(t time.Time) string {
+	d := time.Until(t)
+	if d <= 0 {
+		return "expired"
+	}
+	return "in " + formatDuration(d)
 }
 
 func formatTimeAgo(t time.Time) string {

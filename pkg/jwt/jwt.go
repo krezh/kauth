@@ -20,8 +20,15 @@ var (
 	ErrInvalidSignature = errors.New("invalid signature")
 )
 
+const (
+	purposeSession = "session"
+	purposeRefresh = "refresh"
+	purposeWebhook = "webhook"
+)
+
 // SessionToken contains OAuth flow state (encrypted, signed)
 type SessionToken struct {
+	Purpose   string    `json:"purpose,omitempty"`
 	SessionID string    `json:"sessionID"`
 	Verifier  string    `json:"verifier"`
 	CreatedAt time.Time `json:"created_at"`
@@ -32,12 +39,14 @@ type SessionToken struct {
 // presents to the kauth webhook. It contains only the session ID; the webhook
 // decrypts it and looks up the CRD for current status (email, groups, phase).
 type WebhookCredential struct {
+	Purpose   string    `json:"purpose,omitempty"`
 	SessionID string    `json:"sessionID"`
 	ExpiresAt time.Time `json:"expires_at"`
 }
 
 // RefreshToken contains refresh token data (encrypted, signed)
 type RefreshToken struct {
+	Purpose          string    `json:"purpose,omitempty"`
 	UserEmail        string    `json:"user_email"`
 	OIDCRefreshToken string    `json:"oidc_refresh_token"`
 	RotationCounter  int       `json:"rotation_counter"`
@@ -73,6 +82,7 @@ func NewManager(signingKey, encryptionKey []byte) (*Manager, error) {
 func (m *Manager) CreateSessionToken(sessionID, verifier string, ttl time.Duration) (string, error) {
 	now := time.Now()
 	session := SessionToken{
+		Purpose:   purposeSession,
 		SessionID: sessionID,
 		Verifier:  verifier,
 		CreatedAt: now,
@@ -122,6 +132,12 @@ func (m *Manager) ValidateSessionToken(token string) (*SessionToken, error) {
 	if err := json.Unmarshal(data, &session); err != nil {
 		return nil, ErrInvalidToken
 	}
+	if session.Purpose != "" && session.Purpose != purposeSession {
+		return nil, ErrInvalidToken
+	}
+	if session.SessionID == "" || session.Verifier == "" || session.CreatedAt.IsZero() || session.ExpiresAt.IsZero() {
+		return nil, ErrInvalidToken
+	}
 
 	// Check expiry
 	if time.Now().After(session.ExpiresAt) {
@@ -135,6 +151,7 @@ func (m *Manager) ValidateSessionToken(token string) (*SessionToken, error) {
 func (m *Manager) CreateRefreshToken(userEmail, oidcRefreshToken, sessionID string, rotationCounter int, ttl time.Duration) (string, error) {
 	now := time.Now()
 	refresh := RefreshToken{
+		Purpose:          purposeRefresh,
 		UserEmail:        userEmail,
 		OIDCRefreshToken: oidcRefreshToken,
 		RotationCounter:  rotationCounter,
@@ -181,6 +198,12 @@ func (m *Manager) DecodeRefreshToken(token string) (*RefreshToken, error) {
 	if err := json.Unmarshal(data, &refresh); err != nil {
 		return nil, ErrInvalidToken
 	}
+	if refresh.Purpose != "" && refresh.Purpose != purposeRefresh {
+		return nil, ErrInvalidToken
+	}
+	if refresh.UserEmail == "" || refresh.OIDCRefreshToken == "" || refresh.SessionID == "" || refresh.IssuedAt.IsZero() || refresh.ExpiresAt.IsZero() {
+		return nil, ErrInvalidToken
+	}
 	return &refresh, nil
 }
 
@@ -201,6 +224,7 @@ func (m *Manager) ValidateRefreshToken(token string) (*RefreshToken, error) {
 // which decrypts it and performs a CRD lookup for current session status.
 func (m *Manager) CreateWebhookToken(sessionID string, ttl time.Duration) (string, error) {
 	cred := WebhookCredential{
+		Purpose:   purposeWebhook,
 		SessionID: sessionID,
 		ExpiresAt: time.Now().Add(ttl),
 	}
@@ -218,9 +242,7 @@ func (m *Manager) CreateWebhookToken(sessionID string, ttl time.Duration) (strin
 	return base64.URLEncoding.EncodeToString(m.sign(encrypted)), nil
 }
 
-// DecodeWebhookToken decrypts and decodes a webhook credential without checking
-// expiry. Use ValidateWebhookToken for request authentication; this is for
-// extracting the ExpiresAt to propagate to clients.
+// DecodeWebhookToken decrypts and decodes a webhook credential.
 func (m *Manager) DecodeWebhookToken(token string) (*WebhookCredential, error) {
 	signed, err := base64.URLEncoding.DecodeString(token)
 	if err != nil {
@@ -238,18 +260,32 @@ func (m *Manager) DecodeWebhookToken(token string) (*WebhookCredential, error) {
 	if err := json.Unmarshal(data, &cred); err != nil {
 		return nil, ErrInvalidToken
 	}
+	if cred.Purpose != "" && cred.Purpose != purposeWebhook {
+		return nil, ErrInvalidToken
+	}
+	if cred.SessionID == "" || cred.ExpiresAt.IsZero() {
+		return nil, ErrInvalidToken
+	}
+	if cred.Purpose == "" {
+		var fields map[string]json.RawMessage
+		if err := json.Unmarshal(data, &fields); err != nil {
+			return nil, ErrInvalidToken
+		}
+		for field := range fields {
+			if field != "sessionID" && field != "expires_at" {
+				return nil, ErrInvalidToken
+			}
+		}
+	}
 	return &cred, nil
 }
 
-// ValidateWebhookToken decrypts and validates a webhook credential, returning
-// the session ID on success.
+// ValidateWebhookToken decrypts a webhook credential. Its lifetime is governed
+// by the referenced server-side session so active use can extend that lifetime.
 func (m *Manager) ValidateWebhookToken(token string) (*WebhookCredential, error) {
 	cred, err := m.DecodeWebhookToken(token)
 	if err != nil {
 		return nil, err
-	}
-	if time.Now().After(cred.ExpiresAt) {
-		return nil, ErrExpiredToken
 	}
 	return cred, nil
 }

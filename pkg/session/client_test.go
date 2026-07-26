@@ -2,7 +2,9 @@ package session
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
 
 	v1alpha1 "kauth/pkg/apis/kauth.io/v1alpha1"
 
@@ -119,6 +121,78 @@ func TestClient_Get_NotFound(t *testing.T) {
 	_, err := client.Get(ctx, "nonexistent-state")
 	if err == nil {
 		t.Error("Get() expected error for nonexistent session, got nil")
+	}
+}
+
+func TestClient_ConsumePendingVerifier(t *testing.T) {
+	client := newFakeClient(t)
+	ctx := context.Background()
+	_, err := client.Create(ctx, "consume-test", "verifier", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	verifier, err := client.ConsumePendingVerifier(ctx, "consume-test", time.Minute)
+	if err != nil {
+		t.Fatalf("ConsumePendingVerifier() error = %v", err)
+	}
+	if verifier != "verifier" {
+		t.Errorf("verifier = %q, want verifier", verifier)
+	}
+	if _, err := client.ConsumePendingVerifier(ctx, "consume-test", time.Minute); !errors.Is(err, ErrPreconditionFailed) {
+		t.Errorf("second ConsumePendingVerifier() error = %v, want ErrPreconditionFailed", err)
+	}
+}
+
+func TestClient_RotateRefreshToken(t *testing.T) {
+	client := newFakeClient(t)
+	ctx := context.Background()
+	_, err := client.Create(ctx, "rotate-test", "verifier", "user@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	completed := metav1.Now()
+	err = client.UpdateStatus(ctx, "rotate-test", v1alpha1.OAuthSessionStatus{
+		Phase:        v1alpha1.SessionActive,
+		Email:        "user@example.com",
+		RefreshToken: "old-token",
+		WebhookToken: "webhook-token",
+		CompletedAt:  &completed,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lockID, err := client.ClaimRefreshToken(ctx, "rotate-test", "old-token", time.Minute, time.Hour)
+	if err != nil {
+		t.Fatalf("ClaimRefreshToken() error = %v", err)
+	}
+	if _, err := client.ClaimRefreshToken(ctx, "rotate-test", "old-token", time.Minute, time.Hour); !errors.Is(err, ErrPreconditionFailed) {
+		t.Errorf("concurrent ClaimRefreshToken() error = %v, want ErrPreconditionFailed", err)
+	}
+	if err := client.ExtendRefreshTokenClaim(ctx, "rotate-test", lockID, time.Hour); err != nil {
+		t.Fatalf("ExtendRefreshTokenClaim() error = %v", err)
+	}
+	err = client.RotateRefreshToken(ctx, "rotate-test", "old-token", lockID, v1alpha1.OAuthSessionStatus{
+		Phase:        v1alpha1.SessionActive,
+		Email:        "user@example.com",
+		RefreshToken: "new-token",
+	})
+	if err != nil {
+		t.Fatalf("RotateRefreshToken() error = %v", err)
+	}
+	got, err := client.Get(ctx, "rotate-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status.RefreshToken != "new-token" || got.Status.WebhookToken != "webhook-token" || got.Status.CompletedAt == nil {
+		t.Errorf("RotateRefreshToken() stored unexpected status: %+v", got.Status)
+	}
+	if err := client.RotateRefreshToken(ctx, "rotate-test", "old-token", lockID, v1alpha1.OAuthSessionStatus{Phase: v1alpha1.SessionActive}); !errors.Is(err, ErrPreconditionFailed) {
+		t.Errorf("stale RotateRefreshToken() error = %v, want ErrPreconditionFailed", err)
+	}
+	if err := client.ReleaseRefreshTokenClaim(ctx, "rotate-test", lockID); err != nil {
+		t.Errorf("ReleaseRefreshTokenClaim() error = %v", err)
 	}
 }
 
@@ -266,6 +340,77 @@ func TestClient_UpdateLastUsed(t *testing.T) {
 	}
 }
 
+func TestClient_TouchActiveSession(t *testing.T) {
+	client := newFakeClient(t)
+	ctx := context.Background()
+	_, err := client.Create(ctx, "touch-test", "verifier", "user@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.UpdateStatus(ctx, "touch-test", v1alpha1.OAuthSessionStatus{
+		Phase:        v1alpha1.SessionActive,
+		Email:        "user@example.com",
+		WebhookToken: "webhook-token",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	touched, err := client.TouchActiveSession(ctx, "touch-test", "webhook-token", time.Hour)
+	if err != nil {
+		t.Fatalf("TouchActiveSession() error = %v", err)
+	}
+	if touched.Spec.LastUsed.IsZero() {
+		t.Error("TouchActiveSession() did not update LastUsed")
+	}
+	if touched.Spec.ExpiresAt.IsZero() || !touched.Spec.ExpiresAt.After(touched.Spec.LastUsed.Time) {
+		t.Error("TouchActiveSession() did not extend ExpiresAt")
+	}
+	if err := client.Revoke(ctx, "touch-test"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.TouchActiveSession(ctx, "touch-test", "webhook-token", time.Hour); !errors.Is(err, ErrPreconditionFailed) {
+		t.Errorf("TouchActiveSession() on revoked session error = %v, want ErrPreconditionFailed", err)
+	}
+}
+
+func TestClient_TouchActiveSessionRejectsExpiredAndReplacedToken(t *testing.T) {
+	client := newFakeClient(t)
+	ctx := context.Background()
+	_, err := client.Create(ctx, "expired-touch", "verifier", "user@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.UpdateUserID(ctx, "expired-touch", "user@example.com", -time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.UpdateStatus(ctx, "expired-touch", v1alpha1.OAuthSessionStatus{
+		Phase:        v1alpha1.SessionActive,
+		WebhookToken: "current-token",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.TouchActiveSession(ctx, "expired-touch", "current-token", time.Hour); !errors.Is(err, ErrPreconditionFailed) {
+		t.Errorf("expired TouchActiveSession() error = %v, want ErrPreconditionFailed", err)
+	}
+
+	_, err = client.Create(ctx, "replaced-token", "verifier", "user@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.UpdateUserID(ctx, "replaced-token", "user@example.com", time.Hour); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.UpdateStatus(ctx, "replaced-token", v1alpha1.OAuthSessionStatus{
+		Phase:        v1alpha1.SessionActive,
+		WebhookToken: "current-token",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.TouchActiveSession(ctx, "replaced-token", "old-token", time.Hour); !errors.Is(err, ErrPreconditionFailed) {
+		t.Errorf("replaced-token TouchActiveSession() error = %v, want ErrPreconditionFailed", err)
+	}
+}
+
 func TestClient_UpdateUserID(t *testing.T) {
 	client := newFakeClient(t)
 	ctx := context.Background()
@@ -275,7 +420,7 @@ func TestClient_UpdateUserID(t *testing.T) {
 		t.Fatalf("Create() error = %v", err)
 	}
 
-	err = client.UpdateUserID(ctx, "userid-test", "newuser@example.com")
+	err = client.UpdateUserID(ctx, "userid-test", "newuser@example.com", time.Hour)
 	if err != nil {
 		t.Fatalf("UpdateUserID() error = %v", err)
 	}

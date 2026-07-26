@@ -2,6 +2,7 @@ package handlers
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -11,6 +12,8 @@ import (
 	"kauth/pkg/oauth"
 
 	"github.com/coreos/go-oidc/v3/oidc"
+	"k8s.io/client-go/tools/clientcmd"
+	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
 
 // OIDCClaims represents the common claims structure from OIDC tokens
@@ -37,8 +40,9 @@ func writeJSON(w http.ResponseWriter, v any) {
 	}
 }
 
-// decodeJSON decodes the request body as JSON into v.
-func decodeJSON(r *http.Request, v any) error {
+// decodeJSON decodes a bounded request body as JSON into v.
+func decodeJSON(w http.ResponseWriter, r *http.Request, v any) error {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
 	return json.NewDecoder(r.Body).Decode(v)
 }
 
@@ -52,33 +56,34 @@ func (kg *KubeconfigGenerator) Generate(email, username string) string {
 		}
 	}
 	contextName := fmt.Sprintf("%s@%s", username, kg.ClusterName)
-	return fmt.Sprintf(`apiVersion: v1
-kind: Config
-clusters:
-- name: %s
-  cluster:
-    server: %s
-    certificate-authority-data: %s
-users:
-- name: %s
-  user:
-    exec:
-      apiVersion: client.authentication.k8s.io/v1
-      command: kauth
-      args:
-      - get-token
-      interactiveMode: Never
-contexts:
-- name: %s
-  context:
-    cluster: %s
-    user: %s
-    namespace: default
-current-context: %s
-`, kg.ClusterName, kg.ClusterServer, kg.ClusterCA,
-		email,
-		contextName, kg.ClusterName, email,
-		contextName)
+	caData, err := base64.StdEncoding.DecodeString(kg.ClusterCA)
+	if err != nil {
+		slog.Error("failed to decode cluster CA", "error", err)
+		return ""
+	}
+	config := clientcmdapi.NewConfig()
+	config.Clusters[kg.ClusterName] = &clientcmdapi.Cluster{
+		Server:                   kg.ClusterServer,
+		CertificateAuthorityData: caData,
+	}
+	config.AuthInfos[email] = &clientcmdapi.AuthInfo{Exec: &clientcmdapi.ExecConfig{
+		APIVersion:      "client.authentication.k8s.io/v1",
+		Command:         "kauth",
+		Args:            []string{"get-token"},
+		InteractiveMode: clientcmdapi.NeverExecInteractiveMode,
+	}}
+	config.Contexts[contextName] = &clientcmdapi.Context{
+		Cluster:   kg.ClusterName,
+		AuthInfo:  email,
+		Namespace: "default",
+	}
+	config.CurrentContext = contextName
+	data, err := clientcmd.Write(*config)
+	if err != nil {
+		slog.Error("failed to generate kubeconfig", "error", err)
+		return ""
+	}
+	return string(data)
 }
 
 // VerifyAndExtractClaims verifies an ID token and extracts claims

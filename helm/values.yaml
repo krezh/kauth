@@ -129,7 +129,7 @@ env: []
   # - name: SESSION_TTL
   #   value: "15m"           # Session token lifetime (default: 15m)
   # - name: REFRESH_TOKEN_TTL
-  #   value: "168h"          # Refresh token lifetime (default: 7 days)
+  #   value: "168h"          # Session inactivity lifetime (default: 7 days)
   # - name: ALLOWED_ORIGINS
   #   value: "https://app1.example.com,https://app2.example.com"  # CORS origins (comma-separated)
   # - name: ALLOWED_GROUPS
@@ -140,9 +140,6 @@ env: []
   #   value: "10"            # Requests per second per IP (default: 10)
   # - name: RATE_LIMIT_BURST
   #   value: "20"            # Burst capacity (default: 20)
-  # - name: ROTATION_WINDOW
-  #   value: "2"             # Refresh token rotation window (default: 2)
-
 # Environment variables from ConfigMaps/Secrets
 # Use for sensitive configuration
 envFrom: []

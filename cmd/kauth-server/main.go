@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -63,26 +64,25 @@ func main() {
 	}
 
 	cfg := server.Config{
-		IssuerURL:          getEnv("OIDC_ISSUER_URL", ""),
-		ClientID:           getEnv("OIDC_CLIENT_ID", ""),
-		ClientSecret:       getEnv("OIDC_CLIENT_SECRET", ""),
-		ClusterName:        clusterName,
-		BaseURL:            getEnv("BASE_URL", ""),
-		ListenAddr:         getEnv("LISTEN_ADDR", ":8080"),
-		TLSCertFile:        getEnv("TLS_CERT_FILE", ""),
-		TLSKeyFile:         getEnv("TLS_KEY_FILE", ""),
+		IssuerURL:         getEnv("OIDC_ISSUER_URL", ""),
+		ClientID:          getEnv("OIDC_CLIENT_ID", ""),
+		ClientSecret:      getEnv("OIDC_CLIENT_SECRET", ""),
+		ClusterName:       clusterName,
+		BaseURL:           getEnv("BASE_URL", ""),
+		ListenAddr:        getEnv("LISTEN_ADDR", ":8080"),
+		TLSCertFile:       getEnv("TLS_CERT_FILE", ""),
+		TLSKeyFile:        getEnv("TLS_KEY_FILE", ""),
 		WebhookListenAddr: getEnv("WEBHOOK_LISTEN_ADDR", ""),
-		JWTSigningKey:      jwtSigningKey,
-		JWTEncryptionKey:   jwtEncryptionKey,
-		SessionTTL:         getEnvDuration("SESSION_TTL", 15*time.Minute),
-		RefreshTokenTTL:    getEnvDuration("REFRESH_TOKEN_TTL", 7*24*time.Hour),
-		AllowedOrigins:     getEnvStringSlice("ALLOWED_ORIGINS", []string{}),
-		AllowedGroups:      getEnvStringSlice("ALLOWED_GROUPS", []string{}),
-		AdminGroups:        getEnvStringSlice("ADMIN_GROUPS", []string{}),
-		RateLimitRPS:       getEnvFloat("RATE_LIMIT_RPS", 10.0),
-		RateLimitBurst:     getEnvInt("RATE_LIMIT_BURST", 20),
-		RotationWindow:     getEnvInt("ROTATION_WINDOW", 2),
-		TrustedProxyCIDRs:  getEnvStringSlice("TRUSTED_PROXY_CIDRS", []string{}),
+		JWTSigningKey:     jwtSigningKey,
+		JWTEncryptionKey:  jwtEncryptionKey,
+		SessionTTL:        getEnvDuration("SESSION_TTL", 15*time.Minute),
+		RefreshTokenTTL:   getEnvDuration("REFRESH_TOKEN_TTL", 7*24*time.Hour),
+		AllowedOrigins:    getEnvStringSlice("ALLOWED_ORIGINS", []string{}),
+		AllowedGroups:     getEnvStringSlice("ALLOWED_GROUPS", []string{}),
+		AdminGroups:       getEnvStringSlice("ADMIN_GROUPS", []string{}),
+		RateLimitRPS:      getEnvFloat("RATE_LIMIT_RPS", 10.0),
+		RateLimitBurst:    getEnvInt("RATE_LIMIT_BURST", 20),
+		TrustedProxyCIDRs: getEnvStringSlice("TRUSTED_PROXY_CIDRS", []string{}),
 	}
 
 	if cfg.IssuerURL == "" || cfg.ClientID == "" || cfg.ClientSecret == "" {
@@ -94,11 +94,25 @@ func main() {
 		slog.Error("BASE_URL is required", "hint", "e.g. https://kauth.example.com")
 		os.Exit(1)
 	}
+	baseURL, err := url.Parse(cfg.BaseURL)
+	if err != nil || baseURL.Scheme != "https" || baseURL.Host == "" {
+		slog.Error("BASE_URL must be an HTTPS URL")
+		os.Exit(1)
+	}
+	if (cfg.TLSCertFile == "") != (cfg.TLSKeyFile == "") {
+		slog.Error("TLS_CERT_FILE and TLS_KEY_FILE must be configured together")
+		os.Exit(1)
+	}
 
 	// Get cluster API endpoint URL (must be set manually)
 	clusterServer := getEnv("KUBERNETES_API_URL", "")
 	if clusterServer == "" {
 		slog.Error("KUBERNETES_API_URL is required", "hint", "e.g. https://kubernetes.example.com:6443")
+		os.Exit(1)
+	}
+	clusterURL, err := url.Parse(clusterServer)
+	if err != nil || clusterURL.Scheme != "https" || clusterURL.Host == "" {
+		slog.Error("KUBERNETES_API_URL must be an HTTPS URL")
 		os.Exit(1)
 	}
 	slog.Info("Cluster API URL", "url", clusterServer)
@@ -147,7 +161,7 @@ func main() {
 	var loginHandler *handlers.LoginHandler
 	var refreshHandler *handlers.RefreshHandler
 
-	webhookHandler := handlers.NewWebhookHandler(jwtManager, sessionClient)
+	webhookHandler := handlers.NewWebhookHandler(jwtManager, sessionClient, cfg.RefreshTokenTTL)
 
 	go func() {
 		maxRetries := 60
@@ -182,7 +196,6 @@ func main() {
 					clusterServer,
 					clusterCA,
 					cfg.RefreshTokenTTL,
-					cfg.RotationWindow,
 					cfg.AllowedGroups,
 				)
 				close(providerReady)
@@ -247,13 +260,12 @@ func main() {
 		handlers.NewRevokeHandler(sessionClient, cfg.AdminGroups).HandleRevoke(w, r)
 	})))
 	mux.HandleFunc("/sessions", requireProvider(handlers.RequireAuth(func() *oauth.Provider { return provider }, func(w http.ResponseWriter, r *http.Request) {
-		handlers.NewSessionsHandler(sessionClient, cfg.AdminGroups).HandleListSessions(w, r)
+		handlers.NewSessionsHandler(sessionClient, cfg.AdminGroups, cfg.RefreshTokenTTL).HandleListSessions(w, r)
 	})))
 	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("OK"))
 	})
-
 	// Apply middleware
 	var handler http.Handler = mux
 
@@ -312,8 +324,11 @@ func main() {
 
 	// Create HTTP server
 	server := &http.Server{
-		Addr:    cfg.ListenAddr,
-		Handler: handler,
+		Addr:              cfg.ListenAddr,
+		Handler:           handler,
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       2 * time.Minute,
+		MaxHeaderBytes:    1 << 20,
 	}
 
 	// Dedicated HTTP listener for the Kubernetes token-review webhook. Kept
@@ -330,8 +345,11 @@ func main() {
 		webhookHTTPHandler = middleware.RequestLogger(ipExtractor)(webhookHTTPHandler)
 		webhookHTTPHandler = middleware.RequestID(webhookHTTPHandler)
 		webhookServer = &http.Server{
-			Addr:    cfg.WebhookListenAddr,
-			Handler: webhookHTTPHandler,
+			Addr:              cfg.WebhookListenAddr,
+			Handler:           webhookHTTPHandler,
+			ReadHeaderTimeout: 10 * time.Second,
+			IdleTimeout:       2 * time.Minute,
+			MaxHeaderBytes:    1 << 20,
 		}
 	}
 

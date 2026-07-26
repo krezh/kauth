@@ -40,8 +40,11 @@ type OAuthSessionSpec struct {
 	// CreatedAt is when the session was created
 	CreatedAt metav1.Time `json:"createdAt"`
 
-	// LastUsed is when the session was last used for token refresh
+	// LastUsed is when the session was last used for authentication or token refresh
 	LastUsed metav1.Time `json:"lastUsed,omitzero"`
+
+	// ExpiresAt is when the session expires unless activity extends it
+	ExpiresAt metav1.Time `json:"expiresAt,omitzero"`
 }
 
 // OAuthSessionStatus defines the observed state of an OAuth session

@@ -34,7 +34,11 @@ spec:
                 lastUsed:
                   type: string
                   format: date-time
-                  description: Timestamp when session was last used for token refresh
+                  description: Timestamp when session was last used for authentication or token refresh
+                expiresAt:
+                  type: string
+                  format: date-time
+                  description: Timestamp when the session expires unless activity extends it
             status:
               type: object
               properties:
@@ -89,6 +93,9 @@ spec:
         - name: Last Used
           type: date
           jsonPath: .spec.lastUsed
+        - name: Expires
+          type: date
+          jsonPath: .spec.expiresAt
         - name: Age
           type: date
           jsonPath: .metadata.creationTimestamp

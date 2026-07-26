@@ -17,9 +17,9 @@ import (
 // webhookTimeout bounds how long a single TokenReview may take (decrypt + CRD lookup).
 const webhookTimeout = 10 * time.Second
 
-// sessionGetter is the subset of *session.Client the webhook needs.
-type sessionGetter interface {
-	Get(ctx context.Context, sessionID string) (*v1alpha1.OAuthSession, error)
+// sessionStore is the subset of *session.Client the webhook needs.
+type sessionStore interface {
+	TouchActiveSession(ctx context.Context, sessionID, webhookToken string, ttl time.Duration) (*v1alpha1.OAuthSession, error)
 }
 
 // WebhookHandler implements a Kubernetes token webhook authenticator. The API
@@ -29,14 +29,16 @@ type sessionGetter interface {
 // No OIDC verification occurs here — the CRD is the authoritative source of truth.
 type WebhookHandler struct {
 	jwtManager    *jwt.Manager
-	sessionClient sessionGetter
+	sessionClient sessionStore
+	sessionTTL    time.Duration
 }
 
 // NewWebhookHandler builds a WebhookHandler.
-func NewWebhookHandler(jwtManager *jwt.Manager, sessionClient *session.Client) *WebhookHandler {
+func NewWebhookHandler(jwtManager *jwt.Manager, sessionClient *session.Client, sessionTTL time.Duration) *WebhookHandler {
 	return &WebhookHandler{
 		jwtManager:    jwtManager,
 		sessionClient: sessionClient,
+		sessionTTL:    sessionTTL,
 	}
 }
 
@@ -50,7 +52,7 @@ func (h *WebhookHandler) HandleTokenReview(w http.ResponseWriter, r *http.Reques
 	}
 
 	var req authnv1.TokenReview
-	if err := decodeJSON(r, &req); err != nil {
+	if err := decodeJSON(w, r, &req); err != nil {
 		http.Error(w, "Invalid request body", http.StatusBadRequest)
 		return
 	}
@@ -98,13 +100,9 @@ func (h *WebhookHandler) authenticate(ctx context.Context, rawToken string) (use
 		return "", nil, "invalid webhook token"
 	}
 
-	sess, err := h.sessionClient.Get(ctx, cred.SessionID)
+	sess, err := h.sessionClient.TouchActiveSession(ctx, cred.SessionID, rawToken, h.sessionTTL)
 	if err != nil {
-		return "", nil, "session lookup failed"
-	}
-
-	if sess.Status.Phase != v1alpha1.SessionActive {
-		return "", nil, "session not active"
+		return "", nil, "session inactive or update failed"
 	}
 
 	return sess.Status.Email, sess.Status.Groups, ""
