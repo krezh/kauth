@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.27](https://github.com/krezh/kauth/compare/0.2.26...0.2.27) (2026-07-26)
+
+
+### Bug Fixes
+
+* **helm:** keep rolling updates as default ([08e86ea](https://github.com/krezh/kauth/commit/08e86ea62d6e601445e2e40821e777d6f9f0ae25))
+
 ## [0.2.26](https://github.com/krezh/kauth/compare/0.2.25...0.2.26) (2026-07-26)
 
 
