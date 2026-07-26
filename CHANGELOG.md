@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.26](https://github.com/krezh/kauth/compare/0.2.25...0.2.26) (2026-07-26)
+
+
+### Bug Fixes
+
+* isolate credentials and recover refresh retries ([57c3b5d](https://github.com/krezh/kauth/commit/57c3b5d0b2b4979393459f7afbb753f96095ad2e))
+
 ## [0.2.25](https://github.com/krezh/kauth/compare/0.2.24...0.2.25) (2026-07-26)
 
 
