@@ -597,8 +597,7 @@ func ensureFreshIDToken(storage *token.Storage, cached *token.Cache) error {
 }
 
 func validateRemoteKubeconfig(config *clientcmdapi.Config) error {
-	if config.APIVersion != "v1" || config.Kind != "Config" || len(config.Clusters) != 1 ||
-		len(config.AuthInfos) != 1 || len(config.Contexts) != 1 || len(config.Extensions) != 0 ||
+	if len(config.Clusters) != 1 || len(config.AuthInfos) != 1 || len(config.Contexts) != 1 || len(config.Extensions) != 0 ||
 		config.Preferences.Colors || len(config.Preferences.Extensions) != 0 {
 		return fmt.Errorf("unexpected kubeconfig structure from server")
 	}
@@ -612,20 +611,25 @@ func validateRemoteKubeconfig(config *clientcmdapi.Config) error {
 		return fmt.Errorf("kubeconfig current context has missing references")
 	}
 	serverURL, err := url.Parse(cluster.Server)
-	if err != nil || serverURL.Scheme != "https" || serverURL.Host == "" || len(cluster.CertificateAuthorityData) == 0 {
+	if err != nil || serverURL.Scheme != "https" || serverURL.Host == "" || len(cluster.CertificateAuthorityData) == 0 || len(cluster.Extensions) != 0 {
 		return fmt.Errorf("unsafe cluster endpoint in kubeconfig")
 	}
 	expectedCluster := &clientcmdapi.Cluster{
 		Server:                   cluster.Server,
 		CertificateAuthorityData: cluster.CertificateAuthorityData,
+		Extensions:               cluster.Extensions,
 	}
 	if !reflect.DeepEqual(cluster, expectedCluster) {
 		return fmt.Errorf("unexpected cluster configuration in kubeconfig")
 	}
 	expectedContext := &clientcmdapi.Context{
-		Cluster:   kubeContext.Cluster,
-		AuthInfo:  kubeContext.AuthInfo,
-		Namespace: "default",
+		Cluster:    kubeContext.Cluster,
+		AuthInfo:   kubeContext.AuthInfo,
+		Namespace:  "default",
+		Extensions: kubeContext.Extensions,
+	}
+	if len(kubeContext.Extensions) != 0 {
+		return fmt.Errorf("unexpected context configuration in kubeconfig")
 	}
 	if !reflect.DeepEqual(kubeContext, expectedContext) {
 		return fmt.Errorf("unexpected context configuration in kubeconfig")
@@ -637,6 +641,10 @@ func validateRemoteKubeconfig(config *clientcmdapi.Config) error {
 		InteractiveMode: clientcmdapi.NeverExecInteractiveMode,
 	}}
 	for name, authInfo := range config.AuthInfos {
+		if len(authInfo.Extensions) != 0 {
+			return fmt.Errorf("unsafe exec configuration for user %q", name)
+		}
+		expectedAuthInfo.Extensions = authInfo.Extensions
 		if !reflect.DeepEqual(authInfo, expectedAuthInfo) {
 			return fmt.Errorf("unsafe exec configuration for user %q", name)
 		}

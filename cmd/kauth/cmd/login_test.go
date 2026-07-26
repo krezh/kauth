@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	"kauth/pkg/handlers"
 	"kauth/pkg/token"
 
 	"k8s.io/client-go/tools/clientcmd"
@@ -147,6 +148,21 @@ func TestValidateRemoteKubeconfig(t *testing.T) {
 				t.Error("validateRemoteKubeconfig() accepted unsafe exec configuration")
 			}
 		})
+	}
+}
+
+func TestValidateRemoteKubeconfigGeneratedByServer(t *testing.T) {
+	generator := handlers.KubeconfigGenerator{
+		ClusterName:   "cluster",
+		ClusterServer: "https://cluster.example",
+		ClusterCA:     base64.StdEncoding.EncodeToString([]byte("ca")),
+	}
+	config, err := clientcmd.Load([]byte(generator.Generate("user@example.com", "user")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := validateRemoteKubeconfig(config); err != nil {
+		t.Fatalf("validateRemoteKubeconfig() rejected server output: %v", err)
 	}
 }
 
