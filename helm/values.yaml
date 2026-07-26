@@ -2,10 +2,9 @@
 # For HA, run at least 3 replicas across different zones
 replicaCount: 3
 
-# Refresh rotation is stateful across versions, so old and new server binaries
-# must not serve concurrently during an upgrade.
-strategy:
-  type: Recreate
+# Override for migrations that require old and new server versions not to overlap.
+# Example: strategy: {type: Recreate}
+strategy: {}
 
 # Container image configuration
 image:
