@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.2.25](https://github.com/krezh/kauth/compare/0.2.24...0.2.25) (2026-07-27)
+
+
+### Features
+
+* **sessions:** bump lastUsed on uncached webhook token-review ([69d9528](https://github.com/krezh/kauth/commit/69d95285b5eadfd50605e0bad0f77489b81eb605))
+
+
+### Bug Fixes
+
+* **govendor:** run govendor ([bd68a87](https://github.com/krezh/kauth/commit/bd68a87c9db874556411efda69b0615500fe275e))
+
+
+### Miscellaneous Chores
+
+* **nix:** lock file maintenance flake.lock ([#291](https://github.com/krezh/kauth/issues/291)) ([eaf3864](https://github.com/krezh/kauth/commit/eaf386425a299e45606b06d57755a96d25e7f93a))
+
 ## [0.2.24](https://github.com/krezh/kauth/compare/0.2.23...0.2.24) (2026-07-23)
 
 
