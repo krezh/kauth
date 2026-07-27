@@ -13,10 +13,25 @@ import (
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	"k8s.io/apimachinery/pkg/util/wait"
 	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/dynamic"
 	"k8s.io/client-go/rest"
+	"k8s.io/client-go/util/retry"
 )
+
+// lastUsedBackoff bounds the optimistic-concurrency retry for TouchLastUsed.
+// The throttle window already coalesces most concurrent writers into a no-op,
+// so a few short retries suffice; we don't depend on retry.DefaultBackoff
+// drifting in future k8s versions. Worst-case total wait is well under 200ms,
+// a small fraction of the 10s webhook timeout.
+var lastUsedBackoff = wait.Backoff{
+	Steps:    3,
+	Duration: 10 * time.Millisecond,
+	Factor:   2.0,
+	Jitter:   0.1,
+	Cap:      100 * time.Millisecond,
+}
 
 // Client wraps Kubernetes dynamic client for OAuthSession operations
 type Client struct {
@@ -270,6 +285,43 @@ func (c *Client) UpdateLastUsed(ctx context.Context, sessionID string) error {
 	}
 
 	return nil
+}
+
+// TouchLastUsed bumps .spec.lastUsed on a session at most once per window. If
+// the stored timestamp is fresher than window (or a concurrent writer refreshes
+// it during the retry), the call is a no-op. Returns nil in the no-op case so
+// callers can fire-and-forget without distinguishing "skipped" from "written".
+//
+// The optimistic-concurrency retry is necessary because the webhook can fire
+// concurrently with refresh/revoke writes to the same CR; a plain Update would
+// fail with a conflict and silently drop the timestamp bump.
+func (c *Client) TouchLastUsed(ctx context.Context, sessionID string, window time.Duration) error {
+	return retry.RetryOnConflict(lastUsedBackoff, func() error {
+		session, err := c.Get(ctx, sessionID)
+		if err != nil {
+			return err
+		}
+
+		if !session.Spec.LastUsed.IsZero() && time.Since(session.Spec.LastUsed.Time) < window {
+			return nil
+		}
+
+		session.Spec.LastUsed = metav1.Now()
+
+		unstructuredObj := &unstructured.Unstructured{}
+		unstructuredMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(session)
+		if err != nil {
+			return fmt.Errorf("failed to convert to unstructured: %w", err)
+		}
+		unstructuredObj.Object = unstructuredMap
+
+		_, err = c.dynamicClient.Resource(c.gvr()).Namespace(c.namespace).Update(
+			ctx,
+			unstructuredObj,
+			metav1.UpdateOptions{},
+		)
+		return err
+	})
 }
 
 // UpdateUserID updates the user ID in the session spec

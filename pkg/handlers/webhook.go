@@ -17,9 +17,20 @@ import (
 // webhookTimeout bounds how long a single TokenReview may take (decrypt + CRD lookup).
 const webhookTimeout = 10 * time.Second
 
-// sessionGetter is the subset of *session.Client the webhook needs.
-type sessionGetter interface {
+// lastUsedThrottle bounds how often the webhook bumps .spec.lastUsed per session.
+// The API server may fire many uncached TokenReviews within seconds (different
+// verbs, users, cache evictions); writing on every one would hammer etcd and
+// conflict with concurrent refresh/revoke writes. 30s is "live enough" for the
+// kubectl Last Used column (which renders as a relative age recomputed at print
+// time) while keeping the write rate to at most a couple per minute per session.
+const lastUsedThrottle = 30 * time.Second
+
+// sessionStore is the subset of *session.Client the webhook needs: read the
+// session CRD to authenticate, and bump LastUsed on a successful validation so
+// the expiry goroutine and the kubectl Last Used column reflect genuine usage.
+type sessionStore interface {
 	Get(ctx context.Context, sessionID string) (*v1alpha1.OAuthSession, error)
+	TouchLastUsed(ctx context.Context, sessionID string, window time.Duration) error
 }
 
 // WebhookHandler implements a Kubernetes token webhook authenticator. The API
@@ -29,7 +40,7 @@ type sessionGetter interface {
 // No OIDC verification occurs here — the CRD is the authoritative source of truth.
 type WebhookHandler struct {
 	jwtManager    *jwt.Manager
-	sessionClient sessionGetter
+	sessionClient sessionStore
 }
 
 // NewWebhookHandler builds a WebhookHandler.
@@ -106,6 +117,11 @@ func (h *WebhookHandler) authenticate(ctx context.Context, rawToken string) (use
 	if sess.Status.Phase != v1alpha1.SessionActive {
 		return "", nil, "session not active"
 	}
+
+	// Bump LastUsed so the expiry goroutine sees fresh activity and the
+	// kubectl Last Used column advances. Throttled per-session; best-effort —
+	// a write failure must not fail the auth decision.
+	_ = h.sessionClient.TouchLastUsed(ctx, cred.SessionID, lastUsedThrottle)
 
 	return sess.Status.Email, sess.Status.Groups, ""
 }

@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"testing"
+	"time"
 
 	v1alpha1 "kauth/pkg/apis/kauth.io/v1alpha1"
 
@@ -263,6 +264,51 @@ func TestClient_UpdateLastUsed(t *testing.T) {
 	after, _ := client.Get(ctx, "lastused-test")
 	if after.Spec.LastUsed.IsZero() {
 		t.Error("LastUsed should be set after update")
+	}
+}
+
+func TestClient_TouchLastUsed(t *testing.T) {
+	client := newFakeClient(t)
+	ctx := context.Background()
+
+	if _, err := client.Create(ctx, "touch-test", "verifier", "user@example.com"); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+
+	// First touch on a never-used session writes regardless of window.
+	const window = time.Minute
+	if err := client.TouchLastUsed(ctx, "touch-test", window); err != nil {
+		t.Fatalf("TouchLastUsed() first error = %v", err)
+	}
+	first, _ := client.Get(ctx, "touch-test")
+	if first.Spec.LastUsed.IsZero() {
+		t.Fatal("LastUsed should be set after first touch")
+	}
+	firstTime := first.Spec.LastUsed.Time
+
+	// Second touch within the window is a no-op: timestamp unchanged.
+	if err := client.TouchLastUsed(ctx, "touch-test", window); err != nil {
+		t.Fatalf("TouchLastUsed() second error = %v", err)
+	}
+	second, _ := client.Get(ctx, "touch-test")
+	if !second.Spec.LastUsed.Time.Equal(firstTime) {
+		t.Errorf("LastUsed changed within throttle window:\nfirst  %v\nsecond %v", firstTime, second.Spec.LastUsed.Time)
+	}
+
+	// Touch with a zero window always writes (no throttle). The fake client
+	// round-trips metav1.Time through JSON at second precision, so a strict
+	// "advances" assertion is flaky within the same wall-clock second; we
+	// assert only that the forced write succeeds, preserves a non-zero
+	// timestamp, and does not regress to before firstTime.
+	if err := client.TouchLastUsed(ctx, "touch-test", 0); err != nil {
+		t.Fatalf("TouchLastUsed() forced error = %v", err)
+	}
+	third, _ := client.Get(ctx, "touch-test")
+	if third.Spec.LastUsed.IsZero() {
+		t.Error("LastUsed should remain set after forced touch")
+	}
+	if third.Spec.LastUsed.Time.Before(firstTime) {
+		t.Errorf("LastUsed regressed:\nfirst  %v\nthird  %v", firstTime, third.Spec.LastUsed.Time)
 	}
 }
 

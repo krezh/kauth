@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	v1alpha1 "kauth/pkg/apis/kauth.io/v1alpha1"
 	"kauth/pkg/jwt"
@@ -15,14 +16,19 @@ import (
 	authnv1 "k8s.io/api/authentication/v1"
 )
 
-// fakeSessionGetter implements sessionGetter for webhook tests.
-type fakeSessionGetter struct {
+// fakeSessionStore implements sessionStore for webhook tests. TouchLastUsed is
+// a no-op because the tests assert on the auth decision, not on LastUsed writes.
+type fakeSessionStore struct {
 	session *v1alpha1.OAuthSession
 	err     error
 }
 
-func (f *fakeSessionGetter) Get(_ context.Context, _ string) (*v1alpha1.OAuthSession, error) {
+func (f *fakeSessionStore) Get(_ context.Context, _ string) (*v1alpha1.OAuthSession, error) {
 	return f.session, f.err
+}
+
+func (f *fakeSessionStore) TouchLastUsed(_ context.Context, _ string, _ time.Duration) error {
+	return nil
 }
 
 func activeSession(email string, groups []string) *v1alpha1.OAuthSession {
@@ -90,7 +96,7 @@ func TestHandleTokenReview_Authentication(t *testing.T) {
 	tests := []struct {
 		name          string
 		token         string
-		session       sessionGetter
+		session       sessionStore
 		wantAuthd     bool
 		wantUsername  string
 		wantGroupsLen int
@@ -98,7 +104,7 @@ func TestHandleTokenReview_Authentication(t *testing.T) {
 		{
 			name:          "valid token with active session",
 			token:         validToken,
-			session:       &fakeSessionGetter{session: activeSession(email, groups)},
+			session:       &fakeSessionStore{session: activeSession(email, groups)},
 			wantAuthd:     true,
 			wantUsername:  email,
 			wantGroupsLen: 2,
@@ -106,31 +112,31 @@ func TestHandleTokenReview_Authentication(t *testing.T) {
 		{
 			name:      "valid token with revoked session",
 			token:     validToken,
-			session:   &fakeSessionGetter{session: revokedSession(email)},
+			session:   &fakeSessionStore{session: revokedSession(email)},
 			wantAuthd: false,
 		},
 		{
 			name:      "valid token but session lookup fails",
 			token:     validToken,
-			session:   &fakeSessionGetter{err: fmt.Errorf("not found")},
+			session:   &fakeSessionStore{err: fmt.Errorf("not found")},
 			wantAuthd: false,
 		},
 		{
 			name:      "garbage token is rejected",
 			token:     "notavalidtoken",
-			session:   &fakeSessionGetter{session: activeSession(email, groups)},
+			session:   &fakeSessionStore{session: activeSession(email, groups)},
 			wantAuthd: false,
 		},
 		{
 			name:      "empty token is rejected",
 			token:     "",
-			session:   &fakeSessionGetter{session: activeSession(email, groups)},
+			session:   &fakeSessionStore{session: activeSession(email, groups)},
 			wantAuthd: false,
 		},
 		{
 			name:      "old compound token format is rejected",
 			token:     "kauth_sess123.header.payload.sig",
-			session:   &fakeSessionGetter{session: activeSession(email, groups)},
+			session:   &fakeSessionStore{session: activeSession(email, groups)},
 			wantAuthd: false,
 		},
 	}
@@ -168,7 +174,7 @@ func TestHandleTokenReview_Authentication(t *testing.T) {
 }
 
 func TestHandleTokenReview_WrongMethod(t *testing.T) {
-	h := &WebhookHandler{jwtManager: newTestJWTManager(t), sessionClient: &fakeSessionGetter{}}
+	h := &WebhookHandler{jwtManager: newTestJWTManager(t), sessionClient: &fakeSessionStore{}}
 	req := httptest.NewRequest(http.MethodGet, "/webhook/token-review", nil)
 	rr := httptest.NewRecorder()
 	h.HandleTokenReview(rr, req)
@@ -178,7 +184,7 @@ func TestHandleTokenReview_WrongMethod(t *testing.T) {
 }
 
 func TestHandleTokenReview_BadBody(t *testing.T) {
-	h := &WebhookHandler{jwtManager: newTestJWTManager(t), sessionClient: &fakeSessionGetter{}}
+	h := &WebhookHandler{jwtManager: newTestJWTManager(t), sessionClient: &fakeSessionStore{}}
 	req := httptest.NewRequest(http.MethodPost, "/webhook/token-review", bytes.NewReader([]byte("not json")))
 	rr := httptest.NewRecorder()
 	h.HandleTokenReview(rr, req)

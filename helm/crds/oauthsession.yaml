@@ -34,7 +34,7 @@ spec:
                 lastUsed:
                   type: string
                   format: date-time
-                  description: Timestamp when session was last used for token refresh
+                  description: Timestamp when session was last used (token refresh or API server token-review via the webhook)
             status:
               type: object
               properties:
