@@ -150,7 +150,7 @@ func (c *Client) UpdateStatus(ctx context.Context, sessionID string, status v1al
 	// This closes the TOCTOU window where a concurrent revoke between
 	// ValidateSession and UpdateStatus would be silently undone.
 	if status.Phase == v1alpha1.SessionActive &&
-		(session.Status.Phase == v1alpha1.SessionRevoked || session.Status.Phase == v1alpha1.SessionExpired) {
+		(session.Status.Phase == v1alpha1.SessionRevoked || session.Status.Phase == v1alpha1.SessionExpired || session.Status.Phase == v1alpha1.SessionFailed) {
 		return fmt.Errorf("session is in terminal state %s, cannot reactivate", session.Status.Phase)
 	}
 
@@ -514,7 +514,7 @@ func (c *Client) CleanupOldSessions(ctx context.Context, terminalTTL, pendingTTL
 
 		// Only delete terminal or stale pending sessions; skip active ones
 		phase := session.Status.Phase
-		if phase != v1alpha1.SessionRevoked && phase != v1alpha1.SessionExpired && phase != v1alpha1.SessionPending && phase != v1alpha1.SessionAuthenticating {
+		if phase != v1alpha1.SessionRevoked && phase != v1alpha1.SessionExpired && phase != v1alpha1.SessionPending && phase != v1alpha1.SessionAuthenticating && phase != v1alpha1.SessionFailed {
 			continue
 		}
 
@@ -530,7 +530,7 @@ func (c *Client) CleanupOldSessions(ctx context.Context, terminalTTL, pendingTTL
 		}
 
 		ttl := terminalTTL
-		if phase == v1alpha1.SessionPending || phase == v1alpha1.SessionAuthenticating {
+		if phase == v1alpha1.SessionPending || phase == v1alpha1.SessionAuthenticating || phase == v1alpha1.SessionFailed {
 			ttl = pendingTTL
 		}
 		if ageRef.Before(time.Now().Add(-ttl)) {

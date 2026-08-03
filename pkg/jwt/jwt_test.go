@@ -115,6 +115,17 @@ func TestDashboardTokensArePurposeBound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	loginToken, err := manager.CreateDashboardLoginToken("state", "verifier", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	login, err := manager.ValidateDashboardLoginToken(loginToken)
+	if err != nil || login.State != "state" || login.Verifier != "verifier" {
+		t.Fatalf("login token = %#v, error = %v", login, err)
+	}
+	if _, err := manager.ValidateDashboardSessionToken(loginToken); err != ErrInvalidToken {
+		t.Fatalf("login token accepted as dashboard session: %v", err)
+	}
 	sessionToken, err := manager.CreateDashboardSessionToken("user@example.com", "subject", "https://issuer.example", []string{"developers"}, time.Minute)
 	if err != nil {
 		t.Fatal(err)

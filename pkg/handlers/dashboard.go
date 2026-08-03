@@ -21,6 +21,7 @@ import (
 const (
 	dashboardCookie      = "kauth_dashboard"
 	dashboardLoginCookie = "kauth_dashboard_login"
+	dashboardLoginTTL    = 10 * time.Minute
 	dashboardSessionTTL  = 15 * time.Minute
 )
 
@@ -74,15 +75,15 @@ func (h *DashboardHandler) handleLogout(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "Forbidden", http.StatusForbidden)
 		return
 	}
-	h.clearCookie(w, dashboardCookie)
-	http.Redirect(w, r, "/login", http.StatusSeeOther)
+	h.clearCookie(w, dashboardCookieName(h.secureCookie))
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
 func (h *DashboardHandler) requireSession(next func(http.ResponseWriter, *http.Request, *jwt.DashboardSessionToken)) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		claims, ok := h.dashboardClaims(r)
 		if !ok {
-			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			h.renderSignIn(w)
 			return
 		}
 		w.Header().Set("Cache-Control", "no-store")
@@ -90,8 +91,14 @@ func (h *DashboardHandler) requireSession(next func(http.ResponseWriter, *http.R
 	}
 }
 
+func (h *DashboardHandler) renderSignIn(w http.ResponseWriter) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	_, _ = fmt.Fprint(w, `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>kauth</title><style>body{margin:0;background:#f4f1e9;color:#20231f;font:16px system-ui,sans-serif;min-height:100vh;display:grid;place-items:center}.card{width:min(420px,calc(100% - 48px));border:1px solid #20231f;background:#fffdf7;padding:40px;box-shadow:8px 8px 0 #20231f}.mark{font:700 28px ui-monospace,monospace;margin:0 0 32px}.card h1{font-size:32px;line-height:1.1;margin:0 0 12px}.card p{color:#60655e;line-height:1.6;margin:0 0 28px}.button{display:inline-block;background:#20231f;color:#fff;text-decoration:none;padding:12px 18px;font-weight:700}.button:focus,.button:hover{background:#3d4938}</style></head><body><main class="card"><div class="mark">kauth</div><h1>Kubernetes access</h1><p>Sign in to view your sessions and request history.</p><a class="button" href="/login">Sign in</a></main></body></html>`)
+}
+
 func (h *DashboardHandler) dashboardClaims(r *http.Request) (*jwt.DashboardSessionToken, bool) {
-	cookie, err := r.Cookie(dashboardCookie)
+	cookie, err := r.Cookie(dashboardCookieName(h.secureCookie))
 	if err != nil {
 		return nil, false
 	}
@@ -215,6 +222,27 @@ func (h *DashboardHandler) validCSRF(r *http.Request, claims *jwt.DashboardSessi
 
 func (h *DashboardHandler) clearCookie(w http.ResponseWriter, name string) {
 	http.SetCookie(w, &http.Cookie{Name: name, Path: "/", MaxAge: -1, HttpOnly: true, Secure: h.secureCookie, SameSite: http.SameSiteLaxMode})
+}
+
+func dashboardCookieName(secure bool) string {
+	if secure {
+		return "__Host-" + dashboardCookie
+	}
+	return dashboardCookie
+}
+
+func dashboardLoginCookieName(secure bool) string {
+	if secure {
+		return "__Host-" + dashboardLoginCookie
+	}
+	return dashboardLoginCookie
+}
+
+func dashboardLoginCookiePath(secure bool) string {
+	if secure {
+		return "/"
+	}
+	return "/callback"
 }
 
 func sessionInfo(item v1alpha1.OAuthSession) SessionInfo {

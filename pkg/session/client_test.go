@@ -195,8 +195,13 @@ func TestClient_ClaimLoginIsSingleUse(t *testing.T) {
 	if err := client.ClaimLogin(ctx, "claim-test"); err != nil {
 		t.Fatal(err)
 	}
+	if err := client.UpdateStatus(ctx, "claim-test", v1alpha1.OAuthSessionStatus{
+		Phase: v1alpha1.SessionFailed, Error: "token exchange failed",
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if err := client.ClaimLogin(ctx, "claim-test"); !errors.Is(err, ErrLoginAlreadyClaimed) {
-		t.Fatalf("second ClaimLogin() error = %v, want ErrLoginAlreadyClaimed", err)
+		t.Fatalf("ClaimLogin() after failure error = %v, want ErrLoginAlreadyClaimed", err)
 	}
 }
 

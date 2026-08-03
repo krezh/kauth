@@ -10,6 +10,7 @@ type SessionPhase string
 const (
 	SessionPending        SessionPhase = "Pending"
 	SessionAuthenticating SessionPhase = "Authenticating"
+	SessionFailed         SessionPhase = "Failed"
 	SessionActive         SessionPhase = "Active"
 	SessionRevoked        SessionPhase = "Revoked"
 	SessionExpired        SessionPhase = "Expired"

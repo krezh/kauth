@@ -121,6 +121,8 @@ env: []
   #   value: "production"
   # - name: BASE_URL
   #   value: "https://kauth.example.com"
+  # - name: ALLOW_INSECURE_HTTP
+  #   value: "false"         # Development only; production BASE_URL must use HTTPS
   # - name: SESSION_TTL
   #   value: "15m"           # Session token lifetime (default: 15m)
   # - name: REFRESH_TOKEN_TTL

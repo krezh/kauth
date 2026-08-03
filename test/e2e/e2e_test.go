@@ -534,14 +534,12 @@ func (e *e2eEnvironment) login() (string, error) {
 		return "", err
 	}
 	browser := e.dashboardHTTPClient(jar)
-	response, err := browser.Get(started.LoginURL)
+	loginURL, err := url.Parse(started.LoginURL)
 	if err != nil {
 		return "", err
 	}
-	_ = response.Body.Close()
-	loginURL, err := url.Parse(response.Header.Get("Location"))
-	if err != nil {
-		return "", err
+	if loginURL.Query().Get("session_token") != "" {
+		return "", fmt.Errorf("CLI credential leaked into login URL")
 	}
 	e.sessionID = loginURL.Query().Get("state")
 	if e.sessionID == "" {
@@ -553,7 +551,7 @@ func (e *e2eEnvironment) login() (string, error) {
 		return "", fmt.Errorf("login URL has no PKCE challenge: %s", started.LoginURL)
 	}
 	callbackURL := fmt.Sprintf("%s/callback?state=%s&code=%s", e.proxyURL, url.QueryEscape(e.sessionID), url.QueryEscape("e2e-code."+challenge))
-	response, err = browser.Get(callbackURL)
+	response, err := browser.Get(callbackURL)
 	if err != nil {
 		return "", err
 	}
@@ -637,14 +635,14 @@ func (e *e2eEnvironment) writeKubectlConfig(generated string) (string, error) {
 }
 
 func TestKauthProxyEndToEnd(t *testing.T) {
-	t.Run("CLI login also authenticates dashboard", func(t *testing.T) {
+	t.Run("CLI callback does not establish an unbound dashboard session", func(t *testing.T) {
 		response, err := environment.loginBrowser.Get(environment.proxyURL + "/")
 		if err != nil {
 			t.Fatal(err)
 		}
 		defer response.Body.Close()
 		body, _ := io.ReadAll(response.Body)
-		if response.StatusCode != http.StatusOK || !strings.Contains(string(body), testUser) {
+		if response.StatusCode != http.StatusOK || !strings.Contains(string(body), "Sign in") || strings.Contains(string(body), testUser) {
 			t.Fatalf("dashboard after CLI login = %d: %s", response.StatusCode, body)
 		}
 	})
@@ -922,38 +920,36 @@ func TestKauthProxyEndToEnd(t *testing.T) {
 	})
 
 	t.Run("dashboard state CSRF and pagination defenses", func(t *testing.T) {
-		concurrentClient, state, challenge := environment.dashboardLoginStart(t)
-		callback := environment.proxyURL + "/callback?state=" + url.QueryEscape(state) + "&code=" + url.QueryEscape("dashboard-user-code."+challenge)
-		statuses := make(chan int, 2)
-		for range 2 {
-			go func() {
-				response, err := concurrentClient.Get(callback)
-				if err != nil {
-					statuses <- 0
-					return
-				}
-				_ = response.Body.Close()
-				statuses <- response.StatusCode
-			}()
+		before, err := environment.sessionClient.ListAll(context.Background())
+		if err != nil {
+			t.Fatal(err)
 		}
-		counts := map[int]int{}
-		for range 2 {
-			counts[<-statuses]++
+		anonymousClient := environment.dashboardHTTPClient(nil)
+		response, err := anonymousClient.Get(environment.proxyURL + "/")
+		if err != nil {
+			t.Fatal(err)
 		}
-		if counts[http.StatusSeeOther] != 1 || counts[http.StatusConflict]+counts[http.StatusBadRequest] != 1 {
-			t.Fatalf("concurrent callback statuses = %v", counts)
+		page, _ := io.ReadAll(response.Body)
+		_ = response.Body.Close()
+		if response.StatusCode != http.StatusOK || !strings.Contains(string(page), "Sign in") {
+			t.Fatalf("anonymous dashboard = %d: %s", response.StatusCode, page)
+		}
+		after, err := environment.sessionClient.ListAll(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(after) != len(before) {
+			t.Fatalf("anonymous dashboard created a session: before=%d after=%d", len(before), len(after))
 		}
 
-		jar, err := cookiejar.New(nil)
+		client, dashboardState, dashboardChallenge := environment.dashboardLoginStart(t)
+		afterLoginStart, err := environment.sessionClient.ListAll(context.Background())
 		if err != nil {
 			t.Fatal(err)
 		}
-		client := environment.dashboardHTTPClient(jar)
-		response, err := client.Get(environment.proxyURL + "/login")
-		if err != nil {
-			t.Fatal(err)
+		if len(afterLoginStart) != len(after) {
+			t.Fatalf("dashboard login created a session: before=%d after=%d", len(after), len(afterLoginStart))
 		}
-		_ = response.Body.Close()
 		response, err = client.Get(environment.proxyURL + "/callback?state=wrong&code=dashboard-user-code")
 		if err != nil {
 			t.Fatal(err)
@@ -962,8 +958,34 @@ func TestKauthProxyEndToEnd(t *testing.T) {
 		if response.StatusCode != http.StatusBadRequest {
 			t.Fatalf("invalid dashboard state status=%d, want 400", response.StatusCode)
 		}
+		callbackURL, _ := url.Parse(environment.proxyURL + "/callback")
+		if cookies := client.Jar.Cookies(callbackURL); !hasCookie(cookies, "__Host-kauth_dashboard_login") {
+			t.Fatalf("mismatched callback removed dashboard login cookie: %#v", cookies)
+		}
+		validCallback := environment.proxyURL + "/callback?state=" + url.QueryEscape(dashboardState) + "&code=" + url.QueryEscape("dashboard-user-code."+dashboardChallenge)
+		response, err = client.Get(validCallback)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = response.Body.Close()
+		if response.StatusCode != http.StatusSeeOther {
+			t.Fatalf("matching dashboard callback status=%d, want 303", response.StatusCode)
+		}
+		if cookies := client.Jar.Cookies(callbackURL); hasCookie(cookies, "__Host-kauth_dashboard_login") {
+			t.Fatalf("matching callback retained dashboard login cookie: %#v", cookies)
+		}
 
-		client = environment.dashboardClient(t, "dashboard-user-code")
+		noEmailClient, noEmailState, noEmailChallenge := environment.dashboardLoginStart(t)
+		noEmailCallback := environment.proxyURL + "/callback?state=" + url.QueryEscape(noEmailState) + "&code=" + url.QueryEscape("dashboard-no-email-code."+noEmailChallenge)
+		response, err = noEmailClient.Get(noEmailCallback)
+		if err != nil {
+			t.Fatal(err)
+		}
+		_ = response.Body.Close()
+		if response.StatusCode != http.StatusForbidden {
+			t.Fatalf("missing-email callback status=%d, want 403", response.StatusCode)
+		}
+
 		response, err = client.Get(environment.proxyURL + "/sessions/" + url.PathEscape(environment.sessionID) + "?page=101")
 		if err != nil {
 			t.Fatal(err)
@@ -977,7 +999,7 @@ func TestKauthProxyEndToEnd(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		page, _ := io.ReadAll(response.Body)
+		page, _ = io.ReadAll(response.Body)
 		_ = response.Body.Close()
 		csrf := hiddenValue(string(page), "csrf")
 		if csrf == "" {
@@ -991,13 +1013,16 @@ func TestKauthProxyEndToEnd(t *testing.T) {
 		if response.StatusCode != http.StatusSeeOther {
 			t.Fatalf("valid logout status=%d, want 303", response.StatusCode)
 		}
+		if response.Header.Get("Location") != "/" {
+			t.Fatalf("logout location=%q, want /", response.Header.Get("Location"))
+		}
 		response, err = client.Get(environment.proxyURL + "/")
 		if err != nil {
 			t.Fatal(err)
 		}
 		_ = response.Body.Close()
-		if response.StatusCode != http.StatusSeeOther && response.StatusCode != http.StatusFound {
-			t.Fatalf("logged-out dashboard status=%d, want redirect", response.StatusCode)
+		if response.StatusCode != http.StatusOK {
+			t.Fatalf("logged-out dashboard status=%d, want sign-in page", response.StatusCode)
 		}
 	})
 
@@ -1166,6 +1191,9 @@ func (e *e2eEnvironment) dashboardLoginStart(t *testing.T) (*http.Client, string
 	if challenge == "" || authorizationURL.Query().Get("code_challenge_method") != "S256" {
 		t.Fatalf("dashboard authorization URL has invalid PKCE challenge: %s", authorizationURL)
 	}
+	if authorizationURL.Query().Get("access_type") == "offline" || strings.Contains(authorizationURL.Query().Get("scope"), "offline_access") {
+		t.Fatalf("dashboard authorization requested offline access: %s", authorizationURL)
+	}
 	if state == "" {
 		t.Fatal("dashboard authorization URL has no state")
 	}
@@ -1243,6 +1271,15 @@ func hiddenValue(page, name string) string {
 		return ""
 	}
 	return page[start : start+end]
+}
+
+func hasCookie(cookies []*http.Cookie, name string) bool {
+	for _, cookie := range cookies {
+		if cookie.Name == name {
+			return true
+		}
+	}
+	return false
 }
 
 func (e *e2eEnvironment) refresh(t *testing.T, refreshToken string) (string, int, string) {

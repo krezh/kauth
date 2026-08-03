@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/url"
@@ -73,6 +74,7 @@ func main() {
 		TLSCertFile:       getEnv("TLS_CERT_FILE", ""),
 		TLSKeyFile:        getEnv("TLS_KEY_FILE", ""),
 		DatabaseURL:       getEnv("DATABASE_URL", ""),
+		AllowInsecureHTTP: getEnvBool("ALLOW_INSECURE_HTTP", false),
 		JWTSigningKey:     jwtSigningKey,
 		JWTEncryptionKey:  jwtEncryptionKey,
 		SessionTTL:        getEnvDuration("SESSION_TTL", 15*time.Minute),
@@ -102,10 +104,12 @@ func main() {
 		os.Exit(1)
 	}
 	cfg.BaseURL = strings.TrimRight(cfg.BaseURL, "/")
-	publicURL, err := url.Parse(cfg.BaseURL)
-	if err != nil || publicURL.Host == "" || (publicURL.Scheme != "http" && publicURL.Scheme != "https") || (publicURL.Path != "" && publicURL.Path != "/") {
-		slog.Error("BASE_URL must be an absolute HTTP(S) URL without a path", "value", cfg.BaseURL)
+	if err := validateBaseURL(cfg.BaseURL, cfg.AllowInsecureHTTP); err != nil {
+		slog.Error("Invalid BASE_URL", "value", cfg.BaseURL, "error", err)
 		os.Exit(1)
+	}
+	if strings.HasPrefix(cfg.BaseURL, "http://") {
+		slog.Warn("INSECURE HTTP ENABLED: browser cookies are not Secure or host-locked; use only for local development", "base_url", cfg.BaseURL)
 	}
 	kubernetesProxyURL := cfg.BaseURL + "/k8s"
 
@@ -292,20 +296,7 @@ func main() {
 	rateLimiter := middleware.NewRateLimiter(cfg.RateLimitRPS, cfg.RateLimitBurst, 5*time.Minute, cfg.TrustedProxyCIDRs)
 	controlHandler = rateLimiter.Middleware(controlHandler)
 
-	kubernetesHandler := http.StripPrefix("/k8s", proxyHandler)
-	var handler http.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/k8s" {
-			redirect := *r.URL
-			redirect.Path = "/k8s/"
-			http.Redirect(w, r, redirect.String(), http.StatusPermanentRedirect)
-			return
-		}
-		if strings.HasPrefix(r.URL.Path, "/k8s/") {
-			kubernetesHandler.ServeHTTP(w, r)
-			return
-		}
-		controlHandler.ServeHTTP(w, r)
-	})
+	handler := routeHandler(controlHandler, proxyHandler)
 	handler = middleware.SecurityHeaders(handler)
 	if cfg.TLSCertFile != "" && cfg.TLSKeyFile != "" {
 		handler = middleware.HSTS(handler)
@@ -385,11 +376,62 @@ func main() {
 	}
 }
 
+func withoutCookies(r *http.Request) *http.Request {
+	request := r.Clone(r.Context())
+	request.Header.Del("Cookie")
+	return request
+}
+
+func routeHandler(controlHandler, proxyHandler http.Handler) http.Handler {
+	kubernetesHandler := http.StripPrefix("/k8s", proxyHandler)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/k8s" {
+			redirect := *r.URL
+			redirect.Path = "/k8s/"
+			http.Redirect(w, r, redirect.String(), http.StatusPermanentRedirect)
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/k8s/") {
+			kubernetesHandler.ServeHTTP(w, withoutCookies(r))
+			return
+		}
+		if strings.HasPrefix(r.URL.Path, "/api/") {
+			controlHandler.ServeHTTP(w, withoutCookies(r))
+			return
+		}
+		controlHandler.ServeHTTP(w, r)
+	})
+}
+
 func getEnv(key, defaultValue string) string {
 	if value := os.Getenv(key); value != "" {
 		return value
 	}
 	return defaultValue
+}
+
+func validateBaseURL(value string, allowInsecureHTTP bool) error {
+	publicURL, err := url.Parse(value)
+	if err != nil || publicURL.Host == "" || (publicURL.Scheme != "http" && publicURL.Scheme != "https") || (publicURL.Path != "" && publicURL.Path != "/") {
+		return errors.New("must be an absolute HTTP(S) URL without a path")
+	}
+	if publicURL.Scheme != "https" && !allowInsecureHTTP {
+		return errors.New("must use HTTPS; set ALLOW_INSECURE_HTTP=true only for local development")
+	}
+	return nil
+}
+
+func getEnvBool(key string, defaultValue bool) bool {
+	value := os.Getenv(key)
+	if value == "" {
+		return defaultValue
+	}
+	parsed, err := strconv.ParseBool(value)
+	if err != nil {
+		slog.Warn("invalid env var, using default", "key", key, "value", value)
+		return defaultValue
+	}
+	return parsed
 }
 
 func getEnvBytes(key string) []byte {

@@ -10,7 +10,6 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"net/url"
 	"slices"
 	"strings"
 	"sync"
@@ -34,7 +33,6 @@ type LoginHandler struct {
 	refreshTokenTTL   time.Duration
 	sessionHistoryTTL time.Duration
 	allowedGroups     []string
-	baseURL           string
 	secureCookie      bool
 
 	// CRD client for distributed session storage
@@ -79,7 +77,6 @@ func NewLoginHandler(
 		refreshTokenTTL:   refreshTokenTTL,
 		sessionHistoryTTL: sessionHistoryTTL,
 		allowedGroups:     allowedGroups,
-		baseURL:           baseURL,
 		secureCookie:      strings.HasPrefix(baseURL, "https://"),
 		sessionClient:     sessionClient,
 		sseListeners:      make(map[string][]chan StatusResponse),
@@ -99,7 +96,7 @@ func (h *LoginHandler) HandleStartLogin(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	sessionToken, _, err := h.createLogin(r.Context(), jwt.LoginModeCLI)
+	sessionToken, sessionID, verifier, err := h.createCLILogin(r.Context())
 	if err != nil {
 		slog.ErrorContext(r.Context(), "failed to create login", "error", err)
 		http.Error(w, "Failed to create session", http.StatusInternalServerError)
@@ -107,27 +104,31 @@ func (h *LoginHandler) HandleStartLogin(w http.ResponseWriter, r *http.Request) 
 	}
 	writeJSON(w, StartLoginResponse{
 		SessionToken: sessionToken,
-		LoginURL:     h.baseURL + "/login?session_token=" + url.QueryEscape(sessionToken),
+		LoginURL: h.provider.OAuth2Config.AuthCodeURL(
+			sessionID,
+			oauth2.AccessTypeOffline,
+			oauth2.S256ChallengeOption(verifier),
+		),
 	})
 }
 
-func (h *LoginHandler) createLogin(ctx context.Context, mode string) (string, string, error) {
+func (h *LoginHandler) createCLILogin(ctx context.Context) (string, string, string, error) {
 	// Generate session ID and PKCE verifier
 	sessionID := generateRandomString(32)
 	verifier := oauth2.GenerateVerifier()
 
 	// Create stateless session token (JWT)
-	sessionToken, err := h.jwtManager.CreateSessionTokenForMode(sessionID, verifier, mode, h.sessionTTL)
+	sessionToken, err := h.jwtManager.CreateSessionToken(sessionID, verifier, h.sessionTTL)
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
 
 	// Store session in CRD (distributed across all pods)
 	_, err = h.sessionClient.Create(ctx, sessionID, verifier, "")
 	if err != nil {
-		return "", "", err
+		return "", "", "", err
 	}
-	return sessionToken, sessionID, nil
+	return sessionToken, sessionID, verifier, nil
 }
 
 func (h *LoginHandler) HandleBrowserLogin(w http.ResponseWriter, r *http.Request) {
@@ -135,36 +136,23 @@ func (h *LoginHandler) HandleBrowserLogin(w http.ResponseWriter, r *http.Request
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-	sessionToken := r.URL.Query().Get("session_token")
-	if sessionToken == "" {
-		var err error
-		sessionToken, _, err = h.createLogin(r.Context(), jwt.LoginModeDashboard)
-		if err != nil {
-			slog.ErrorContext(r.Context(), "failed to create browser login", "error", err)
-			http.Error(w, "Failed to create session", http.StatusInternalServerError)
-			return
-		}
-	}
-	transaction, err := h.jwtManager.ValidateSessionToken(sessionToken)
+	state, err := oauth.GenerateState()
 	if err != nil {
-		http.Error(w, "Invalid login session", http.StatusBadRequest)
+		http.Error(w, "Failed to create login", http.StatusInternalServerError)
 		return
 	}
-	crdSession, err := h.sessionClient.Get(r.Context(), transaction.SessionID)
-	if err != nil || crdSession.Status.Phase != v1alpha1.SessionPending ||
-		subtle.ConstantTimeCompare([]byte(transaction.Verifier), []byte(crdSession.Spec.Verifier)) != 1 {
-		http.Error(w, "Invalid login session", http.StatusBadRequest)
+	verifier := oauth2.GenerateVerifier()
+	binding, err := h.jwtManager.CreateDashboardLoginToken(state, verifier, dashboardLoginTTL)
+	if err != nil {
+		http.Error(w, "Failed to create login", http.StatusInternalServerError)
 		return
 	}
-	h.setBrowserCookie(w, loginBindingCookieName(transaction.SessionID), sessionToken, "/callback", transaction.ExpiresAt)
+	h.setBrowserCookie(w, dashboardLoginCookieName(h.secureCookie), binding, dashboardLoginCookiePath(h.secureCookie), time.Now().Add(dashboardLoginTTL), http.SameSiteLaxMode)
 	config := *h.provider.OAuth2Config
-	if transaction.Mode == jwt.LoginModeDashboard {
-		config.Scopes = slices.DeleteFunc(append([]string(nil), config.Scopes...), func(scope string) bool { return scope == "offline_access" })
-	}
+	config.Scopes = slices.DeleteFunc(append([]string(nil), config.Scopes...), func(scope string) bool { return scope == "offline_access" })
 	http.Redirect(w, r, config.AuthCodeURL(
-		transaction.SessionID,
-		oauth2.AccessTypeOffline,
-		oauth2.S256ChallengeOption(transaction.Verifier),
+		state,
+		oauth2.S256ChallengeOption(verifier),
 	), http.StatusFound)
 }
 
@@ -184,10 +172,6 @@ func (h *LoginHandler) HandleWatch(w http.ResponseWriter, r *http.Request) {
 		} else {
 			http.Error(w, "Invalid session token", http.StatusUnauthorized)
 		}
-		return
-	}
-	if sessionJWT.Mode != jwt.LoginModeCLI {
-		http.Error(w, "Invalid CLI login session", http.StatusUnauthorized)
 		return
 	}
 
@@ -312,44 +296,52 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
-	bindingCookieName := loginBindingCookieName(state)
-	bindingCookie, err := r.Cookie(bindingCookieName)
-	if err != nil {
-		http.Error(w, "Login session expired", http.StatusBadRequest)
-		return
-	}
-	binding, err := h.jwtManager.ValidateSessionToken(bindingCookie.Value)
-	if err != nil || subtle.ConstantTimeCompare([]byte(binding.SessionID), []byte(state)) != 1 {
-		http.Error(w, "Invalid login state", http.StatusBadRequest)
-		return
-	}
-
-	// Get session from CRD to retrieve verifier
-	crdSession, err := h.sessionClient.Get(ctx, state)
-	if err != nil {
-		if apierrors.IsNotFound(err) {
-			http.Error(w, "Session not found or expired", http.StatusBadRequest)
-		} else {
-			http.Error(w, "Failed to get session", http.StatusInternalServerError)
+	dashboardMode := false
+	verifier := ""
+	loginCookieName := dashboardLoginCookieName(h.secureCookie)
+	loginCookiePath := dashboardLoginCookiePath(h.secureCookie)
+	if bindingCookie, err := r.Cookie(loginCookieName); err == nil {
+		binding, err := h.jwtManager.ValidateDashboardLoginToken(bindingCookie.Value)
+		if err != nil {
+			h.clearBrowserCookie(w, loginCookieName, loginCookiePath)
+		} else if subtle.ConstantTimeCompare([]byte(binding.State), []byte(state)) == 1 {
+			h.clearBrowserCookie(w, loginCookieName, loginCookiePath)
+			dashboardMode = true
+			verifier = binding.Verifier
 		}
-		return
 	}
-	if crdSession.Status.Phase != v1alpha1.SessionPending ||
-		subtle.ConstantTimeCompare([]byte(binding.Verifier), []byte(crdSession.Spec.Verifier)) != 1 {
-		http.Error(w, "Invalid login session", http.StatusBadRequest)
-		return
+	if !dashboardMode {
+		crdSession, err := h.sessionClient.Get(ctx, state)
+		if err != nil {
+			if apierrors.IsNotFound(err) {
+				http.Error(w, "Session not found or expired", http.StatusBadRequest)
+			} else {
+				http.Error(w, "Failed to get session", http.StatusInternalServerError)
+			}
+			return
+		}
+		if crdSession.Status.Phase != v1alpha1.SessionPending {
+			http.Error(w, "Invalid login session", http.StatusBadRequest)
+			return
+		}
+		if err := h.sessionClient.ClaimLogin(ctx, state); err != nil {
+			if errors.Is(err, session.ErrLoginAlreadyClaimed) {
+				http.Error(w, "Login session already used", http.StatusConflict)
+				return
+			}
+			slog.ErrorContext(ctx, "failed to claim login session", "error", err)
+			http.Error(w, "Failed to start login", http.StatusInternalServerError)
+			return
+		}
+		verifier = crdSession.Spec.Verifier
 	}
-	if err := h.sessionClient.ClaimLogin(ctx, state); err != nil {
-		http.Error(w, "Login session already used", http.StatusConflict)
-		return
+	recordLoginError := func(message string) {
+		if !dashboardMode {
+			_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{Phase: v1alpha1.SessionFailed, Error: message})
+		}
 	}
-
-	verifier := crdSession.Spec.Verifier
 	if verifier == "" {
-		_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
-			Phase: v1alpha1.SessionPending,
-			Error: "Invalid session",
-		})
+		recordLoginError("Invalid session")
 		http.Error(w, "Invalid session", http.StatusInternalServerError)
 		return
 	}
@@ -357,20 +349,14 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	// Handle OAuth errors
 	if errParam := r.URL.Query().Get("error"); errParam != "" {
 		errDesc := r.URL.Query().Get("error_description")
-		_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
-			Phase: v1alpha1.SessionPending,
-			Error: fmt.Sprintf("%s: %s", errParam, errDesc),
-		})
+		recordLoginError(fmt.Sprintf("%s: %s", errParam, errDesc))
 		http.Error(w, errParam, http.StatusBadRequest)
 		return
 	}
 
 	code := r.URL.Query().Get("code")
 	if code == "" {
-		_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
-			Phase: v1alpha1.SessionPending,
-			Error: "No authorization code returned",
-		})
+		recordLoginError("No authorization code returned")
 		http.Error(w, "No code returned", http.StatusBadRequest)
 		return
 	}
@@ -385,20 +371,14 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	)
 	if err != nil {
 		slog.ErrorContext(ctx, "token exchange failed", "error", err)
-		_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
-			Phase: v1alpha1.SessionPending,
-			Error: "Token exchange failed",
-		})
+		recordLoginError("Token exchange failed")
 		http.Error(w, "Authentication failed", http.StatusInternalServerError)
 		return
 	}
 
 	idToken, ok := token.Extra("id_token").(string)
 	if !ok {
-		_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
-			Phase: v1alpha1.SessionPending,
-			Error: "No ID token returned",
-		})
+		recordLoginError("No ID token returned")
 		http.Error(w, "Authentication failed", http.StatusInternalServerError)
 		return
 	}
@@ -406,11 +386,13 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	claims, verifiedIDToken, err := VerifyAndExtractClaims(ctx, h.provider, idToken)
 	if err != nil {
 		slog.ErrorContext(ctx, "ID token verification failed", "error", err)
-		_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
-			Phase: v1alpha1.SessionPending,
-			Error: "Token verification failed",
-		})
+		recordLoginError("Token verification failed")
 		http.Error(w, "Authentication failed", http.StatusInternalServerError)
+		return
+	}
+	if claims.Email == "" {
+		recordLoginError("Identity provider did not return an email address")
+		http.Error(w, "Authentication failed: identity provider did not return an email address", http.StatusForbidden)
 		return
 	}
 
@@ -418,10 +400,7 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	if len(h.allowedGroups) > 0 {
 		if !h.isUserAuthorized(claims.Groups) {
 			audit.AuthorizationDeny(ctx, r, claims.Email, claims.Groups, h.allowedGroups)
-			_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
-				Phase: v1alpha1.SessionPending,
-				Error: "User is not a member of allowed groups",
-			})
+			recordLoginError("User is not a member of allowed groups")
 			http.Error(w, "Forbidden: user not in allowed groups", http.StatusForbidden)
 			return
 		}
@@ -437,13 +416,8 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		"groups", claims.Groups,
 		"cluster", h.kubeconfigGen.ClusterName,
 	)
-	if binding.Mode == jwt.LoginModeDashboard {
-		if err := h.sessionClient.Delete(ctx, state); err != nil {
-			slog.ErrorContext(ctx, "failed to consume dashboard login", "error", err)
-			http.Error(w, "Internal error", http.StatusInternalServerError)
-			return
-		}
-		h.completeBrowserLogin(w, r, bindingCookieName, claims, verifiedIDToken.Issuer, verifiedIDToken.Expiry)
+	if dashboardMode {
+		h.completeBrowserLogin(w, r, claims, verifiedIDToken.Issuer, verifiedIDToken.Expiry)
 		return
 	}
 
@@ -456,20 +430,14 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		h.refreshTokenTTL,
 	)
 	if err != nil {
-		_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
-			Phase: v1alpha1.SessionPending,
-			Error: "Failed to create refresh token",
-		})
+		recordLoginError("Failed to create refresh token")
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
 
 	apiToken, err := h.jwtManager.CreateAPIToken(state, h.refreshTokenTTL)
 	if err != nil {
-		_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
-			Phase: v1alpha1.SessionPending,
-			Error: "Failed to create API token",
-		})
+		recordLoginError("Failed to create API token")
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
@@ -493,10 +461,11 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	if err := h.sessionClient.UpdateUserID(ctx, state, claims.Email); err != nil {
 		slog.WarnContext(ctx, "failed to set session user ID", "session", state[:8], "error", err)
 	}
-	h.completeBrowserLogin(w, r, bindingCookieName, claims, verifiedIDToken.Issuer, verifiedIDToken.Expiry)
+	// CLI callbacks are not browser-bound, so they must not establish a dashboard session.
+	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
-func (h *LoginHandler) completeBrowserLogin(w http.ResponseWriter, r *http.Request, bindingCookieName string, claims *OIDCClaims, issuer string, idTokenExpiry time.Time) {
+func (h *LoginHandler) completeBrowserLogin(w http.ResponseWriter, r *http.Request, claims *OIDCClaims, issuer string, idTokenExpiry time.Time) {
 	ttl := dashboardSessionTTL
 	if remaining := time.Until(idTokenExpiry); remaining < ttl {
 		ttl = remaining
@@ -506,21 +475,17 @@ func (h *LoginHandler) completeBrowserLogin(w http.ResponseWriter, r *http.Reque
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
 	}
-	h.clearBrowserCookie(w, bindingCookieName, "/callback")
-	h.setBrowserCookie(w, dashboardCookie, dashboardToken, "/", time.Now().Add(ttl))
+	h.setBrowserCookie(w, dashboardCookieName(h.secureCookie), dashboardToken, "/", time.Now().Add(ttl), http.SameSiteLaxMode)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
 }
 
-func (h *LoginHandler) setBrowserCookie(w http.ResponseWriter, name, value, path string, expires time.Time) {
-	http.SetCookie(w, &http.Cookie{Name: name, Value: value, Path: path, Expires: expires, MaxAge: int(time.Until(expires).Seconds()), HttpOnly: true, Secure: h.secureCookie, SameSite: http.SameSiteLaxMode})
+func (h *LoginHandler) setBrowserCookie(w http.ResponseWriter, name, value, path string, expires time.Time, sameSite http.SameSite) {
+	// The dashboard lives at /. API and Kubernetes routes strip cookies before dispatch.
+	http.SetCookie(w, &http.Cookie{Name: name, Value: value, Path: path, Expires: expires, MaxAge: int(time.Until(expires).Seconds()), HttpOnly: true, Secure: h.secureCookie, SameSite: sameSite})
 }
 
 func (h *LoginHandler) clearBrowserCookie(w http.ResponseWriter, name, path string) {
 	http.SetCookie(w, &http.Cookie{Name: name, Path: path, MaxAge: -1, HttpOnly: true, Secure: h.secureCookie, SameSite: http.SameSiteLaxMode})
-}
-
-func loginBindingCookieName(state string) string {
-	return dashboardLoginCookie + "_" + state
 }
 
 func generateRandomString(size int) string {

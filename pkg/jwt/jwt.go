@@ -23,7 +23,6 @@ var (
 // SessionToken contains OAuth flow state (encrypted, signed)
 type SessionToken struct {
 	Type      string    `json:"type"`
-	Mode      string    `json:"mode"`
 	SessionID string    `json:"sessionID"`
 	Verifier  string    `json:"verifier"`
 	CreatedAt time.Time `json:"created_at"`
@@ -40,6 +39,15 @@ type APICredential struct {
 const apiCredentialType = "api"
 
 const dashboardSessionType = "dashboard_session"
+
+const dashboardLoginType = "dashboard_login"
+
+type DashboardLoginToken struct {
+	Type      string    `json:"type"`
+	State     string    `json:"state"`
+	Verifier  string    `json:"verifier"`
+	ExpiresAt time.Time `json:"expires_at"`
+}
 
 type DashboardSessionToken struct {
 	Type      string    `json:"type"`
@@ -63,10 +71,8 @@ type RefreshToken struct {
 }
 
 const (
-	loginTokenType     = "login"
-	refreshTokenType   = "refresh"
-	LoginModeCLI       = "cli"
-	LoginModeDashboard = "dashboard"
+	loginTokenType   = "login"
+	refreshTokenType = "refresh"
 )
 
 // Manager handles JWT creation and validation
@@ -94,14 +100,9 @@ func NewManager(signingKey, encryptionKey []byte) (*Manager, error) {
 
 // CreateSessionToken creates an encrypted and signed session token
 func (m *Manager) CreateSessionToken(sessionID, verifier string, ttl time.Duration) (string, error) {
-	return m.CreateSessionTokenForMode(sessionID, verifier, LoginModeCLI, ttl)
-}
-
-func (m *Manager) CreateSessionTokenForMode(sessionID, verifier, mode string, ttl time.Duration) (string, error) {
 	now := time.Now()
 	session := SessionToken{
 		Type:      loginTokenType,
-		Mode:      mode,
 		SessionID: sessionID,
 		Verifier:  verifier,
 		CreatedAt: now,
@@ -153,7 +154,7 @@ func (m *Manager) ValidateSessionToken(token string) (*SessionToken, error) {
 	}
 
 	// Check expiry
-	if session.Type != loginTokenType || (session.Mode != LoginModeCLI && session.Mode != LoginModeDashboard) || session.SessionID == "" || session.Verifier == "" {
+	if session.Type != loginTokenType || session.SessionID == "" || session.Verifier == "" {
 		return nil, ErrInvalidToken
 	}
 	if time.Now().After(session.ExpiresAt) {
@@ -290,6 +291,23 @@ func (m *Manager) ValidateAPIToken(token string) (*APICredential, error) {
 		return nil, ErrExpiredToken
 	}
 	return cred, nil
+}
+
+func (m *Manager) CreateDashboardLoginToken(state, verifier string, ttl time.Duration) (string, error) {
+	return m.createTypedToken(DashboardLoginToken{
+		Type: dashboardLoginType, State: state, Verifier: verifier, ExpiresAt: time.Now().Add(ttl),
+	})
+}
+
+func (m *Manager) ValidateDashboardLoginToken(token string) (*DashboardLoginToken, error) {
+	var claims DashboardLoginToken
+	if err := m.decodeTypedToken(token, dashboardLoginType, &claims); err != nil {
+		return nil, err
+	}
+	if claims.State == "" || claims.Verifier == "" || time.Now().After(claims.ExpiresAt) {
+		return nil, ErrInvalidToken
+	}
+	return &claims, nil
 }
 
 func (m *Manager) CreateDashboardSessionToken(email, subject, issuer string, groups []string, ttl time.Duration) (string, error) {

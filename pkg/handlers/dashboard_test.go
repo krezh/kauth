@@ -61,15 +61,27 @@ func TestDashboardOwnsSession(t *testing.T) {
 func TestDashboardCookieScope(t *testing.T) {
 	handler := &LoginHandler{secureCookie: true}
 	response := httptest.NewRecorder()
-	handler.setBrowserCookie(response, dashboardCookie, "value", "/", time.Now().Add(time.Minute))
+	handler.setBrowserCookie(response, dashboardCookieName(true), "value", "/", time.Now().Add(time.Minute), http.SameSiteLaxMode)
 	cookies := response.Result().Cookies()
-	if len(cookies) != 1 || cookies[0].Path != "/" || !cookies[0].Secure || !cookies[0].HttpOnly || cookies[0].SameSite != http.SameSiteLaxMode {
+	if len(cookies) != 1 || cookies[0].Name != "__Host-kauth_dashboard" || cookies[0].Path != "/" || !cookies[0].Secure || !cookies[0].HttpOnly || cookies[0].SameSite != http.SameSiteLaxMode {
 		t.Fatalf("unexpected dashboard cookie: %#v", cookies)
 	}
 
 	response = httptest.NewRecorder()
-	handler.setBrowserCookie(response, loginBindingCookieName("state"), "value", "/callback", time.Now().Add(time.Minute))
-	if cookies := response.Result().Cookies(); len(cookies) != 1 || cookies[0].Path != "/callback" {
+	handler.setBrowserCookie(response, dashboardLoginCookieName(true), "value", dashboardLoginCookiePath(true), time.Now().Add(time.Minute), http.SameSiteLaxMode)
+	if cookies := response.Result().Cookies(); len(cookies) != 1 || cookies[0].Name != "__Host-kauth_dashboard_login" || cookies[0].Path != "/" || !cookies[0].Secure || cookies[0].SameSite != http.SameSiteLaxMode {
 		t.Fatalf("unexpected login binding cookie: %#v", cookies)
+	}
+	if dashboardLoginCookieName(false) != dashboardLoginCookie || dashboardLoginCookiePath(false) != "/callback" {
+		t.Fatal("HTTP development cookie must remain unprefixed and callback-scoped")
+	}
+}
+
+func TestAnonymousDashboardDoesNotStartLogin(t *testing.T) {
+	handler := &DashboardHandler{}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "Sign in") {
+		t.Fatalf("anonymous dashboard = %d: %s", response.Code, response.Body.String())
 	}
 }
