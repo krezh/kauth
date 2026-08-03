@@ -75,6 +75,85 @@ func TestNewManager(t *testing.T) {
 	}
 }
 
+func TestAPIToken(t *testing.T) {
+	manager, err := NewManager(make([]byte, 32), make([]byte, 32))
+	if err != nil {
+		t.Fatalf("NewManager: %v", err)
+	}
+
+	token, err := manager.CreateAPIToken("session-1", time.Hour)
+	if err != nil {
+		t.Fatalf("CreateAPIToken: %v", err)
+	}
+	credential, err := manager.ValidateAPIToken(token)
+	if err != nil {
+		t.Fatalf("ValidateAPIToken: %v", err)
+	}
+	if credential.Type != apiCredentialType || credential.SessionID != "session-1" {
+		t.Fatalf("credential = %#v", credential)
+	}
+
+	expired, err := manager.CreateAPIToken("session-1", -time.Minute)
+	if err != nil {
+		t.Fatalf("CreateAPIToken expired: %v", err)
+	}
+	if _, err := manager.ValidateAPIToken(expired); err != ErrExpiredToken {
+		t.Fatalf("expired token error = %v", err)
+	}
+
+	sessionToken, err := manager.CreateSessionToken("session-1", "verifier", time.Hour)
+	if err != nil {
+		t.Fatalf("CreateSessionToken: %v", err)
+	}
+	if _, err := manager.ValidateAPIToken(sessionToken); err != ErrInvalidToken {
+		t.Fatalf("session token accepted as API token: %v", err)
+	}
+}
+
+func TestDashboardTokensArePurposeBound(t *testing.T) {
+	manager, err := NewManager(make([]byte, 32), make([]byte, 32))
+	if err != nil {
+		t.Fatal(err)
+	}
+	loginToken, err := manager.CreateDashboardLoginToken("state", "verifier", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	login, err := manager.ValidateDashboardLoginToken(loginToken)
+	if err != nil || login.State != "state" || login.Verifier != "verifier" {
+		t.Fatalf("login token = %#v, error = %v", login, err)
+	}
+	if _, err := manager.ValidateDashboardSessionToken(loginToken); err != ErrInvalidToken {
+		t.Fatalf("login token accepted as dashboard session: %v", err)
+	}
+
+	sessionToken, err := manager.CreateDashboardSessionToken("user@example.com", "subject", "https://issuer.example", []string{"developers"}, time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	session, err := manager.ValidateDashboardSessionToken(sessionToken)
+	if err != nil || session.Email != "user@example.com" || session.CSRFToken == "" {
+		t.Fatalf("dashboard session = %#v, error = %v", session, err)
+	}
+	if _, err := manager.ValidateAPIToken(sessionToken); err != ErrInvalidToken {
+		t.Fatalf("dashboard session accepted as API token: %v", err)
+	}
+	expiredSession, err := manager.CreateDashboardSessionToken("user@example.com", "subject", "https://issuer.example", nil, -time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.ValidateDashboardSessionToken(expiredSession); err == nil {
+		t.Fatal("expired dashboard session was accepted")
+	}
+	expiredLogin, err := manager.CreateDashboardLoginToken("state", "verifier", -time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.ValidateDashboardLoginToken(expiredLogin); err == nil {
+		t.Fatal("expired dashboard login transaction was accepted")
+	}
+}
+
 func TestEncryptDecrypt(t *testing.T) {
 	signingKey := make([]byte, 32)
 	encryptionKey := make([]byte, 32)

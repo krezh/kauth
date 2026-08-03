@@ -26,7 +26,6 @@ type OIDCClaims struct {
 type KubeconfigGenerator struct {
 	ClusterName   string
 	ClusterServer string
-	ClusterCA     string
 }
 
 // writeJSON writes v as JSON with Content-Type set. Encoding errors are logged but not returned.
@@ -55,12 +54,11 @@ func (kg *KubeconfigGenerator) Generate(email, username string) string {
 	return fmt.Sprintf(`apiVersion: v1
 kind: Config
 clusters:
-- name: %s
+- name: %q
   cluster:
-    server: %s
-    certificate-authority-data: %s
+    server: %q
 users:
-- name: %s
+- name: %q
   user:
     exec:
       apiVersion: client.authentication.k8s.io/v1
@@ -69,13 +67,13 @@ users:
       - get-token
       interactiveMode: Never
 contexts:
-- name: %s
+- name: %q
   context:
-    cluster: %s
-    user: %s
+    cluster: %q
+    user: %q
     namespace: default
-current-context: %s
-`, kg.ClusterName, kg.ClusterServer, kg.ClusterCA,
+current-context: %q
+`, kg.ClusterName, kg.ClusterServer,
 		email,
 		contextName, kg.ClusterName, email,
 		contextName)

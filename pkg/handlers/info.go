@@ -10,6 +10,7 @@ type InfoResponse struct {
 	ClientID      string `json:"client_id"`
 	LoginURL      string `json:"login_url"`
 	RefreshURL    string `json:"refresh_url"`
+	DashboardURL  string `json:"dashboard_url"`
 }
 
 // HandleInfo returns cluster configuration
@@ -22,6 +23,7 @@ func HandleInfo(clusterName, clusterServer, issuerURL, clientID, baseURL string)
 			ClientID:      clientID,
 			LoginURL:      baseURL + "/login",
 			RefreshURL:    baseURL + "/refresh",
+			DashboardURL:  baseURL + "/dashboard",
 		}
 
 		writeJSON(w, info)

@@ -1,0 +1,71 @@
+# Container setup
+
+Use the container when kauth runs outside Kubernetes or under a scheduler other
+than Helm. The container needs a kubeconfig for the cluster it proxies.
+
+## Prerequisites
+
+- A PostgreSQL database
+- An OIDC client
+- A public HTTPS endpoint for port 8080
+- A kubeconfig readable inside the container
+- The OAuthSession CRD from `helm/crds/oauthsession.yaml`
+
+The kubeconfig identity needs namespaced CRUD and watch access to
+`oauthsessions.kauth.io` and `oauthsessions/status`. It also needs cluster-scoped
+`impersonate` access to core `users` and `groups`.
+
+Create the session namespace and install the CRD before starting kauth:
+
+```sh
+kubectl create namespace kauth
+kubectl apply --server-side -f helm/crds/oauthsession.yaml
+```
+
+Register these OIDC redirect URIs:
+
+```text
+https://kauth.example.com/callback
+https://kauth.example.com/dashboard/callback
+```
+
+## Run
+
+Create an environment file:
+
+```dotenv
+OIDC_ISSUER_URL=https://login.example.com
+OIDC_CLIENT_ID=kauth
+OIDC_CLIENT_SECRET=<client-secret>
+JWT_SIGNING_KEY=<base64-encoded-32-byte-key>
+JWT_ENCRYPTION_KEY=<base64-encoded-32-byte-key>
+DATABASE_URL=postgres://kauth:<password>@postgres.example.com:5432/kauth?sslmode=verify-full&sslrootcert=/certs/postgres-ca.crt
+BASE_URL=https://kauth.example.com
+CLUSTER_NAME=production
+KAUTH_NAMESPACE=kauth
+ADMIN_GROUPS=platform-admins
+KUBECONFIG=/config/kubeconfig
+```
+
+Run the image, mounting the kubeconfig and PostgreSQL CA certificate read-only:
+
+```sh
+docker run --rm \
+  --env-file kauth.env \
+  --publish 8080:8080 \
+  --volume "$HOME/.kube/config:/config/kubeconfig:ro" \
+  --volume "$PWD/postgres-ca.crt:/certs/postgres-ca.crt:ro" \
+  ghcr.io/krezh/kauth-server:latest
+```
+
+Terminate public TLS at a reverse proxy or gateway in front of port 8080. To
+terminate TLS in kauth instead, mount the certificate and key and set
+`TLS_CERT_FILE` and `TLS_KEY_FILE`.
+
+## Login
+
+```sh
+kauth login --url https://kauth.example.com
+```
+
+The dashboard is available at `https://kauth.example.com/dashboard`.

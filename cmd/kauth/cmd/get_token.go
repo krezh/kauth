@@ -16,8 +16,7 @@ var getTokenCmd = &cobra.Command{
 	Long: `Get the current authentication token for use as a Kubernetes exec credential plugin.
 
 The token is a long-lived encrypted session credential. kubectl caches it until
-the session expires. Revocation takes effect within the API server's webhook
-cache TTL (default 30s). Re-run kauth login after expiry or revocation.`,
+the session expires. Re-run kauth login after expiry or revocation.`,
 	RunE: runGetToken,
 }
 
@@ -44,14 +43,14 @@ func runGetToken(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("not authenticated.\n\nTo authenticate, run:\n  kauth login --url <server-url>\n\nExample:\n  kauth login --url https://kauth.example.com")
 	}
 
-	if cachedToken.WebhookToken != "" {
+	if cachedToken.APIToken != "" {
 		if cachedToken.Expiry.IsZero() || time.Now().Before(cachedToken.Expiry.Add(-5*time.Minute)) {
-			return outputExecCredential(cachedToken.WebhookToken, cachedToken.Expiry)
+			return outputExecCredential(cachedToken.APIToken, cachedToken.Expiry)
 		}
 		return fmt.Errorf("session expired.\n\nTo re-authenticate, run:\n  kauth login")
 	}
 
-	return fmt.Errorf("no webhook token found.\n\nYour authentication session may be from an older version of kauth.\nTo re-authenticate, run:\n  kauth login")
+	return fmt.Errorf("no API token found.\n\nYour authentication session may be from an older version of kauth.\nTo re-authenticate, run:\n  kauth login")
 }
 
 func outputExecCredential(tok string, expiresAt time.Time) error {

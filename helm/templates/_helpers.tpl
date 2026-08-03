@@ -6,6 +6,15 @@ Expand the name of the chart.
 {{- end }}
 
 {{/*
+Create a cluster-scoped impersonation RBAC name unique to the release namespace.
+*/}}
+{{- define "kauth.impersonatorName" -}}
+{{- $prefix := include "kauth.fullname" . | trunc 41 | trimSuffix "-" -}}
+{{- $hash := printf "%s/%s" .Release.Namespace .Release.Name | sha256sum | trunc 8 -}}
+{{- printf "%s-impersonator-%s" $prefix $hash -}}
+{{- end }}
+
+{{/*
 Create a default fully qualified app name.
 */}}
 {{- define "kauth.fullname" -}}

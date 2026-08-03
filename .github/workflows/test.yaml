@@ -52,3 +52,27 @@ jobs:
           nix flake check
           nix build .#kauth
           nix build .#kauth-server
+
+  e2e-test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install test tools
+        run: |
+          go install helm.sh/helm/v4/cmd/helm@latest
+          go install sigs.k8s.io/kind@latest
+
+      - name: Run end-to-end tests
+        run: go test -tags=e2e -count=1 -timeout=15m -v ./test/e2e

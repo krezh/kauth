@@ -34,7 +34,7 @@ spec:
                 lastUsed:
                   type: string
                   format: date-time
-                  description: Timestamp when session was last used (token refresh or API server token-review via the webhook)
+                  description: Timestamp when the session last refreshed or used the Kubernetes API proxy
             status:
               type: object
               properties:
@@ -52,6 +52,12 @@ spec:
                 username:
                   type: string
                   description: Authenticated user's preferred username
+                subject:
+                  type: string
+                  description: Immutable OIDC subject identifier
+                issuer:
+                  type: string
+                  description: OIDC issuer that asserted the subject
                 refreshToken:
                   type: string
                   description: Encrypted JWT refresh token for token rotation
@@ -59,6 +65,10 @@ spec:
                   type: string
                   format: date-time
                   description: Timestamp when the session was revoked
+                expiredAt:
+                  type: string
+                  format: date-time
+                  description: Timestamp when the session expired
                 error:
                   type: string
                   description: Error message if OAuth flow failed
@@ -71,9 +81,9 @@ spec:
                   description: User's group memberships from OIDC at login time
                   items:
                     type: string
-                webhookToken:
+                apiToken:
                   type: string
-                  description: Encrypted webhook credential for Kubernetes exec plugin
+                  description: Encrypted credential for the Kubernetes API proxy
       subresources:
         status: {}
       additionalPrinterColumns:

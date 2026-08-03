@@ -310,6 +310,11 @@ type responseWriter struct {
 	statusCode int
 }
 
+// Unwrap preserves optional interfaces used by streaming and upgraded requests.
+func (rw *responseWriter) Unwrap() http.ResponseWriter {
+	return rw.ResponseWriter
+}
+
 func (rw *responseWriter) WriteHeader(code int) {
 	rw.statusCode = code
 	rw.ResponseWriter.WriteHeader(code)

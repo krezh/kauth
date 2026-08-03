@@ -57,6 +57,10 @@ schema = 3
     version = "v1.1.2-0.20180830191138-d8f796af33cc"
     hash = "sha256-fV9oI51xjHdOmEx6+dlq7Ku2Ag+m/bmbzPo6A4Y74qc="
     packages = ["github.com/davecgh/go-spew/spew"]
+  [mod."github.com/emicklei/go-restful/v3"]
+    version = "v3.13.0"
+    hash = "sha256-lB2Z29RDLiVQE5NrsV1s2iHeQ4ciGwNj5OG1zJxwZV8="
+    go = "1.13"
   [mod."github.com/fxamacker/cbor/v2"]
     version = "v2.9.1"
     hash = "sha256-lwx/RvW1pEXTezGAZRjAXEtDymE+pfBn7HOTpDdkF9o="
@@ -92,11 +96,34 @@ schema = 3
     hash = "sha256-sxShRxqOUVlz9IkAz0C/NP/7CmLBW3ffwoZTdh+rIOc="
     go = "1.22"
     packages = ["github.com/google/gnostic-models/compiler", "github.com/google/gnostic-models/extensions", "github.com/google/gnostic-models/jsonschema", "github.com/google/gnostic-models/openapiv2", "github.com/google/gnostic-models/openapiv3"]
+  [mod."github.com/google/uuid"]
+    version = "v1.6.0"
+    hash = "sha256-VWl9sqUzdOuhW0KzQlv0gwwUQClYkmZwSydHG2sALYw="
   [mod."github.com/inconshreveable/mousetrap"]
     version = "v1.1.0"
     hash = "sha256-XWlYH0c8IcxAwQTnIi6WYqq44nOKUylSWxWO/vi+8pE="
     go = "1.18"
     packages = ["github.com/inconshreveable/mousetrap"]
+  [mod."github.com/jackc/pgpassfile"]
+    version = "v1.0.0"
+    hash = "sha256-H0nFbC34/3pZUFnuiQk9W7yvAMh6qJDrqvHp+akBPLM="
+    go = "1.12"
+    packages = ["github.com/jackc/pgpassfile"]
+  [mod."github.com/jackc/pgservicefile"]
+    version = "v0.0.0-20240606120523-5a60cdf6a761"
+    hash = "sha256-ETpGsLAA2wcm5xJBayr/mZrCE1YsWbnkbSSX3ptrFn0="
+    go = "1.14"
+    packages = ["github.com/jackc/pgservicefile"]
+  [mod."github.com/jackc/pgx/v5"]
+    version = "v5.10.0"
+    hash = "sha256-rDJ6VNA0Pzei2KwZjETA1uOMgb5yuXJRgxUauwID630="
+    go = "1.25.0"
+    packages = ["github.com/jackc/pgx/v5", "github.com/jackc/pgx/v5/internal/iobufpool", "github.com/jackc/pgx/v5/internal/pgio", "github.com/jackc/pgx/v5/internal/sanitize", "github.com/jackc/pgx/v5/internal/stmtcache", "github.com/jackc/pgx/v5/pgconn", "github.com/jackc/pgx/v5/pgconn/ctxwatch", "github.com/jackc/pgx/v5/pgconn/internal/bgreader", "github.com/jackc/pgx/v5/pgproto3", "github.com/jackc/pgx/v5/pgtype", "github.com/jackc/pgx/v5/pgxpool"]
+  [mod."github.com/jackc/puddle/v2"]
+    version = "v2.2.2"
+    hash = "sha256-IUxdu4JYfsCh/qlz2SiUWu7EVPHhyooiVA4oaS2Z6yk="
+    go = "1.19"
+    packages = ["github.com/jackc/puddle/v2", "github.com/jackc/puddle/v2/internal/genstack"]
   [mod."github.com/josharian/intern"]
     version = "v1.0.0"
     hash = "sha256-LJR0QE2vOQ2/2shBbO5Yl8cVPq+NFrE3ers0vu9FRP0="
@@ -189,7 +216,7 @@ schema = 3
     version = "v0.20.0"
     hash = "sha256-ybcjhCfK6lroUM0yswUvWooW8MOQZBXyiSqoxG6Uy0Y="
     go = "1.25.0"
-    packages = ["golang.org/x/sync/errgroup"]
+    packages = ["golang.org/x/sync/errgroup", "golang.org/x/sync/semaphore", "golang.org/x/sync/singleflight"]
   [mod."golang.org/x/sys"]
     version = "v0.47.0"
     hash = "sha256-TpbRyWWqHjddP6QzUgAbaLd2EE0S+GYNRUIDJd18r98="
@@ -204,7 +231,7 @@ schema = 3
     version = "v0.36.0"
     hash = "sha256-/0t9C6Mc8kYjxweFB0us2lGKo8GovHhBiq5nlMOppC0="
     go = "1.25.0"
-    packages = ["golang.org/x/text/secure/bidirule", "golang.org/x/text/transform", "golang.org/x/text/unicode/bidi", "golang.org/x/text/unicode/norm"]
+    packages = ["golang.org/x/text/cases", "golang.org/x/text/internal", "golang.org/x/text/internal/language", "golang.org/x/text/internal/language/compact", "golang.org/x/text/internal/tag", "golang.org/x/text/language", "golang.org/x/text/runes", "golang.org/x/text/secure/bidirule", "golang.org/x/text/secure/precis", "golang.org/x/text/transform", "golang.org/x/text/unicode/bidi", "golang.org/x/text/unicode/norm", "golang.org/x/text/width"]
   [mod."golang.org/x/time"]
     version = "v0.15.0"
     hash = "sha256-5D24A65wn7k93Jj3+918UKjB9ccmGHPBEqjD2XDB92E="
@@ -231,7 +258,6 @@ schema = 3
     version = "v0.36.3"
     hash = "sha256-h3Uog5d1UsO4e+Yu5rtHpy9IEgCw7G8kmBOMcssVSM8="
     go = "1.26.0"
-    packages = ["k8s.io/api/authentication/v1"]
   [mod."k8s.io/apimachinery"]
     version = "v0.36.3"
     hash = "sha256-My1lGvhUG7HVQ4UR12FVVD/Nrn0i34326CojEeEIN0U="

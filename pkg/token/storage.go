@@ -16,7 +16,7 @@ type Cache struct {
 	IDToken      string    `json:"id_token,omitempty"`
 	RefreshToken string    `json:"refresh_token,omitempty"`
 	SessionID    string    `json:"session_id,omitempty"`
-	WebhookToken string    `json:"webhook_token,omitempty"`
+	APIToken     string    `json:"api_token,omitempty"`
 	Expiry       time.Time `json:"expiry,omitempty"`
 }
 

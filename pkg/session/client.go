@@ -2,6 +2,8 @@ package session
 
 import (
 	"context"
+	"crypto/subtle"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -9,6 +11,7 @@ import (
 	v1alpha1 "kauth/pkg/apis/kauth.io/v1alpha1"
 	"kauth/pkg/validation"
 
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -20,11 +23,13 @@ import (
 	"k8s.io/client-go/util/retry"
 )
 
+var ErrRefreshTokenReplayed = errors.New("refresh token is no longer current")
+
 // lastUsedBackoff bounds the optimistic-concurrency retry for TouchLastUsed.
 // The throttle window already coalesces most concurrent writers into a no-op,
 // so a few short retries suffice; we don't depend on retry.DefaultBackoff
 // drifting in future k8s versions. Worst-case total wait is well under 200ms,
-// a small fraction of the 10s webhook timeout.
+// a small fraction of the API authentication timeout.
 var lastUsedBackoff = wait.Backoff{
 	Steps:    3,
 	Duration: 10 * time.Millisecond,
@@ -148,13 +153,13 @@ func (c *Client) UpdateStatus(ctx context.Context, sessionID string, status v1al
 		return fmt.Errorf("session is in terminal state %s, cannot reactivate", session.Status.Phase)
 	}
 
-	existingWebhookToken := session.Status.WebhookToken
+	existingAPIToken := session.Status.APIToken
 	existingCompletedAt := session.Status.CompletedAt
 	session.Status = status
-	// Preserve the WebhookToken across status updates that don't explicitly set one.
+	// Preserve the APIToken across status updates that don't explicitly set one.
 	// The token is created once at login and must survive subsequent refresh cycles.
-	if status.WebhookToken == "" && existingWebhookToken != "" {
-		session.Status.WebhookToken = existingWebhookToken
+	if status.APIToken == "" && existingAPIToken != "" {
+		session.Status.APIToken = existingAPIToken
 	}
 	if status.Phase == v1alpha1.SessionActive && status.CompletedAt == nil {
 		if existingCompletedAt != nil {
@@ -184,6 +189,45 @@ func (c *Client) UpdateStatus(ctx context.Context, sessionID string, status v1al
 	return nil
 }
 
+// RotateRefreshToken replaces the current refresh token using the resource
+// version returned by Get. Concurrent attempts with the same token cannot both
+// commit successfully.
+func (c *Client) RotateRefreshToken(ctx context.Context, sessionID, currentToken string, status v1alpha1.OAuthSessionStatus) error {
+	return retry.OnError(lastUsedBackoff, apierrors.IsConflict, func() error {
+		session, err := c.Get(ctx, sessionID)
+		if err != nil {
+			return fmt.Errorf("failed to get session: %w", err)
+		}
+		if session.Status.Phase != v1alpha1.SessionActive {
+			return fmt.Errorf("session is not active")
+		}
+		if currentToken == "" || subtle.ConstantTimeCompare([]byte(currentToken), []byte(session.Status.RefreshToken)) != 1 {
+			return ErrRefreshTokenReplayed
+		}
+
+		existingAPIToken := session.Status.APIToken
+		existingCompletedAt := session.Status.CompletedAt
+		session.Status = status
+		if status.APIToken == "" {
+			session.Status.APIToken = existingAPIToken
+		}
+		if status.CompletedAt == nil {
+			session.Status.CompletedAt = existingCompletedAt
+		}
+
+		unstructuredObj := &unstructured.Unstructured{}
+		unstructuredMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(session)
+		if err != nil {
+			return fmt.Errorf("failed to convert to unstructured: %w", err)
+		}
+		unstructuredObj.Object = unstructuredMap
+		if _, err := c.dynamicClient.Resource(c.gvr()).Namespace(c.namespace).UpdateStatus(ctx, unstructuredObj, metav1.UpdateOptions{}); err != nil {
+			return fmt.Errorf("failed to rotate refresh token: %w", err)
+		}
+		return nil
+	})
+}
+
 // Revoke marks a session as revoked
 func (c *Client) Revoke(ctx context.Context, sessionID string) error {
 	session, err := c.Get(ctx, sessionID)
@@ -198,6 +242,8 @@ func (c *Client) Revoke(ctx context.Context, sessionID string) error {
 	now := metav1.Now()
 	session.Status.Phase = v1alpha1.SessionRevoked
 	session.Status.RevokedAt = &now
+	session.Status.RefreshToken = ""
+	session.Status.APIToken = ""
 
 	unstructuredObj := &unstructured.Unstructured{}
 	unstructuredMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(session)
@@ -220,6 +266,21 @@ func (c *Client) Revoke(ctx context.Context, sessionID string) error {
 
 // ListActive returns all sessions that are not revoked or expired
 func (c *Client) ListActive(ctx context.Context) ([]v1alpha1.OAuthSession, error) {
+	sessions, err := c.ListAll(ctx)
+	if err != nil {
+		return nil, err
+	}
+	active := make([]v1alpha1.OAuthSession, 0, len(sessions))
+	for _, session := range sessions {
+		if session.Status.Phase != v1alpha1.SessionRevoked && session.Status.Phase != v1alpha1.SessionExpired {
+			active = append(active, session)
+		}
+	}
+	return active, nil
+}
+
+// ListAll returns every managed OAuthSession, including terminal sessions.
+func (c *Client) ListAll(ctx context.Context) ([]v1alpha1.OAuthSession, error) {
 	list, err := c.dynamicClient.Resource(c.gvr()).Namespace(c.namespace).List(
 		ctx,
 		metav1.ListOptions{
@@ -230,19 +291,16 @@ func (c *Client) ListActive(ctx context.Context) ([]v1alpha1.OAuthSession, error
 		return nil, fmt.Errorf("failed to list sessions: %w", err)
 	}
 
-	var active []v1alpha1.OAuthSession
+	sessions := make([]v1alpha1.OAuthSession, 0, len(list.Items))
 	for _, item := range list.Items {
 		var session v1alpha1.OAuthSession
 		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(item.Object, &session); err != nil {
 			continue
 		}
 
-		if session.Status.Phase != v1alpha1.SessionRevoked && session.Status.Phase != v1alpha1.SessionExpired {
-			active = append(active, session)
-		}
+		sessions = append(sessions, session)
 	}
-
-	return active, nil
+	return sessions, nil
 }
 
 // ValidateSession checks if a session exists and has the expected phase
@@ -292,7 +350,7 @@ func (c *Client) UpdateLastUsed(ctx context.Context, sessionID string) error {
 // it during the retry), the call is a no-op. Returns nil in the no-op case so
 // callers can fire-and-forget without distinguishing "skipped" from "written".
 //
-// The optimistic-concurrency retry is necessary because the webhook can fire
+// The optimistic-concurrency retry is necessary because API requests can arrive
 // concurrently with refresh/revoke writes to the same CR; a plain Update would
 // fail with a conflict and silently drop the timestamp bump.
 func (c *Client) TouchLastUsed(ctx context.Context, sessionID string, window time.Duration) error {
@@ -408,9 +466,9 @@ func (c *Client) Watch(ctx context.Context, resourceVersion string) (watch.Inter
 	)
 }
 
-// CleanupOldSessions deletes sessions older than the specified TTL
-// Only deletes sessions that are Revoked or Expired
-func (c *Client) CleanupOldSessions(ctx context.Context, ttl time.Duration) error {
+// CleanupOldSessions deletes terminal history and stale pending sessions using
+// separate retention windows.
+func (c *Client) CleanupOldSessions(ctx context.Context, terminalTTL, pendingTTL time.Duration) error {
 	list, err := c.dynamicClient.Resource(c.gvr()).Namespace(c.namespace).List(
 		ctx,
 		metav1.ListOptions{
@@ -420,8 +478,6 @@ func (c *Client) CleanupOldSessions(ctx context.Context, ttl time.Duration) erro
 	if err != nil {
 		return fmt.Errorf("failed to list sessions: %w", err)
 	}
-
-	cutoff := time.Now().Add(-ttl)
 
 	for _, item := range list.Items {
 		var session v1alpha1.OAuthSession
@@ -440,11 +496,17 @@ func (c *Client) CleanupOldSessions(ctx context.Context, ttl time.Duration) erro
 		var ageRef time.Time
 		if phase == v1alpha1.SessionRevoked && session.Status.RevokedAt != nil {
 			ageRef = session.Status.RevokedAt.Time
+		} else if phase == v1alpha1.SessionExpired && session.Status.ExpiredAt != nil {
+			ageRef = session.Status.ExpiredAt.Time
 		} else {
 			ageRef = session.Spec.CreatedAt.Time
 		}
 
-		if ageRef.Before(cutoff) {
+		ttl := terminalTTL
+		if phase == v1alpha1.SessionPending {
+			ttl = pendingTTL
+		}
+		if ageRef.Before(time.Now().Add(-ttl)) {
 			_ = c.Delete(ctx, session.Spec.SessionID)
 		}
 	}
@@ -484,7 +546,11 @@ func (c *Client) ExpireInactiveSessions(ctx context.Context, ttl time.Duration) 
 		}
 
 		if lastActivity.Before(cutoff) {
+			now := metav1.Now()
 			session.Status.Phase = v1alpha1.SessionExpired
+			session.Status.ExpiredAt = &now
+			session.Status.RefreshToken = ""
+			session.Status.APIToken = ""
 			unstructuredObj := &unstructured.Unstructured{}
 			unstructuredMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&session)
 			if err != nil {

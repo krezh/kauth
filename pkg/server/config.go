@@ -10,35 +10,29 @@ type Config struct {
 	ClientSecret string
 
 	// Kubernetes Configuration
-	ClusterName   string
-	ClusterServer string
-	ClusterCA     string // Base64 encoded CA cert
+	ClusterName string
 
 	// Server Configuration
 	BaseURL     string // e.g. https://kauth.example.com
 	ListenAddr  string
 	TLSCertFile string
 	TLSKeyFile  string
-
-	// WebhookListenAddr is the address for the dedicated webhook HTTP listener.
-	// The token-review webhook is served here so it bypasses the main mux's rate
-	// limiter (which would throttle burst requests from the API server on pod
-	// restart). Application-layer encryption makes in-cluster HTTP safe.
-	// Leave empty to disable the webhook listener.
-	WebhookListenAddr string
+	DatabaseURL string
 
 	// JWT Configuration (required for stateless operation)
-	JWTSigningKey    []byte        // 32+ bytes for HMAC-SHA256
-	JWTEncryptionKey []byte        // 32 bytes for AES-256
-	SessionTTL       time.Duration // OAuth session TTL (default: 15 minutes)
-	RefreshTokenTTL  time.Duration // Refresh token TTL (default: 7 days)
+	JWTSigningKey     []byte        // 32+ bytes for HMAC-SHA256
+	JWTEncryptionKey  []byte        // 32 bytes for AES-256
+	SessionTTL        time.Duration // OAuth session TTL (default: 15 minutes)
+	RefreshTokenTTL   time.Duration // Refresh token TTL (default: 7 days)
+	SessionHistoryTTL time.Duration
 
 	// Security Configuration
 	AllowedOrigins    []string // CORS allowed origins (empty = none, ["*"] = all)
 	RateLimitRPS      float64  // Rate limit requests per second (default: 10)
 	RateLimitBurst    int      // Rate limit burst size (default: 20)
-	RotationWindow    int      // Number of previous refresh tokens to accept (default: 2)
 	TrustedProxyCIDRs []string // CIDR blocks for trusted reverse proxies (e.g., "10.0.0.0/8,172.16.0.0/12")
+	AuditRetention    time.Duration
+	AuditQueueSize    int
 
 	// Authorization Configuration
 	AllowedGroups []string // OIDC groups allowed to authenticate (empty = allow all)

@@ -55,11 +55,20 @@ type OAuthSessionStatus struct {
 	// Username is the authenticated user's preferred username
 	Username string `json:"username,omitzero"`
 
+	// Subject is the immutable OIDC subject identifier
+	Subject string `json:"subject,omitzero"`
+
+	// Issuer is the OIDC issuer that asserted Subject
+	Issuer string `json:"issuer,omitzero"`
+
 	// RefreshToken is the encrypted JWT refresh token for token rotation
 	RefreshToken string `json:"refreshToken,omitzero"`
 
 	// RevokedAt is when the session was revoked
 	RevokedAt *metav1.Time `json:"revokedAt,omitzero"`
+
+	// ExpiredAt is when the session expired
+	ExpiredAt *metav1.Time `json:"expiredAt,omitzero"`
 
 	// CompletedAt is when the OAuth flow completed
 	CompletedAt *metav1.Time `json:"completedAt,omitzero"`
@@ -70,8 +79,8 @@ type OAuthSessionStatus struct {
 	// Groups contains the user's group memberships from OIDC at login time
 	Groups []string `json:"groups,omitzero"`
 
-	// WebhookToken is the encrypted webhook credential for Kubernetes exec plugin
-	WebhookToken string `json:"webhookToken,omitzero"`
+	// APIToken is the encrypted credential for the Kubernetes API proxy
+	APIToken string `json:"apiToken,omitzero"`
 }
 
 // +k8s:deepcopy-gen:interfaces=k8s.io/apimachinery/pkg/runtime.Object

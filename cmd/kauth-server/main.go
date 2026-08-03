@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strconv"
@@ -63,26 +64,28 @@ func main() {
 	}
 
 	cfg := server.Config{
-		IssuerURL:          getEnv("OIDC_ISSUER_URL", ""),
-		ClientID:           getEnv("OIDC_CLIENT_ID", ""),
-		ClientSecret:       getEnv("OIDC_CLIENT_SECRET", ""),
-		ClusterName:        clusterName,
-		BaseURL:            getEnv("BASE_URL", ""),
-		ListenAddr:         getEnv("LISTEN_ADDR", ":8080"),
-		TLSCertFile:        getEnv("TLS_CERT_FILE", ""),
-		TLSKeyFile:         getEnv("TLS_KEY_FILE", ""),
-		WebhookListenAddr: getEnv("WEBHOOK_LISTEN_ADDR", ""),
-		JWTSigningKey:      jwtSigningKey,
-		JWTEncryptionKey:   jwtEncryptionKey,
-		SessionTTL:         getEnvDuration("SESSION_TTL", 15*time.Minute),
-		RefreshTokenTTL:    getEnvDuration("REFRESH_TOKEN_TTL", 7*24*time.Hour),
-		AllowedOrigins:     getEnvStringSlice("ALLOWED_ORIGINS", []string{}),
-		AllowedGroups:      getEnvStringSlice("ALLOWED_GROUPS", []string{}),
-		AdminGroups:        getEnvStringSlice("ADMIN_GROUPS", []string{}),
-		RateLimitRPS:       getEnvFloat("RATE_LIMIT_RPS", 10.0),
-		RateLimitBurst:     getEnvInt("RATE_LIMIT_BURST", 20),
-		RotationWindow:     getEnvInt("ROTATION_WINDOW", 2),
-		TrustedProxyCIDRs:  getEnvStringSlice("TRUSTED_PROXY_CIDRS", []string{}),
+		IssuerURL:         getEnv("OIDC_ISSUER_URL", ""),
+		ClientID:          getEnv("OIDC_CLIENT_ID", ""),
+		ClientSecret:      getEnv("OIDC_CLIENT_SECRET", ""),
+		ClusterName:       clusterName,
+		BaseURL:           getEnv("BASE_URL", ""),
+		ListenAddr:        getEnv("LISTEN_ADDR", ":8080"),
+		TLSCertFile:       getEnv("TLS_CERT_FILE", ""),
+		TLSKeyFile:        getEnv("TLS_KEY_FILE", ""),
+		DatabaseURL:       getEnv("DATABASE_URL", ""),
+		JWTSigningKey:     jwtSigningKey,
+		JWTEncryptionKey:  jwtEncryptionKey,
+		SessionTTL:        getEnvDuration("SESSION_TTL", 15*time.Minute),
+		RefreshTokenTTL:   getEnvDuration("REFRESH_TOKEN_TTL", 7*24*time.Hour),
+		SessionHistoryTTL: getEnvDuration("SESSION_HISTORY_TTL", 90*24*time.Hour),
+		AllowedOrigins:    getEnvStringSlice("ALLOWED_ORIGINS", []string{}),
+		AllowedGroups:     getEnvStringSlice("ALLOWED_GROUPS", []string{}),
+		AdminGroups:       getEnvStringSlice("ADMIN_GROUPS", []string{}),
+		RateLimitRPS:      getEnvFloat("RATE_LIMIT_RPS", 10.0),
+		RateLimitBurst:    getEnvInt("RATE_LIMIT_BURST", 20),
+		TrustedProxyCIDRs: getEnvStringSlice("TRUSTED_PROXY_CIDRS", []string{}),
+		AuditRetention:    getEnvDuration("AUDIT_RETENTION", 90*24*time.Hour),
+		AuditQueueSize:    getEnvInt("AUDIT_QUEUE_SIZE", 8192),
 	}
 
 	if cfg.IssuerURL == "" || cfg.ClientID == "" || cfg.ClientSecret == "" {
@@ -94,22 +97,16 @@ func main() {
 		slog.Error("BASE_URL is required", "hint", "e.g. https://kauth.example.com")
 		os.Exit(1)
 	}
-
-	// Get cluster API endpoint URL (must be set manually)
-	clusterServer := getEnv("KUBERNETES_API_URL", "")
-	if clusterServer == "" {
-		slog.Error("KUBERNETES_API_URL is required", "hint", "e.g. https://kubernetes.example.com:6443")
+	if cfg.DatabaseURL == "" {
+		slog.Error("DATABASE_URL is required for durable request auditing and the dashboard")
 		os.Exit(1)
 	}
-	slog.Info("Cluster API URL", "url", clusterServer)
-
-	// Auto-detect cluster CA (from env or in-cluster mount)
-	clusterCA, err := server.GetClusterCA()
-	if err != nil {
-		slog.Error("Failed to get cluster CA", "error", err)
+	cfg.BaseURL = strings.TrimRight(cfg.BaseURL, "/")
+	publicURL, err := url.Parse(cfg.BaseURL)
+	if err != nil || publicURL.Host == "" || (publicURL.Scheme != "http" && publicURL.Scheme != "https") || (publicURL.Path != "" && publicURL.Path != "/") {
+		slog.Error("BASE_URL must be an absolute HTTP(S) URL without a path", "value", cfg.BaseURL)
 		os.Exit(1)
 	}
-	slog.Info("Cluster CA loaded successfully")
 
 	// Initialize JWT manager
 	jwtManager, err := jwt.NewManager(cfg.JWTSigningKey, cfg.JWTEncryptionKey)
@@ -127,6 +124,17 @@ func main() {
 		slog.Error("Failed to get Kubernetes config", "error", err)
 		os.Exit(1)
 	}
+	upstreamURL, err := url.Parse(k8sConfig.Host)
+	if err != nil || upstreamURL.Host == "" {
+		slog.Error("Invalid Kubernetes API URL", "value", k8sConfig.Host, "error", err)
+		os.Exit(1)
+	}
+	upstreamTransport, err := rest.TransportFor(k8sConfig)
+	if err != nil {
+		slog.Error("Failed to create Kubernetes API transport", "error", err)
+		os.Exit(1)
+	}
+	slog.Info("Kubernetes API upstream configured", "url", upstreamURL.Redacted())
 
 	// Create session client for managing OAuthSession CRDs
 	namespace := getEnv("KAUTH_NAMESPACE", "default")
@@ -136,6 +144,16 @@ func main() {
 		os.Exit(1)
 	}
 	slog.Info("Session client initialized", "namespace", namespace)
+
+	databaseCtx, databaseCancel := context.WithTimeout(ctx, 30*time.Second)
+	requestStore, err := audit.NewPostgresStore(databaseCtx, cfg.DatabaseURL, cfg.AuditQueueSize, cfg.AuditRetention)
+	databaseCancel()
+	if err != nil {
+		slog.Error("Failed to initialize audit database", "error", err)
+		os.Exit(1)
+	}
+	audit.SetRequestStore(requestStore, cfg.ClusterName)
+	slog.Info("Audit database initialized", "retention", cfg.AuditRetention, "queue_size", cfg.AuditQueueSize)
 
 	// Initialize OIDC provider in background with retries
 	var provider *oauth.Provider
@@ -147,7 +165,20 @@ func main() {
 	var loginHandler *handlers.LoginHandler
 	var refreshHandler *handlers.RefreshHandler
 
-	webhookHandler := handlers.NewWebhookHandler(jwtManager, sessionClient)
+	authenticator := handlers.NewSessionAuthenticator(jwtManager, sessionClient)
+	proxyHandler := handlers.NewKubernetesProxyHandler(authenticator, upstreamURL, upstreamTransport)
+	getReadyProvider := func() *oauth.Provider {
+		select {
+		case <-providerReady:
+			return provider
+		default:
+			return nil
+		}
+	}
+	dashboardHandler := handlers.NewDashboardHandler(getReadyProvider, jwtManager, sessionClient, requestStore, handlers.DashboardConfig{
+		BaseURL: cfg.BaseURL, ClusterName: cfg.ClusterName,
+		AllowedGroups: cfg.AllowedGroups, AdminGroups: cfg.AdminGroups,
+	})
 
 	go func() {
 		maxRetries := 60
@@ -167,10 +198,10 @@ func main() {
 					provider,
 					jwtManager,
 					cfg.ClusterName,
-					clusterServer,
-					clusterCA,
+					cfg.BaseURL,
 					cfg.SessionTTL,
 					cfg.RefreshTokenTTL,
+					cfg.SessionHistoryTTL,
 					cfg.AllowedGroups,
 					sessionClient,
 				)
@@ -179,10 +210,8 @@ func main() {
 					jwtManager,
 					sessionClient,
 					cfg.ClusterName,
-					clusterServer,
-					clusterCA,
+					cfg.BaseURL,
 					cfg.RefreshTokenTTL,
-					cfg.RotationWindow,
 					cfg.AllowedGroups,
 				)
 				close(providerReady)
@@ -208,7 +237,7 @@ func main() {
 		}
 	}()
 
-	mux := http.NewServeMux()
+	controlMux := http.NewServeMux()
 
 	// Middleware to check if OIDC provider is ready
 	requireProvider := func(next http.HandlerFunc) http.HandlerFunc {
@@ -224,67 +253,67 @@ func main() {
 		}
 	}
 
-	mux.HandleFunc("/info", handlers.HandleInfo(
+	controlMux.HandleFunc("/info", handlers.HandleInfo(
 		cfg.ClusterName,
-		clusterServer,
+		cfg.BaseURL,
 		cfg.IssuerURL,
 		cfg.ClientID,
 		cfg.BaseURL,
 	))
-	mux.HandleFunc("/start-login", requireProvider(func(w http.ResponseWriter, r *http.Request) {
+	controlMux.HandleFunc("/start-login", requireProvider(func(w http.ResponseWriter, r *http.Request) {
 		loginHandler.HandleStartLogin(w, r)
 	}))
-	mux.HandleFunc("/watch", requireProvider(func(w http.ResponseWriter, r *http.Request) {
+	controlMux.HandleFunc("/watch", requireProvider(func(w http.ResponseWriter, r *http.Request) {
 		loginHandler.HandleWatch(w, r)
 	}))
-	mux.HandleFunc("/callback", requireProvider(func(w http.ResponseWriter, r *http.Request) {
+	controlMux.HandleFunc("/callback", requireProvider(func(w http.ResponseWriter, r *http.Request) {
 		loginHandler.HandleCallback(w, r)
 	}))
-	mux.HandleFunc("/refresh", requireProvider(func(w http.ResponseWriter, r *http.Request) {
+	controlMux.HandleFunc("/refresh", requireProvider(func(w http.ResponseWriter, r *http.Request) {
 		refreshHandler.HandleRefresh(w, r)
 	}))
-	mux.HandleFunc("/revoke", requireProvider(handlers.RequireAuth(func() *oauth.Provider { return provider }, func(w http.ResponseWriter, r *http.Request) {
+	controlMux.HandleFunc("/revoke", requireProvider(handlers.RequireAuth(func() *oauth.Provider { return provider }, func(w http.ResponseWriter, r *http.Request) {
 		handlers.NewRevokeHandler(sessionClient, cfg.AdminGroups).HandleRevoke(w, r)
 	})))
-	mux.HandleFunc("/sessions", requireProvider(handlers.RequireAuth(func() *oauth.Provider { return provider }, func(w http.ResponseWriter, r *http.Request) {
+	controlMux.HandleFunc("/sessions", requireProvider(handlers.RequireAuth(func() *oauth.Provider { return provider }, func(w http.ResponseWriter, r *http.Request) {
 		handlers.NewSessionsHandler(sessionClient, cfg.AdminGroups).HandleListSessions(w, r)
 	})))
-	mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+	controlMux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("OK"))
 	})
-
-	// Apply middleware
-	var handler http.Handler = mux
+	controlMux.Handle("/dashboard", dashboardHandler)
+	controlMux.Handle("/dashboard/", dashboardHandler)
 
 	// IP extraction with trusted proxy support
 	ipExtractor := middleware.NewClientIPExtractor(cfg.TrustedProxyCIDRs)
-
-	// Request logging
-	handler = middleware.RequestLogger(ipExtractor)(handler)
-
-	// Request ID (applied last, runs first to set context for all other middleware)
-	handler = middleware.RequestID(handler)
-
-	// Audit logging
 	audit.SetIPExtractor(ipExtractor)
 
-	// Security headers
-	handler = middleware.SecurityHeaders(handler)
+	var controlHandler http.Handler = controlMux
+	if len(cfg.AllowedOrigins) > 0 {
+		controlHandler = middleware.CORS(cfg.AllowedOrigins)(controlHandler)
+	}
+	rateLimiter := middleware.NewRateLimiter(cfg.RateLimitRPS, cfg.RateLimitBurst, 5*time.Minute, cfg.TrustedProxyCIDRs)
+	controlHandler = rateLimiter.Middleware(controlHandler)
 
-	// HSTS (only if using TLS)
+	controlPaths := map[string]struct{}{
+		"/info": {}, "/start-login": {}, "/watch": {}, "/callback": {},
+		"/refresh": {}, "/revoke": {}, "/sessions": {}, "/health": {},
+	}
+	var handler http.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, controlPath := controlPaths[r.URL.Path]
+		if controlPath || r.URL.Path == "/dashboard" || strings.HasPrefix(r.URL.Path, "/dashboard/") {
+			controlHandler.ServeHTTP(w, r)
+			return
+		}
+		proxyHandler.ServeHTTP(w, r)
+	})
+	handler = middleware.SecurityHeaders(handler)
 	if cfg.TLSCertFile != "" && cfg.TLSKeyFile != "" {
 		handler = middleware.HSTS(handler)
 	}
-
-	// CORS (if origins are specified)
-	if len(cfg.AllowedOrigins) > 0 {
-		handler = middleware.CORS(cfg.AllowedOrigins)(handler)
-	}
-
-	// Rate limiting
-	rateLimiter := middleware.NewRateLimiter(cfg.RateLimitRPS, cfg.RateLimitBurst, 5*time.Minute, cfg.TrustedProxyCIDRs)
-	handler = rateLimiter.Middleware(handler)
+	handler = middleware.RequestLogger(ipExtractor)(handler)
+	handler = middleware.RequestID(handler)
 
 	slog.Info("Starting kauth server",
 		"listen_addr", cfg.ListenAddr,
@@ -316,25 +345,6 @@ func main() {
 		Handler: handler,
 	}
 
-	// Dedicated HTTP listener for the Kubernetes token-review webhook. Kept
-	// separate from the client-facing API so it bypasses the rate limiter (which
-	// would throttle burst requests from the API server on pod restart or cache
-	// expiry). Application-layer encryption makes in-cluster HTTP safe.
-	var webhookServer *http.Server
-	if cfg.WebhookListenAddr != "" {
-		webhookMux := http.NewServeMux()
-		webhookMux.HandleFunc("/webhook/token-review", func(w http.ResponseWriter, r *http.Request) {
-			webhookHandler.HandleTokenReview(w, r)
-		})
-		var webhookHTTPHandler http.Handler = webhookMux
-		webhookHTTPHandler = middleware.RequestLogger(ipExtractor)(webhookHTTPHandler)
-		webhookHTTPHandler = middleware.RequestID(webhookHTTPHandler)
-		webhookServer = &http.Server{
-			Addr:    cfg.WebhookListenAddr,
-			Handler: webhookHTTPHandler,
-		}
-	}
-
 	// Channel to listen for errors from server
 	serverErrors := make(chan error, 1)
 
@@ -347,15 +357,6 @@ func main() {
 			serverErrors <- server.ListenAndServe()
 		}
 	}()
-
-	if webhookServer != nil {
-		go func() {
-			slog.Info("Starting webhook token-review listener", "listen_addr", cfg.WebhookListenAddr)
-			serverErrors <- webhookServer.ListenAndServe()
-		}()
-	} else {
-		slog.Info("Webhook token-review listener disabled (set WEBHOOK_LISTEN_ADDR to enable)")
-	}
 
 	// Setup signal handling for graceful shutdown
 	stop := make(chan os.Signal, 1)
@@ -379,13 +380,9 @@ func main() {
 			slog.Error("Server forced to shutdown", "error", err)
 			os.Exit(1)
 		}
-		if webhookServer != nil {
-			if err := webhookServer.Shutdown(shutdownCtx); err != nil {
-				slog.Error("Webhook listener forced to shutdown", "error", err)
-				os.Exit(1)
-			}
+		if err := requestStore.Close(shutdownCtx); err != nil {
+			slog.Error("Audit database shutdown incomplete", "error", err)
 		}
-
 		slog.Info("Server stopped gracefully")
 	}
 }

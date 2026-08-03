@@ -12,6 +12,10 @@ tidy:
 test:
     go test ./...
 
+# Run the real-cluster end-to-end suite (requires Docker, Helm, kind, and kubectl)
+test-e2e:
+    go test -tags=e2e -count=1 -timeout=15m -v ./test/e2e
+
 # Run tests with coverage
 coverage:
     go test -coverprofile=coverage.out ./...

@@ -4,24 +4,39 @@ import (
 	"context"
 	"log/slog"
 	"net/http"
+	"sync"
+	"time"
 
 	"kauth/pkg/middleware"
 )
 
 var ipExtractor *middleware.ClientIPExtractor
+var requestStore struct {
+	sync.RWMutex
+	store   RequestStore
+	cluster string
+}
 
 func SetIPExtractor(extractor *middleware.ClientIPExtractor) {
 	ipExtractor = extractor
 }
 
+func SetRequestStore(store RequestStore, cluster string) {
+	requestStore.Lock()
+	defer requestStore.Unlock()
+	requestStore.store = store
+	requestStore.cluster = cluster
+}
+
 // Event types
 const (
-	EventLoginSuccess   = "login_success"
-	EventLoginFailure   = "login_failure"
-	EventRefreshSuccess = "refresh_success"
-	EventRefreshFailure = "refresh_failure"
-	EventAuthzAllow     = "authorization_allow"
-	EventAuthzDeny      = "authorization_deny"
+	EventLoginSuccess      = "login_success"
+	EventLoginFailure      = "login_failure"
+	EventRefreshSuccess    = "refresh_success"
+	EventRefreshFailure    = "refresh_failure"
+	EventAuthzAllow        = "authorization_allow"
+	EventAuthzDeny         = "authorization_deny"
+	EventKubernetesRequest = "kubernetes_request"
 )
 
 // Log logs an audit event with structured fields
@@ -49,6 +64,49 @@ func Log(ctx context.Context, r *http.Request, event string, attrs ...any) {
 
 	// Log at info level for audit trail
 	slog.InfoContext(ctx, "AUDIT", baseAttrs...)
+}
+
+// KubernetesRequest logs one completed request through the Kubernetes API proxy.
+func KubernetesRequest(ctx context.Context, r *http.Request, sessionID, user string, groups []string, authenticated bool, status, responseBytes int, duration time.Duration) {
+	Log(ctx, r, EventKubernetesRequest,
+		"session_id", sessionID,
+		"user", user,
+		"groups", groups,
+		"authenticated", authenticated,
+		"method", r.Method,
+		"path", r.URL.Path,
+		"status", status,
+		"response_bytes", responseBytes,
+		"duration_ms", duration.Milliseconds(),
+	)
+
+	requestID, _ := ctx.Value(middleware.RequestIDKey).(string)
+	remoteAddr := middleware.GetClientIP(r)
+	if ipExtractor != nil {
+		remoteAddr = ipExtractor.GetClientIP(r)
+	}
+	requestStore.RLock()
+	store := requestStore.store
+	cluster := requestStore.cluster
+	requestStore.RUnlock()
+	if store != nil {
+		store.Record(RequestEvent{
+			OccurredAt:    time.Now(),
+			Cluster:       cluster,
+			RequestID:     requestID,
+			SessionID:     sessionID,
+			Username:      user,
+			Groups:        groups,
+			Authenticated: authenticated,
+			Method:        r.Method,
+			Path:          r.URL.Path,
+			StatusCode:    status,
+			ResponseBytes: int64(responseBytes),
+			Duration:      duration,
+			RemoteAddr:    remoteAddr,
+			UserAgent:     r.UserAgent(),
+		})
+	}
 }
 
 // LoginSuccess logs a successful login

@@ -17,6 +17,8 @@ serviceAccount:
   annotations: {}
   # The name of the service account to use (auto-generated if not set and create is true)
   name: ""
+  # The API proxy uses this token to authenticate to the upstream API server.
+  automount: true
 
 # Annotations to add to pods
 podAnnotations: {}
@@ -40,13 +42,6 @@ service:
   type: ClusterIP
   port: 8080
   clusterIP: ""
-
-# Kubernetes token-review webhook. Served on a dedicated HTTP listener so it
-# bypasses the main mux's rate limiter. Application-layer encryption (AES-GCM
-# signed token) makes in-cluster HTTP safe — no TLS cert required.
-webhook:
-  enabled: false
-  port: 8081
 
 httpRoute:
   enabled: false
@@ -130,6 +125,12 @@ env: []
   #   value: "15m"           # Session token lifetime (default: 15m)
   # - name: REFRESH_TOKEN_TTL
   #   value: "168h"          # Refresh token lifetime (default: 7 days)
+  # - name: SESSION_HISTORY_TTL
+  #   value: "2160h"         # Scrubbed terminal-session metadata retention (default: 90 days)
+  # - name: AUDIT_RETENTION
+  #   value: "2160h"         # PostgreSQL API request retention (default: 90 days)
+  # - name: AUDIT_QUEUE_SIZE
+  #   value: "8192"          # In-memory non-blocking audit queue per replica
   # - name: ALLOWED_ORIGINS
   #   value: "https://app1.example.com,https://app2.example.com"  # CORS origins (comma-separated)
   # - name: ALLOWED_GROUPS
@@ -140,8 +141,6 @@ env: []
   #   value: "10"            # Requests per second per IP (default: 10)
   # - name: RATE_LIMIT_BURST
   #   value: "20"            # Burst capacity (default: 20)
-  # - name: ROTATION_WINDOW
-  #   value: "2"             # Refresh token rotation window (default: 2)
 
 # Environment variables from ConfigMaps/Secrets
 # Use for sensitive configuration
@@ -155,7 +154,10 @@ envFrom: []
   #   OIDC_CLIENT_SECRET    - OAuth2 client secret
   #   JWT_SIGNING_KEY       - Base64 encoded, 32+ bytes (openssl rand -base64 32)
   #   JWT_ENCRYPTION_KEY    - Base64 encoded, exactly 32 bytes
-  #   KUBERNETES_API_URL    - Your K8s API server URL (e.g., https://k8s.example.com:6443)
+  #   DATABASE_URL          - PostgreSQL connection string for audit history and dashboard metrics
+  # BASE_URL is also the Kubernetes API endpoint written to generated kubeconfigs.
+  # It must use a certificate trusted by kubectl clients in production.
+  # Register both BASE_URL/callback and BASE_URL/dashboard/callback with the OIDC provider.
 
 rbac:
   create: true

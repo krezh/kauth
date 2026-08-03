@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"errors"
 	"testing"
 	"time"
 
@@ -56,7 +57,6 @@ func TestClient_Create(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
 	}
-
 	if session.Spec.SessionID != "test-state-123" {
 		t.Errorf("SessionID = %q, want %q", session.Spec.SessionID, "test-state-123")
 	}
@@ -186,6 +186,37 @@ func TestClient_UpdateStatus_PendingNoCompletedAt(t *testing.T) {
 	}
 }
 
+func TestClient_RotateRefreshTokenRejectsReplay(t *testing.T) {
+	client := newFakeClient(t)
+	ctx := context.Background()
+	_, err := client.Create(ctx, "rotation-test", "verifier", "user@example.com")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := client.UpdateStatus(ctx, "rotation-test", v1alpha1.OAuthSessionStatus{
+		Phase: v1alpha1.SessionActive, RefreshToken: "current", APIToken: "api-token",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.RotateRefreshToken(ctx, "rotation-test", "replayed", v1alpha1.OAuthSessionStatus{
+		Phase: v1alpha1.SessionActive, RefreshToken: "next",
+	}); !errors.Is(err, ErrRefreshTokenReplayed) {
+		t.Fatalf("RotateRefreshToken() error = %v, want ErrRefreshTokenReplayed", err)
+	}
+	if err := client.RotateRefreshToken(ctx, "rotation-test", "current", v1alpha1.OAuthSessionStatus{
+		Phase: v1alpha1.SessionActive, RefreshToken: "next",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := client.Get(ctx, "rotation-test")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status.RefreshToken != "next" || got.Status.APIToken != "api-token" || got.Status.CompletedAt == nil {
+		t.Fatalf("unexpected rotated status: %#v", got.Status)
+	}
+}
+
 func TestClient_Revoke(t *testing.T) {
 	client := newFakeClient(t)
 	ctx := context.Background()
@@ -193,6 +224,11 @@ func TestClient_Revoke(t *testing.T) {
 	_, err := client.Create(ctx, "revoke-test", "verifier", "user@example.com")
 	if err != nil {
 		t.Fatalf("Create() error = %v", err)
+	}
+	if err := client.UpdateStatus(ctx, "revoke-test", v1alpha1.OAuthSessionStatus{
+		Phase: v1alpha1.SessionActive, RefreshToken: "refresh-secret", APIToken: "api-secret",
+	}); err != nil {
+		t.Fatalf("UpdateStatus() error = %v", err)
 	}
 
 	err = client.Revoke(ctx, "revoke-test")
@@ -210,6 +246,9 @@ func TestClient_Revoke(t *testing.T) {
 	}
 	if got.Status.RevokedAt == nil {
 		t.Error("RevokedAt should be set after revocation")
+	}
+	if got.Status.RefreshToken != "" || got.Status.APIToken != "" {
+		t.Error("credentials should be scrubbed after revocation")
 	}
 }
 

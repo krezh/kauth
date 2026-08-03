@@ -27,12 +27,13 @@ import (
 )
 
 type LoginHandler struct {
-	provider        *oauth.Provider
-	jwtManager      *jwt.Manager
-	kubeconfigGen   *KubeconfigGenerator
-	sessionTTL      time.Duration
-	refreshTokenTTL time.Duration
-	allowedGroups   []string
+	provider          *oauth.Provider
+	jwtManager        *jwt.Manager
+	kubeconfigGen     *KubeconfigGenerator
+	sessionTTL        time.Duration
+	refreshTokenTTL   time.Duration
+	sessionHistoryTTL time.Duration
+	allowedGroups     []string
 
 	// CRD client for distributed session storage
 	sessionClient *session.Client
@@ -52,7 +53,7 @@ type StatusResponse struct {
 	Kubeconfig    string    `json:"kubeconfig,omitempty"`
 	RefreshToken  string    `json:"refresh_token,omitempty"`
 	SessionID     string    `json:"session_id,omitempty"`
-	WebhookToken  string    `json:"webhook_token,omitempty"`
+	APIToken      string    `json:"api_token,omitempty"`
 	SessionExpiry time.Time `json:"session_expiry,omitempty"`
 	Error         string    `json:"error,omitempty"`
 }
@@ -60,8 +61,8 @@ type StatusResponse struct {
 func NewLoginHandler(
 	provider *oauth.Provider,
 	jwtManager *jwt.Manager,
-	clusterName, clusterServer, clusterCA string,
-	sessionTTL, refreshTokenTTL time.Duration,
+	clusterName, clusterServer string,
+	sessionTTL, refreshTokenTTL, sessionHistoryTTL time.Duration,
 	allowedGroups []string,
 	sessionClient *session.Client,
 ) *LoginHandler {
@@ -71,13 +72,13 @@ func NewLoginHandler(
 		kubeconfigGen: &KubeconfigGenerator{
 			ClusterName:   clusterName,
 			ClusterServer: clusterServer,
-			ClusterCA:     clusterCA,
 		},
-		sessionTTL:      sessionTTL,
-		refreshTokenTTL: refreshTokenTTL,
-		allowedGroups:   allowedGroups,
-		sessionClient:   sessionClient,
-		sseListeners:    make(map[string][]chan StatusResponse),
+		sessionTTL:        sessionTTL,
+		refreshTokenTTL:   refreshTokenTTL,
+		sessionHistoryTTL: sessionHistoryTTL,
+		allowedGroups:     allowedGroups,
+		sessionClient:     sessionClient,
+		sseListeners:      make(map[string][]chan StatusResponse),
 	}
 
 	// Start watching for session updates from CRD
@@ -204,11 +205,11 @@ func (h *LoginHandler) HandleWatch(w http.ResponseWriter, r *http.Request) {
 			Kubeconfig:   kubeconfig,
 			RefreshToken: crdSession.Status.RefreshToken,
 			SessionID:    crdSession.Spec.SessionID,
-			WebhookToken: crdSession.Status.WebhookToken,
+			APIToken:     crdSession.Status.APIToken,
 		}
-		if crdSession.Status.WebhookToken != "" {
-			if wt, err := h.jwtManager.DecodeWebhookToken(crdSession.Status.WebhookToken); err == nil {
-				status.SessionExpiry = wt.ExpiresAt
+		if crdSession.Status.APIToken != "" {
+			if apiCredential, err := h.jwtManager.DecodeAPIToken(crdSession.Status.APIToken); err == nil {
+				status.SessionExpiry = apiCredential.ExpiresAt
 			}
 		}
 		h.sendFinalStatus(w, &status)
@@ -331,7 +332,7 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	claims, _, err := VerifyAndExtractClaims(ctx, h.provider, idToken)
+	claims, verifiedIDToken, err := VerifyAndExtractClaims(ctx, h.provider, idToken)
 	if err != nil {
 		slog.ErrorContext(ctx, "ID token verification failed", "error", err)
 		_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
@@ -383,11 +384,11 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	webhookToken, err := h.jwtManager.CreateWebhookToken(state, h.refreshTokenTTL)
+	apiToken, err := h.jwtManager.CreateAPIToken(state, h.refreshTokenTTL)
 	if err != nil {
 		_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
 			Phase: v1alpha1.SessionPending,
-			Error: "Failed to create webhook token",
+			Error: "Failed to create API token",
 		})
 		http.Error(w, "Internal error", http.StatusInternalServerError)
 		return
@@ -397,9 +398,11 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		Phase:        v1alpha1.SessionActive,
 		Email:        claims.Email,
 		Username:     claims.PreferredUsername,
+		Subject:      claims.Sub,
+		Issuer:       verifiedIDToken.Issuer,
 		RefreshToken: refreshToken,
 		Groups:       claims.Groups,
-		WebhookToken: webhookToken,
+		APIToken:     apiToken,
 	})
 	if err != nil {
 		slog.ErrorContext(ctx, "failed to update session status", "error", err)

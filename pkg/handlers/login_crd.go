@@ -117,12 +117,12 @@ func (h *LoginHandler) watchSessions() {
 								Kubeconfig:   kubeconfig,
 								RefreshToken: session.Status.RefreshToken,
 								SessionID:    session.Spec.SessionID,
-								WebhookToken: session.Status.WebhookToken,
+								APIToken:     session.Status.APIToken,
 								Error:        session.Status.Error,
 							}
-							if session.Status.WebhookToken != "" {
-								if wt, err := h.jwtManager.DecodeWebhookToken(session.Status.WebhookToken); err == nil {
-									status.SessionExpiry = wt.ExpiresAt
+							if session.Status.APIToken != "" {
+								if apiCredential, err := h.jwtManager.DecodeAPIToken(session.Status.APIToken); err == nil {
+									status.SessionExpiry = apiCredential.ExpiresAt
 								}
 							}
 
@@ -163,7 +163,7 @@ func (h *LoginHandler) cleanupSessions() {
 			slog.Error("Failed to expire inactive sessions", "error", err)
 		}
 
-		err = h.sessionClient.CleanupOldSessions(ctx, h.sessionTTL)
+		err = h.sessionClient.CleanupOldSessions(ctx, h.sessionHistoryTTL, h.sessionTTL)
 		if err != nil {
 			slog.Error("Failed to cleanup old sessions", "error", err)
 		}

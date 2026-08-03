@@ -45,6 +45,7 @@ type InfoResponse struct {
 	ClientID      string `json:"client_id"`
 	LoginURL      string `json:"login_url"`
 	RefreshURL    string `json:"refresh_url"`
+	DashboardURL  string `json:"dashboard_url"`
 }
 
 type StartLoginResponse struct {
@@ -57,7 +58,7 @@ type StatusResponse struct {
 	Kubeconfig    string    `json:"kubeconfig,omitempty"`
 	RefreshToken  string    `json:"refresh_token,omitempty"`
 	SessionID     string    `json:"session_id,omitempty"`
-	WebhookToken  string    `json:"webhook_token,omitempty"`
+	APIToken      string    `json:"api_token,omitempty"`
 	SessionExpiry time.Time `json:"session_expiry,omitempty"`
 	Error         string    `json:"error,omitempty"`
 }
@@ -164,14 +165,14 @@ func runLogin(cmd *cobra.Command, args []string) error {
 
 	storage := token.NewStorage(token.DefaultCachePath())
 	newCache := &token.Cache{
-		ServerURL:    serverURL,
-		SessionID:    status.SessionID,
-		WebhookToken: status.WebhookToken,
+		ServerURL: serverURL,
+		SessionID: status.SessionID,
+		APIToken:  status.APIToken,
 	}
 
 	if !status.SessionExpiry.IsZero() {
 		newCache.Expiry = status.SessionExpiry
-	} else if status.WebhookToken != "" {
+	} else if status.APIToken != "" {
 		// Server should always send SessionExpiry, but fall back to 7 days.
 		newCache.Expiry = time.Now().Add(7 * 24 * time.Hour)
 	}
