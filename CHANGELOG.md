@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.2.26](https://github.com/krezh/kauth/compare/0.2.25...0.2.26) (2026-08-03)
+
+
+### Features
+
+* add audited Kubernetes API proxy and session dashboard ([01f7769](https://github.com/krezh/kauth/commit/01f77692c4fec2b5db98e2b73c8c0f9db321c0d7))
+
+
+### Miscellaneous Chores
+
+* **nix:** lock file maintenance flake.lock ([#299](https://github.com/krezh/kauth/issues/299)) ([a1d1b9a](https://github.com/krezh/kauth/commit/a1d1b9aa701d414eefac2bbf471ce250619aa62f))
+* **nix:** lock file maintenance flake.lock ([#303](https://github.com/krezh/kauth/issues/303)) ([8e177b0](https://github.com/krezh/kauth/commit/8e177b0f2149e7d3b07190f8860ad5f97482ccdd))
+* **nix:** lock file maintenance flake.lock ([#304](https://github.com/krezh/kauth/issues/304)) ([1a91b28](https://github.com/krezh/kauth/commit/1a91b2843e981971118725b6345585d715f65832))
+* **nix:** lock file maintenance flake.lock ([#305](https://github.com/krezh/kauth/issues/305)) ([ad19294](https://github.com/krezh/kauth/commit/ad192945d2a7fa3863cf05a3907e5b0c920d7dc9))
+
 ## [0.2.25](https://github.com/krezh/kauth/compare/0.2.24...0.2.25) (2026-07-27)
 
 
