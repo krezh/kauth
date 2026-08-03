@@ -71,7 +71,7 @@ func runSessions(cmd *cobra.Command, args []string) error {
 		userEmail = email
 	}
 
-	req, err := http.NewRequest(http.MethodGet, serverURL+"/sessions", nil)
+	req, err := http.NewRequest(http.MethodGet, serverURL+"/api/sessions", nil)
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
@@ -120,7 +120,7 @@ func revokeSession(serverURL, sessionID, idToken string) error {
 		return fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	req, err := http.NewRequest(http.MethodPost, serverURL+"/revoke", bytes.NewBuffer(jsonData))
+	req, err := http.NewRequest(http.MethodPost, serverURL+"/api/revoke", bytes.NewBuffer(jsonData))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}

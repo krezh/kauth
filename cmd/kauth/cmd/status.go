@@ -284,7 +284,7 @@ func checkServerReachable(serverURL string) (bool, time.Duration) {
 
 	start := time.Now()
 	client := &http.Client{Timeout: 3 * time.Second}
-	resp, err := client.Get(serverURL + "/info")
+	resp, err := client.Get(serverURL + "/api/info")
 	elapsed := time.Since(start)
 
 	if err != nil {

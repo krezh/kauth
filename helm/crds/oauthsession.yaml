@@ -40,9 +40,10 @@ spec:
               properties:
                 phase:
                   type: string
-                  description: Lifecycle phase of the session (Pending, Active, Revoked, Expired)
+                  description: Lifecycle phase of the session
                   enum:
                     - Pending
+                    - Authenticating
                     - Active
                     - Revoked
                     - Expired

@@ -8,10 +8,11 @@ import (
 type SessionPhase string
 
 const (
-	SessionPending SessionPhase = "Pending"
-	SessionActive  SessionPhase = "Active"
-	SessionRevoked SessionPhase = "Revoked"
-	SessionExpired SessionPhase = "Expired"
+	SessionPending        SessionPhase = "Pending"
+	SessionAuthenticating SessionPhase = "Authenticating"
+	SessionActive         SessionPhase = "Active"
+	SessionRevoked        SessionPhase = "Revoked"
+	SessionExpired        SessionPhase = "Expired"
 )
 
 // +genclient

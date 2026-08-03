@@ -24,6 +24,7 @@ import (
 )
 
 var ErrRefreshTokenReplayed = errors.New("refresh token is no longer current")
+var ErrLoginAlreadyClaimed = errors.New("login session is no longer pending")
 
 // lastUsedBackoff bounds the optimistic-concurrency retry for TouchLastUsed.
 // The throttle window already coalesces most concurrent writers into a no-op,
@@ -186,6 +187,32 @@ func (c *Client) UpdateStatus(ctx context.Context, sessionID string, status v1al
 		return fmt.Errorf("failed to update status: %w", err)
 	}
 
+	return nil
+}
+
+// ClaimLogin atomically moves a pending login into code exchange. The object
+// resource version ensures only one callback can claim a session.
+func (c *Client) ClaimLogin(ctx context.Context, sessionID string) error {
+	session, err := c.Get(ctx, sessionID)
+	if err != nil {
+		return fmt.Errorf("failed to get session: %w", err)
+	}
+	if session.Status.Phase != v1alpha1.SessionPending {
+		return ErrLoginAlreadyClaimed
+	}
+	session.Status.Phase = v1alpha1.SessionAuthenticating
+	unstructuredObj := &unstructured.Unstructured{}
+	unstructuredMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(session)
+	if err != nil {
+		return fmt.Errorf("failed to convert to unstructured: %w", err)
+	}
+	unstructuredObj.Object = unstructuredMap
+	if _, err := c.dynamicClient.Resource(c.gvr()).Namespace(c.namespace).UpdateStatus(ctx, unstructuredObj, metav1.UpdateOptions{}); err != nil {
+		if apierrors.IsConflict(err) {
+			return ErrLoginAlreadyClaimed
+		}
+		return fmt.Errorf("failed to claim login session: %w", err)
+	}
 	return nil
 }
 
@@ -487,7 +514,7 @@ func (c *Client) CleanupOldSessions(ctx context.Context, terminalTTL, pendingTTL
 
 		// Only delete terminal or stale pending sessions; skip active ones
 		phase := session.Status.Phase
-		if phase != v1alpha1.SessionRevoked && phase != v1alpha1.SessionExpired && phase != v1alpha1.SessionPending {
+		if phase != v1alpha1.SessionRevoked && phase != v1alpha1.SessionExpired && phase != v1alpha1.SessionPending && phase != v1alpha1.SessionAuthenticating {
 			continue
 		}
 
@@ -503,7 +530,7 @@ func (c *Client) CleanupOldSessions(ctx context.Context, terminalTTL, pendingTTL
 		}
 
 		ttl := terminalTTL
-		if phase == v1alpha1.SessionPending {
+		if phase == v1alpha1.SessionPending || phase == v1alpha1.SessionAuthenticating {
 			ttl = pendingTTL
 		}
 		if ageRef.Before(time.Now().Add(-ttl)) {

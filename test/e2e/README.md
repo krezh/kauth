@@ -24,11 +24,11 @@ The suite deletes its cluster and temporary files on completion. Set
 paths are printed when the test exits.
 
 The suite verifies OIDC discovery and token exchange, refresh rotation and replay
-rejection, browser callback handling, session activation and SSE delivery,
+rejection, the shared CLI/dashboard browser callback, session activation and SSE delivery,
 generated kubeconfigs, exec credentials, malformed credential rejection,
 Kubernetes discovery, namespaced CRUD, RBAC denial, reserved-group and
 impersonation-header filtering, concurrent requests, watch streaming, exec, logs,
-port-forward, shared sessions across replicas, session-keyed audit events, and
+port-forward through the `/k8s` proxy, shared sessions across replicas, session-keyed audit events, and
 immediate session revocation. Dashboard coverage includes browser OIDC login,
 PostgreSQL-backed request history and metrics, regular-user ownership isolation,
 administrator cross-user visibility, CSRF and pagination defenses, and credential

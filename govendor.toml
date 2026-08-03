@@ -283,11 +283,6 @@ schema = 3
     hash = "sha256-ER2/AqF5AbVv4lfIDoggmlGfTnNH0cNccDisJqNyXn4="
     go = "1.23"
     packages = ["k8s.io/utils/clock", "k8s.io/utils/dump", "k8s.io/utils/internal/third_party/forked/golang/net", "k8s.io/utils/net", "k8s.io/utils/ptr"]
-  [mod."maragu.dev/gomponents"]
-    version = "v1.3.0"
-    hash = "sha256-Z5T0p8/y89ct366qzMd2eyJcCORWVg0zKKC1QISW5E4="
-    go = "1.18"
-    packages = ["maragu.dev/gomponents", "maragu.dev/gomponents/html"]
   [mod."sigs.k8s.io/json"]
     version = "v0.0.0-20250730193827-2d320260d730"
     hash = "sha256-y3vUPJYL6oxu/8c0j4vgX6fzqHtVPSCjfyuWkZYf6+I="

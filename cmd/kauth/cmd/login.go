@@ -75,7 +75,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	}
 	client := &http.Client{Jar: jar}
 
-	resp, err := client.Get(serverURL + "/info")
+	resp, err := client.Get(serverURL + "/api/info")
 	if err != nil {
 		return fmt.Errorf("could not reach kauth at %s: %w", serverURL, err)
 	}
@@ -93,7 +93,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	serverLink := hyperlink(muted.Render(urlHost(serverURL)), serverURL)
 	fmt.Printf("\n  %s %s %s\n\n", accent.Render("◆"), accent.Render(info.ClusterName), serverLink)
 
-	loginResp, err := client.Get(serverURL + "/start-login")
+	loginResp, err := client.Get(serverURL + "/api/start-login")
 	if err != nil {
 		return fmt.Errorf("failed to start login: %w", err)
 	}
@@ -280,7 +280,7 @@ func watchForCompletion(client *http.Client, baseURL, sessionToken string) (*Sta
 // success. retriable is true when the connection dropped or idled without a
 // result, signalling the caller to reconnect.
 func watchOnce(client *http.Client, baseURL, sessionToken string) (status *StatusResponse, retriable bool, err error) {
-	resp, err := client.Get(fmt.Sprintf("%s/watch?session_token=%s", baseURL, sessionToken))
+	resp, err := client.Get(fmt.Sprintf("%s/api/watch?session_token=%s", baseURL, sessionToken))
 	if err != nil {
 		return nil, true, nil // connection failure: reconnect
 	}
@@ -495,7 +495,7 @@ func refreshTokenFromServer(baseURL, refreshToken string) (*RefreshResponse, err
 	}
 
 	resp, err := httpClient.Post(
-		baseURL+"/refresh",
+		baseURL+"/api/refresh",
 		"application/json",
 		strings.NewReader(string(reqBody)),
 	)

@@ -22,6 +22,8 @@ var (
 
 // SessionToken contains OAuth flow state (encrypted, signed)
 type SessionToken struct {
+	Type      string    `json:"type"`
+	Mode      string    `json:"mode"`
 	SessionID string    `json:"sessionID"`
 	Verifier  string    `json:"verifier"`
 	CreatedAt time.Time `json:"created_at"`
@@ -37,17 +39,7 @@ type APICredential struct {
 
 const apiCredentialType = "api"
 
-const (
-	dashboardLoginType   = "dashboard_login"
-	dashboardSessionType = "dashboard_session"
-)
-
-type DashboardLoginToken struct {
-	Type      string    `json:"type"`
-	State     string    `json:"state"`
-	Verifier  string    `json:"verifier"`
-	ExpiresAt time.Time `json:"expires_at"`
-}
+const dashboardSessionType = "dashboard_session"
 
 type DashboardSessionToken struct {
 	Type      string    `json:"type"`
@@ -61,6 +53,7 @@ type DashboardSessionToken struct {
 
 // RefreshToken contains refresh token data (encrypted, signed)
 type RefreshToken struct {
+	Type             string    `json:"type"`
 	UserEmail        string    `json:"user_email"`
 	OIDCRefreshToken string    `json:"oidc_refresh_token"`
 	RotationCounter  int       `json:"rotation_counter"`
@@ -68,6 +61,13 @@ type RefreshToken struct {
 	IssuedAt         time.Time `json:"issued_at"`
 	ExpiresAt        time.Time `json:"expires_at"`
 }
+
+const (
+	loginTokenType     = "login"
+	refreshTokenType   = "refresh"
+	LoginModeCLI       = "cli"
+	LoginModeDashboard = "dashboard"
+)
 
 // Manager handles JWT creation and validation
 type Manager struct {
@@ -94,8 +94,14 @@ func NewManager(signingKey, encryptionKey []byte) (*Manager, error) {
 
 // CreateSessionToken creates an encrypted and signed session token
 func (m *Manager) CreateSessionToken(sessionID, verifier string, ttl time.Duration) (string, error) {
+	return m.CreateSessionTokenForMode(sessionID, verifier, LoginModeCLI, ttl)
+}
+
+func (m *Manager) CreateSessionTokenForMode(sessionID, verifier, mode string, ttl time.Duration) (string, error) {
 	now := time.Now()
 	session := SessionToken{
+		Type:      loginTokenType,
+		Mode:      mode,
 		SessionID: sessionID,
 		Verifier:  verifier,
 		CreatedAt: now,
@@ -147,6 +153,9 @@ func (m *Manager) ValidateSessionToken(token string) (*SessionToken, error) {
 	}
 
 	// Check expiry
+	if session.Type != loginTokenType || (session.Mode != LoginModeCLI && session.Mode != LoginModeDashboard) || session.SessionID == "" || session.Verifier == "" {
+		return nil, ErrInvalidToken
+	}
 	if time.Now().After(session.ExpiresAt) {
 		return nil, ErrExpiredToken
 	}
@@ -158,6 +167,7 @@ func (m *Manager) ValidateSessionToken(token string) (*SessionToken, error) {
 func (m *Manager) CreateRefreshToken(userEmail, oidcRefreshToken, sessionID string, rotationCounter int, ttl time.Duration) (string, error) {
 	now := time.Now()
 	refresh := RefreshToken{
+		Type:             refreshTokenType,
 		UserEmail:        userEmail,
 		OIDCRefreshToken: oidcRefreshToken,
 		RotationCounter:  rotationCounter,
@@ -212,6 +222,9 @@ func (m *Manager) ValidateRefreshToken(token string) (*RefreshToken, error) {
 	refresh, err := m.DecodeRefreshToken(token)
 	if err != nil {
 		return nil, err
+	}
+	if refresh.Type != refreshTokenType || refresh.SessionID == "" || refresh.UserEmail == "" {
+		return nil, ErrInvalidToken
 	}
 	if time.Now().After(refresh.ExpiresAt) {
 		return nil, ErrExpiredToken
@@ -277,23 +290,6 @@ func (m *Manager) ValidateAPIToken(token string) (*APICredential, error) {
 		return nil, ErrExpiredToken
 	}
 	return cred, nil
-}
-
-func (m *Manager) CreateDashboardLoginToken(state, verifier string, ttl time.Duration) (string, error) {
-	return m.createTypedToken(DashboardLoginToken{
-		Type: dashboardLoginType, State: state, Verifier: verifier, ExpiresAt: time.Now().Add(ttl),
-	})
-}
-
-func (m *Manager) ValidateDashboardLoginToken(token string) (*DashboardLoginToken, error) {
-	var claims DashboardLoginToken
-	if err := m.decodeTypedToken(token, dashboardLoginType, &claims); err != nil {
-		return nil, err
-	}
-	if claims.State == "" || claims.Verifier == "" || time.Now().After(claims.ExpiresAt) {
-		return nil, ErrInvalidToken
-	}
-	return &claims, nil
 }
 
 func (m *Manager) CreateDashboardSessionToken(email, subject, issuer string, groups []string, ttl time.Duration) (string, error) {

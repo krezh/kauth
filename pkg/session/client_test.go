@@ -186,6 +186,20 @@ func TestClient_UpdateStatus_PendingNoCompletedAt(t *testing.T) {
 	}
 }
 
+func TestClient_ClaimLoginIsSingleUse(t *testing.T) {
+	client := newFakeClient(t)
+	ctx := context.Background()
+	if _, err := client.Create(ctx, "claim-test", "verifier", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.ClaimLogin(ctx, "claim-test"); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.ClaimLogin(ctx, "claim-test"); !errors.Is(err, ErrLoginAlreadyClaimed) {
+		t.Fatalf("second ClaimLogin() error = %v, want ErrLoginAlreadyClaimed", err)
+	}
+}
+
 func TestClient_RotateRefreshTokenRejectsReplay(t *testing.T) {
 	client := newFakeClient(t)
 	ctx := context.Background()

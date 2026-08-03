@@ -9,11 +9,10 @@ Use Helm when kauth runs inside the Kubernetes cluster it proxies.
 - A public HTTPS hostname for kauth
 - Helm and kubectl access to the cluster
 
-Register these OIDC redirect URIs:
+Register this OIDC redirect URI:
 
 ```text
 https://kauth.example.com/callback
-https://kauth.example.com/dashboard/callback
 ```
 
 ## Install
@@ -67,6 +66,9 @@ helm install kauth oci://ghcr.io/krezh/charts/kauth-server \
 The chart installs the OAuthSession CRD, service account, namespaced session
 permissions, and cluster-scoped user/group impersonation permissions.
 
+The dashboard is served at `https://kauth.example.com/`, kauth's control API is
+under `/api`, and generated kubeconfigs use `https://kauth.example.com/k8s`.
+
 ## Upgrade
 
 Helm does not update CRDs stored in a chart's `crds/` directory. Apply the CRD
@@ -89,4 +91,4 @@ Users upgrading from webhook credentials must log in again.
 kauth login --url https://kauth.example.com
 ```
 
-The dashboard is available at `https://kauth.example.com/dashboard`.
+The same browser login opens the dashboard at `https://kauth.example.com/`.

@@ -69,18 +69,18 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
 <body>
 <div class="app">
   <header class="topbar">
-    <a class="brand" href="/dashboard">kauth</a>
+    <a class="brand" href="/">kauth</a>
     <span class="cluster-chip">{{.Cluster}}</span>
     <div class="account">
       <span class="identity">{{.Email}}</span>
       {{if .Admin}}<span class="role">admin</span>{{end}}
-      <form method="post" action="/dashboard/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="act">Sign out</button></form>
+      <form method="post" action="/logout"><input type="hidden" name="csrf" value="{{.CSRF}}"><button class="act">Sign out</button></form>
     </div>
   </header>
   <div class="body">
     <aside class="sidebar">
       <div class="sidebar-section">Access</div>
-      <a class="nav-item active" href="/dashboard">Sessions <span class="nav-count">{{len .Sessions}}</span></a>
+      <a class="nav-item active" href="/">Sessions <span class="nav-count">{{len .Sessions}}</span></a>
       <div class="sidebar-section">Telemetry</div>
       <div class="side-kv"><span>Requests</span><b>{{.Metrics.Requests}}</b></div>
       <div class="side-kv"><span>4xx</span><b class="status-warn">{{.Metrics.ClientErrors}}</b></div>
@@ -118,7 +118,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
       <div class="pager">{{if gt .Page 1}}<a href="?page={{.PreviousPage}}">Previous</a>{{end}}{{if .HasNext}}<a href="?page={{.NextPage}}">Next</a>{{end}}</div>
       {{else}}
       <div class="table-wrap">
-        {{if .Sessions}}<table class="data-table"><thead><tr><th>Session</th><th>User</th><th>State</th><th>Created</th><th>Last used</th></tr></thead><tbody>{{range .Sessions}}<tr><td><a class="session-link" href="/dashboard/sessions/{{urlquery .SessionID}}">{{short .SessionID}}</a></td><td class="user-cell">{{.Email}}</td><td><span class="pill {{phaseClass .Phase}}">{{.Phase}}</span></td><td class="cell-muted">{{when .CreatedAt}}</td><td class="cell-muted">{{when .LastUsed}}</td></tr>{{end}}</tbody></table>{{else}}<div class="empty">No sessions found.</div>{{end}}
+        {{if .Sessions}}<table class="data-table"><thead><tr><th>Session</th><th>User</th><th>State</th><th>Created</th><th>Last used</th></tr></thead><tbody>{{range .Sessions}}<tr><td><a class="session-link" href="/sessions/{{urlquery .SessionID}}">{{short .SessionID}}</a></td><td class="user-cell">{{.Email}}</td><td><span class="pill {{phaseClass .Phase}}">{{.Phase}}</span></td><td class="cell-muted">{{when .CreatedAt}}</td><td class="cell-muted">{{when .LastUsed}}</td></tr>{{end}}</tbody></table>{{else}}<div class="empty">No sessions found.</div>{{end}}
       </div>
       {{end}}
     </main>

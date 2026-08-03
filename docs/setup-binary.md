@@ -20,11 +20,10 @@ kubectl create namespace kauth
 kubectl apply --server-side -f helm/crds/oauthsession.yaml
 ```
 
-Register these OIDC redirect URIs:
+Register this OIDC redirect URI:
 
 ```text
 https://kauth.example.com/callback
-https://kauth.example.com/dashboard/callback
 ```
 
 ## Install
@@ -62,10 +61,13 @@ must reach PostgreSQL and Kubernetes during startup.
 Terminate public TLS at a reverse proxy, or set `TLS_CERT_FILE` and
 `TLS_KEY_FILE` to terminate TLS in kauth.
 
+The dashboard is served at `/`, kauth's control API is under `/api`, and
+generated kubeconfigs use `/k8s` on the same hostname.
+
 ## Login
 
 ```sh
 kauth login --url https://kauth.example.com
 ```
 
-The dashboard is available at `https://kauth.example.com/dashboard`.
+The same browser login opens the dashboard at `https://kauth.example.com/`.

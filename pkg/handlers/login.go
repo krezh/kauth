@@ -3,13 +3,16 @@ package handlers
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -21,9 +24,6 @@ import (
 
 	"golang.org/x/oauth2"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-
-	c "maragu.dev/gomponents"
-	hh "maragu.dev/gomponents/html"
 )
 
 type LoginHandler struct {
@@ -34,6 +34,8 @@ type LoginHandler struct {
 	refreshTokenTTL   time.Duration
 	sessionHistoryTTL time.Duration
 	allowedGroups     []string
+	baseURL           string
+	secureCookie      bool
 
 	// CRD client for distributed session storage
 	sessionClient *session.Client
@@ -61,7 +63,7 @@ type StatusResponse struct {
 func NewLoginHandler(
 	provider *oauth.Provider,
 	jwtManager *jwt.Manager,
-	clusterName, clusterServer string,
+	clusterName, clusterServer, baseURL string,
 	sessionTTL, refreshTokenTTL, sessionHistoryTTL time.Duration,
 	allowedGroups []string,
 	sessionClient *session.Client,
@@ -77,6 +79,8 @@ func NewLoginHandler(
 		refreshTokenTTL:   refreshTokenTTL,
 		sessionHistoryTTL: sessionHistoryTTL,
 		allowedGroups:     allowedGroups,
+		baseURL:           baseURL,
+		secureCookie:      strings.HasPrefix(baseURL, "https://"),
 		sessionClient:     sessionClient,
 		sseListeners:      make(map[string][]chan StatusResponse),
 	}
@@ -91,38 +95,77 @@ func NewLoginHandler(
 }
 
 func (h *LoginHandler) HandleStartLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	sessionToken, _, err := h.createLogin(r.Context(), jwt.LoginModeCLI)
+	if err != nil {
+		slog.ErrorContext(r.Context(), "failed to create login", "error", err)
+		http.Error(w, "Failed to create session", http.StatusInternalServerError)
+		return
+	}
+	writeJSON(w, StartLoginResponse{
+		SessionToken: sessionToken,
+		LoginURL:     h.baseURL + "/login?session_token=" + url.QueryEscape(sessionToken),
+	})
+}
+
+func (h *LoginHandler) createLogin(ctx context.Context, mode string) (string, string, error) {
 	// Generate session ID and PKCE verifier
 	sessionID := generateRandomString(32)
 	verifier := oauth2.GenerateVerifier()
 
 	// Create stateless session token (JWT)
-	sessionToken, err := h.jwtManager.CreateSessionToken(sessionID, verifier, h.sessionTTL)
+	sessionToken, err := h.jwtManager.CreateSessionTokenForMode(sessionID, verifier, mode, h.sessionTTL)
 	if err != nil {
-		http.Error(w, "Failed to create session", http.StatusInternalServerError)
-		return
+		return "", "", err
 	}
 
 	// Store session in CRD (distributed across all pods)
-	ctx := r.Context()
 	_, err = h.sessionClient.Create(ctx, sessionID, verifier, "")
 	if err != nil {
-		slog.ErrorContext(ctx, "failed to create session CRD", "error", err)
-		http.Error(w, "Failed to create session", http.StatusInternalServerError)
+		return "", "", err
+	}
+	return sessionToken, sessionID, nil
+}
+
+func (h *LoginHandler) HandleBrowserLogin(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 		return
 	}
-
-	// Create OAuth URL with state
-	authURL := h.provider.OAuth2Config.AuthCodeURL(
-		sessionID,
-		oauth2.AccessTypeOffline,
-		oauth2.S256ChallengeOption(verifier),
-	)
-
-	resp := StartLoginResponse{
-		SessionToken: sessionToken,
-		LoginURL:     authURL,
+	sessionToken := r.URL.Query().Get("session_token")
+	if sessionToken == "" {
+		var err error
+		sessionToken, _, err = h.createLogin(r.Context(), jwt.LoginModeDashboard)
+		if err != nil {
+			slog.ErrorContext(r.Context(), "failed to create browser login", "error", err)
+			http.Error(w, "Failed to create session", http.StatusInternalServerError)
+			return
+		}
 	}
-	writeJSON(w, resp)
+	transaction, err := h.jwtManager.ValidateSessionToken(sessionToken)
+	if err != nil {
+		http.Error(w, "Invalid login session", http.StatusBadRequest)
+		return
+	}
+	crdSession, err := h.sessionClient.Get(r.Context(), transaction.SessionID)
+	if err != nil || crdSession.Status.Phase != v1alpha1.SessionPending ||
+		subtle.ConstantTimeCompare([]byte(transaction.Verifier), []byte(crdSession.Spec.Verifier)) != 1 {
+		http.Error(w, "Invalid login session", http.StatusBadRequest)
+		return
+	}
+	h.setBrowserCookie(w, loginBindingCookieName(transaction.SessionID), sessionToken, "/callback", transaction.ExpiresAt)
+	config := *h.provider.OAuth2Config
+	if transaction.Mode == jwt.LoginModeDashboard {
+		config.Scopes = slices.DeleteFunc(append([]string(nil), config.Scopes...), func(scope string) bool { return scope == "offline_access" })
+	}
+	http.Redirect(w, r, config.AuthCodeURL(
+		transaction.SessionID,
+		oauth2.AccessTypeOffline,
+		oauth2.S256ChallengeOption(transaction.Verifier),
+	), http.StatusFound)
 }
 
 func (h *LoginHandler) HandleWatch(w http.ResponseWriter, r *http.Request) {
@@ -141,6 +184,10 @@ func (h *LoginHandler) HandleWatch(w http.ResponseWriter, r *http.Request) {
 		} else {
 			http.Error(w, "Invalid session token", http.StatusUnauthorized)
 		}
+		return
+	}
+	if sessionJWT.Mode != jwt.LoginModeCLI {
+		http.Error(w, "Invalid CLI login session", http.StatusUnauthorized)
 		return
 	}
 
@@ -253,6 +300,10 @@ func (h *LoginHandler) sendFinalStatus(w http.ResponseWriter, status *StatusResp
 }
 
 func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
 	state := r.URL.Query().Get("state")
 	if state == "" {
 		http.Error(w, "Missing state", http.StatusBadRequest)
@@ -261,6 +312,17 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
+	bindingCookieName := loginBindingCookieName(state)
+	bindingCookie, err := r.Cookie(bindingCookieName)
+	if err != nil {
+		http.Error(w, "Login session expired", http.StatusBadRequest)
+		return
+	}
+	binding, err := h.jwtManager.ValidateSessionToken(bindingCookie.Value)
+	if err != nil || subtle.ConstantTimeCompare([]byte(binding.SessionID), []byte(state)) != 1 {
+		http.Error(w, "Invalid login state", http.StatusBadRequest)
+		return
+	}
 
 	// Get session from CRD to retrieve verifier
 	crdSession, err := h.sessionClient.Get(ctx, state)
@@ -270,6 +332,15 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		} else {
 			http.Error(w, "Failed to get session", http.StatusInternalServerError)
 		}
+		return
+	}
+	if crdSession.Status.Phase != v1alpha1.SessionPending ||
+		subtle.ConstantTimeCompare([]byte(binding.Verifier), []byte(crdSession.Spec.Verifier)) != 1 {
+		http.Error(w, "Invalid login session", http.StatusBadRequest)
+		return
+	}
+	if err := h.sessionClient.ClaimLogin(ctx, state); err != nil {
+		http.Error(w, "Login session already used", http.StatusConflict)
 		return
 	}
 
@@ -366,6 +437,15 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		"groups", claims.Groups,
 		"cluster", h.kubeconfigGen.ClusterName,
 	)
+	if binding.Mode == jwt.LoginModeDashboard {
+		if err := h.sessionClient.Delete(ctx, state); err != nil {
+			slog.ErrorContext(ctx, "failed to consume dashboard login", "error", err)
+			http.Error(w, "Internal error", http.StatusInternalServerError)
+			return
+		}
+		h.completeBrowserLogin(w, r, bindingCookieName, claims, verifiedIDToken.Issuer, verifiedIDToken.Expiry)
+		return
+	}
 
 	// Create refresh token (contains OIDC refresh token encrypted)
 	refreshToken, err := h.jwtManager.CreateRefreshToken(
@@ -413,161 +493,34 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	if err := h.sessionClient.UpdateUserID(ctx, state, claims.Email); err != nil {
 		slog.WarnContext(ctx, "failed to set session user ID", "session", state[:8], "error", err)
 	}
+	h.completeBrowserLogin(w, r, bindingCookieName, claims, verifiedIDToken.Issuer, verifiedIDToken.Expiry)
+}
 
-	// Render success page
-	w.Header().Set("Content-Type", "text/html")
-	_ = hh.Doctype(
-		hh.HTML(
-			hh.Head(
-				hh.Meta(c.Attr("charset", "UTF-8")),
-				hh.Meta(c.Attr("name", "viewport"), c.Attr("content", "width=device-width, initial-scale=1.0")),
-				hh.TitleEl(c.Text("Authentication Successful")),
-				hh.StyleEl(c.Raw(`
-					* {
-						margin: 0;
-						padding: 0;
-						box-sizing: border-box;
-					}
-					body {
-						font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-						background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-						min-height: 100vh;
-						display: flex;
-						align-items: center;
-						justify-content: center;
-						color: #e0e0e0;
-					}
-					.container {
-						max-width: 500px;
-						width: 100%;
-						padding: 40px;
-						text-align: center;
-					}
-					.success-icon {
-						width: 80px;
-						height: 80px;
-						margin: 0 auto 30px;
-						border-radius: 50%;
-						background: linear-gradient(135deg, #00d2ff 0%, #3a7bd5 100%);
-						display: flex;
-						align-items: center;
-						justify-content: center;
-						animation: scaleIn 0.5s ease-out;
-					}
-					.success-icon svg {
-						width: 50px;
-						height: 50px;
-						stroke: white;
-						stroke-width: 3;
-						stroke-linecap: round;
-						stroke-linejoin: round;
-						fill: none;
-						animation: drawCheck 0.5s ease-out 0.3s forwards;
-						stroke-dasharray: 50;
-						stroke-dashoffset: 50;
-					}
-					@keyframes scaleIn {
-						from {
-							transform: scale(0);
-							opacity: 0;
-						}
-						to {
-							transform: scale(1);
-							opacity: 1;
-						}
-					}
-					@keyframes drawCheck {
-						to {
-							stroke-dashoffset: 0;
-						}
-					}
-					h1 {
-						color: #ffffff;
-						font-size: 28px;
-						margin-bottom: 15px;
-						font-weight: 600;
-					}
-					p {
-						color: #b0b0b0;
-						font-size: 16px;
-						line-height: 1.6;
-						margin-bottom: 15px;
-					}
-					.info {
-						background: rgba(255, 255, 255, 0.05);
-						border: 1px solid rgba(255, 255, 255, 0.1);
-						border-radius: 8px;
-						padding: 20px;
-						margin: 30px 0;
-					}
-					.info p {
-						color: #90caf9;
-						font-size: 14px;
-						margin: 0;
-					}
-					.progress-container {
-						width: 100%;
-						height: 4px;
-						background: rgba(255, 255, 255, 0.1);
-						border-radius: 2px;
-						overflow: hidden;
-						margin-top: 30px;
-					}
-					.progress-bar {
-						height: 100%;
-						background: linear-gradient(90deg, #00d2ff 0%, #3a7bd5 100%);
-						border-radius: 2px;
-						animation: progress 5s linear forwards;
-					}
-					@keyframes progress {
-						from {
-							width: 100%;
-						}
-						to {
-							width: 0%;
-						}
-					}
-					.timer {
-						color: #808080;
-						font-size: 12px;
-						margin-top: 10px;
-					}
-				`)),
-				hh.Script(c.Raw(`
-					let timeLeft = 5;
-					const timerEl = document.getElementById('timer');
+func (h *LoginHandler) completeBrowserLogin(w http.ResponseWriter, r *http.Request, bindingCookieName string, claims *OIDCClaims, issuer string, idTokenExpiry time.Time) {
+	ttl := dashboardSessionTTL
+	if remaining := time.Until(idTokenExpiry); remaining < ttl {
+		ttl = remaining
+	}
+	dashboardToken, err := h.jwtManager.CreateDashboardSessionToken(claims.Email, claims.Sub, issuer, claims.Groups, ttl)
+	if err != nil {
+		http.Error(w, "Internal error", http.StatusInternalServerError)
+		return
+	}
+	h.clearBrowserCookie(w, bindingCookieName, "/callback")
+	h.setBrowserCookie(w, dashboardCookie, dashboardToken, "/", time.Now().Add(ttl))
+	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
 
-					const countdown = setInterval(function() {
-						timeLeft--;
-						if (timerEl) {
-							timerEl.textContent = timeLeft;
-						}
-						if (timeLeft <= 0) {
-							clearInterval(countdown);
-							window.close();
-						}
-					}, 1000);
-				`)),
-			),
-			hh.Body(
-				hh.Div(c.Attr("class", "container"),
-					hh.Div(c.Attr("class", "success-icon"),
-						c.Raw(`<svg viewBox="0 0 50 50"><path d="M 10 25 L 20 35 L 40 15"></path></svg>`),
-					),
-					hh.H1(c.Text("Authentication Successful!")),
-					hh.P(c.Text("You can close this window and return to your terminal.")),
-					hh.Div(c.Attr("class", "progress-container"),
-						hh.Div(c.Attr("class", "progress-bar")),
-					),
-					hh.Div(c.Attr("class", "timer"),
-						c.Text("Window closes in "),
-						hh.Span(c.Attr("id", "timer"), c.Text("5")),
-						c.Text(" seconds"),
-					),
-				),
-			),
-		),
-	).Render(w)
+func (h *LoginHandler) setBrowserCookie(w http.ResponseWriter, name, value, path string, expires time.Time) {
+	http.SetCookie(w, &http.Cookie{Name: name, Value: value, Path: path, Expires: expires, MaxAge: int(time.Until(expires).Seconds()), HttpOnly: true, Secure: h.secureCookie, SameSite: http.SameSiteLaxMode})
+}
+
+func (h *LoginHandler) clearBrowserCookie(w http.ResponseWriter, name, path string) {
+	http.SetCookie(w, &http.Cookie{Name: name, Path: path, MaxAge: -1, HttpOnly: true, Secure: h.secureCookie, SameSite: http.SameSiteLaxMode})
+}
+
+func loginBindingCookieName(state string) string {
+	return dashboardLoginCookie + "_" + state
 }
 
 func generateRandomString(size int) string {

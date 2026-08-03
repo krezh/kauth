@@ -107,6 +107,7 @@ func main() {
 		slog.Error("BASE_URL must be an absolute HTTP(S) URL without a path", "value", cfg.BaseURL)
 		os.Exit(1)
 	}
+	kubernetesProxyURL := cfg.BaseURL + "/k8s"
 
 	// Initialize JWT manager
 	jwtManager, err := jwt.NewManager(cfg.JWTSigningKey, cfg.JWTEncryptionKey)
@@ -167,17 +168,9 @@ func main() {
 
 	authenticator := handlers.NewSessionAuthenticator(jwtManager, sessionClient)
 	proxyHandler := handlers.NewKubernetesProxyHandler(authenticator, upstreamURL, upstreamTransport)
-	getReadyProvider := func() *oauth.Provider {
-		select {
-		case <-providerReady:
-			return provider
-		default:
-			return nil
-		}
-	}
-	dashboardHandler := handlers.NewDashboardHandler(getReadyProvider, jwtManager, sessionClient, requestStore, handlers.DashboardConfig{
+	dashboardHandler := handlers.NewDashboardHandler(jwtManager, sessionClient, requestStore, handlers.DashboardConfig{
 		BaseURL: cfg.BaseURL, ClusterName: cfg.ClusterName,
-		AllowedGroups: cfg.AllowedGroups, AdminGroups: cfg.AdminGroups,
+		AdminGroups: cfg.AdminGroups,
 	})
 
 	go func() {
@@ -198,6 +191,7 @@ func main() {
 					provider,
 					jwtManager,
 					cfg.ClusterName,
+					kubernetesProxyURL,
 					cfg.BaseURL,
 					cfg.SessionTTL,
 					cfg.RefreshTokenTTL,
@@ -210,7 +204,7 @@ func main() {
 					jwtManager,
 					sessionClient,
 					cfg.ClusterName,
-					cfg.BaseURL,
+					kubernetesProxyURL,
 					cfg.RefreshTokenTTL,
 					cfg.AllowedGroups,
 				)
@@ -253,37 +247,39 @@ func main() {
 		}
 	}
 
-	controlMux.HandleFunc("/info", handlers.HandleInfo(
+	controlMux.HandleFunc("/api/info", handlers.HandleInfo(
 		cfg.ClusterName,
-		cfg.BaseURL,
+		kubernetesProxyURL,
 		cfg.IssuerURL,
 		cfg.ClientID,
 		cfg.BaseURL,
 	))
-	controlMux.HandleFunc("/start-login", requireProvider(func(w http.ResponseWriter, r *http.Request) {
+	controlMux.HandleFunc("/api/start-login", requireProvider(func(w http.ResponseWriter, r *http.Request) {
 		loginHandler.HandleStartLogin(w, r)
 	}))
-	controlMux.HandleFunc("/watch", requireProvider(func(w http.ResponseWriter, r *http.Request) {
+	controlMux.HandleFunc("/api/watch", requireProvider(func(w http.ResponseWriter, r *http.Request) {
 		loginHandler.HandleWatch(w, r)
 	}))
 	controlMux.HandleFunc("/callback", requireProvider(func(w http.ResponseWriter, r *http.Request) {
 		loginHandler.HandleCallback(w, r)
 	}))
-	controlMux.HandleFunc("/refresh", requireProvider(func(w http.ResponseWriter, r *http.Request) {
+	controlMux.HandleFunc("/login", requireProvider(func(w http.ResponseWriter, r *http.Request) {
+		loginHandler.HandleBrowserLogin(w, r)
+	}))
+	controlMux.HandleFunc("/api/refresh", requireProvider(func(w http.ResponseWriter, r *http.Request) {
 		refreshHandler.HandleRefresh(w, r)
 	}))
-	controlMux.HandleFunc("/revoke", requireProvider(handlers.RequireAuth(func() *oauth.Provider { return provider }, func(w http.ResponseWriter, r *http.Request) {
+	controlMux.HandleFunc("/api/revoke", requireProvider(handlers.RequireAuth(func() *oauth.Provider { return provider }, func(w http.ResponseWriter, r *http.Request) {
 		handlers.NewRevokeHandler(sessionClient, cfg.AdminGroups).HandleRevoke(w, r)
 	})))
-	controlMux.HandleFunc("/sessions", requireProvider(handlers.RequireAuth(func() *oauth.Provider { return provider }, func(w http.ResponseWriter, r *http.Request) {
+	controlMux.HandleFunc("/api/sessions", requireProvider(handlers.RequireAuth(func() *oauth.Provider { return provider }, func(w http.ResponseWriter, r *http.Request) {
 		handlers.NewSessionsHandler(sessionClient, cfg.AdminGroups).HandleListSessions(w, r)
 	})))
-	controlMux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
+	controlMux.HandleFunc("/api/health", func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("OK"))
 	})
-	controlMux.Handle("/dashboard", dashboardHandler)
-	controlMux.Handle("/dashboard/", dashboardHandler)
+	controlMux.Handle("/", dashboardHandler)
 
 	// IP extraction with trusted proxy support
 	ipExtractor := middleware.NewClientIPExtractor(cfg.TrustedProxyCIDRs)
@@ -296,17 +292,19 @@ func main() {
 	rateLimiter := middleware.NewRateLimiter(cfg.RateLimitRPS, cfg.RateLimitBurst, 5*time.Minute, cfg.TrustedProxyCIDRs)
 	controlHandler = rateLimiter.Middleware(controlHandler)
 
-	controlPaths := map[string]struct{}{
-		"/info": {}, "/start-login": {}, "/watch": {}, "/callback": {},
-		"/refresh": {}, "/revoke": {}, "/sessions": {}, "/health": {},
-	}
+	kubernetesHandler := http.StripPrefix("/k8s", proxyHandler)
 	var handler http.Handler = http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, controlPath := controlPaths[r.URL.Path]
-		if controlPath || r.URL.Path == "/dashboard" || strings.HasPrefix(r.URL.Path, "/dashboard/") {
-			controlHandler.ServeHTTP(w, r)
+		if r.URL.Path == "/k8s" {
+			redirect := *r.URL
+			redirect.Path = "/k8s/"
+			http.Redirect(w, r, redirect.String(), http.StatusPermanentRedirect)
 			return
 		}
-		proxyHandler.ServeHTTP(w, r)
+		if strings.HasPrefix(r.URL.Path, "/k8s/") {
+			kubernetesHandler.ServeHTTP(w, r)
+			return
+		}
+		controlHandler.ServeHTTP(w, r)
 	})
 	handler = middleware.SecurityHeaders(handler)
 	if cfg.TLSCertFile != "" && cfg.TLSKeyFile != "" {

@@ -115,18 +115,6 @@ func TestDashboardTokensArePurposeBound(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	loginToken, err := manager.CreateDashboardLoginToken("state", "verifier", time.Minute)
-	if err != nil {
-		t.Fatal(err)
-	}
-	login, err := manager.ValidateDashboardLoginToken(loginToken)
-	if err != nil || login.State != "state" || login.Verifier != "verifier" {
-		t.Fatalf("login token = %#v, error = %v", login, err)
-	}
-	if _, err := manager.ValidateDashboardSessionToken(loginToken); err != ErrInvalidToken {
-		t.Fatalf("login token accepted as dashboard session: %v", err)
-	}
-
 	sessionToken, err := manager.CreateDashboardSessionToken("user@example.com", "subject", "https://issuer.example", []string{"developers"}, time.Minute)
 	if err != nil {
 		t.Fatal(err)
@@ -144,13 +132,6 @@ func TestDashboardTokensArePurposeBound(t *testing.T) {
 	}
 	if _, err := manager.ValidateDashboardSessionToken(expiredSession); err == nil {
 		t.Fatal("expired dashboard session was accepted")
-	}
-	expiredLogin, err := manager.CreateDashboardLoginToken("state", "verifier", -time.Minute)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := manager.ValidateDashboardLoginToken(expiredLogin); err == nil {
-		t.Fatal("expired dashboard login transaction was accepted")
 	}
 }
 
@@ -712,21 +693,13 @@ func TestTokensAreIndependent(t *testing.T) {
 		t.Errorf("Session and refresh tokens are identical")
 	}
 
-	// Note: The JWT manager doesn't enforce token type at the cryptographic level.
-	// Both token types can be decrypted/verified, but they will fail to unmarshal
-	// into the wrong struct type. This is acceptable as the JSON structure differs.
-
-	// Session token will fail to parse as refresh token (different JSON structure)
 	_, err = mgr.ValidateRefreshToken(sessionToken)
-	if err == nil {
-		t.Logf("Note: ValidateRefreshToken may accept session token structurally but will fail in practice")
-		// This is acceptable - the unmarshal will fail due to different JSON fields
+	if err != ErrInvalidToken {
+		t.Fatalf("session token accepted as refresh token: %v", err)
 	}
 
-	// Refresh token will fail to parse as session token (different JSON structure)
 	_, err = mgr.ValidateSessionToken(refreshToken)
-	if err == nil {
-		t.Logf("Note: ValidateSessionToken may accept refresh token structurally but will fail in practice")
-		// This is acceptable - the unmarshal will fail due to different JSON fields
+	if err != ErrInvalidToken {
+		t.Fatalf("refresh token accepted as session token: %v", err)
 	}
 }

@@ -31,7 +31,7 @@ func TestDashboardCSRF(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			form := url.Values{"csrf": []string{tt.token}}
-			req := httptest.NewRequest(http.MethodPost, "/dashboard/logout", strings.NewReader(form.Encode()))
+			req := httptest.NewRequest(http.MethodPost, "/logout", strings.NewReader(form.Encode()))
 			req.Header.Set("Content-Type", tt.contentType)
 			req.Header.Set("Origin", tt.origin)
 			if got := handler.validCSRF(req, claims); got != tt.want {
@@ -59,11 +59,17 @@ func TestDashboardOwnsSession(t *testing.T) {
 }
 
 func TestDashboardCookieScope(t *testing.T) {
-	handler := &DashboardHandler{secureCookie: true}
+	handler := &LoginHandler{secureCookie: true}
 	response := httptest.NewRecorder()
-	handler.setCookie(response, dashboardCookie, "value", time.Now().Add(time.Minute))
+	handler.setBrowserCookie(response, dashboardCookie, "value", "/", time.Now().Add(time.Minute))
 	cookies := response.Result().Cookies()
-	if len(cookies) != 1 || cookies[0].Path != "/dashboard" || !cookies[0].Secure || !cookies[0].HttpOnly || cookies[0].SameSite != http.SameSiteLaxMode {
+	if len(cookies) != 1 || cookies[0].Path != "/" || !cookies[0].Secure || !cookies[0].HttpOnly || cookies[0].SameSite != http.SameSiteLaxMode {
 		t.Fatalf("unexpected dashboard cookie: %#v", cookies)
+	}
+
+	response = httptest.NewRecorder()
+	handler.setBrowserCookie(response, loginBindingCookieName("state"), "value", "/callback", time.Now().Add(time.Minute))
+	if cookies := response.Result().Cookies(); len(cookies) != 1 || cookies[0].Path != "/callback" {
+		t.Fatalf("unexpected login binding cookie: %#v", cookies)
 	}
 }
