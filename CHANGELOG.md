@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.2.27](https://github.com/krezh/kauth/compare/0.2.26...0.2.27) (2026-08-04)
+
+
+### Features
+
+* **deps:** update module golang.org/x/sync (v0.20.0 ➔ v0.22.0) ([#309](https://github.com/krezh/kauth/issues/309)) ([fee0d1a](https://github.com/krezh/kauth/commit/fee0d1a37013a2c595e317603f8f34c11706fa03))
+* unify dashboard and CLI authentication ([#307](https://github.com/krezh/kauth/issues/307)) ([ad8a8cc](https://github.com/krezh/kauth/commit/ad8a8cc931ae0d47686c4a783e28bc0873ad4030))
+
+
+### Miscellaneous Chores
+
+* **nix:** lock file maintenance flake.lock ([#306](https://github.com/krezh/kauth/issues/306)) ([7cb9d26](https://github.com/krezh/kauth/commit/7cb9d26d04729c4ce07849642d5880f922def41d))
+
 ## [0.2.26](https://github.com/krezh/kauth/compare/0.2.25...0.2.26) (2026-08-03)
 
 
