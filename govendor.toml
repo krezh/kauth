@@ -213,8 +213,8 @@ schema = 3
     go = "1.25.0"
     packages = ["golang.org/x/oauth2", "golang.org/x/oauth2/internal"]
   [mod."golang.org/x/sync"]
-    version = "v0.20.0"
-    hash = "sha256-ybcjhCfK6lroUM0yswUvWooW8MOQZBXyiSqoxG6Uy0Y="
+    version = "v0.22.0"
+    hash = "sha256-VZjl0fAM0p/nI81zh+pdBjzxFupx0UcKYXBBpL2ZS7k="
     go = "1.25.0"
     packages = ["golang.org/x/sync/errgroup", "golang.org/x/sync/semaphore", "golang.org/x/sync/singleflight"]
   [mod."golang.org/x/sys"]
