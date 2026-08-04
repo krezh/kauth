@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	v1alpha1 "kauth/pkg/apis/kauth.io/v1alpha1"
 	"kauth/pkg/audit"
 	"kauth/pkg/jwt"
 	"kauth/pkg/session"
@@ -112,7 +111,7 @@ func (h *DashboardHandler) handleOverview(w http.ResponseWriter, r *http.Request
 	admin := (&CallerClaims{Email: claims.Email, Groups: claims.Groups}).isAdmin(h.adminGroups)
 	var sessionsList []SessionInfo
 	var ownedSessionIDs []string
-	var rawSessions []v1alpha1.OAuthSession
+	var rawSessions []session.Session
 	var err error
 	if admin {
 		rawSessions, err = h.sessions.ListAll(ctx)
@@ -124,7 +123,7 @@ func (h *DashboardHandler) handleOverview(w http.ResponseWriter, r *http.Request
 		return
 	}
 	for _, item := range rawSessions {
-		if !admin && item.Status.Email == "" {
+		if !admin && item.Email == "" {
 			continue
 		}
 		if !admin && !dashboardOwnsSession(claims, &item) {
@@ -132,12 +131,12 @@ func (h *DashboardHandler) handleOverview(w http.ResponseWriter, r *http.Request
 		}
 		sessionsList = append(sessionsList, sessionInfo(item))
 		if !admin {
-			ownedSessionIDs = append(ownedSessionIDs, item.Spec.SessionID)
+			ownedSessionIDs = append(ownedSessionIDs, item.SessionID)
 		}
 	}
 	activeSessions := 0
 	for _, item := range sessionsList {
-		if item.Phase == string(v1alpha1.SessionActive) {
+		if item.Phase == string(session.PhaseActive) {
 			activeSessions++
 		}
 	}
@@ -197,14 +196,14 @@ func (h *DashboardHandler) handleSession(w http.ResponseWriter, r *http.Request,
 	h.render(w, dashboardView{
 		Title: "Session detail", Cluster: h.clusterName, Email: claims.Email, Admin: admin,
 		CSRF: claims.CSRFToken, Detail: ptrTo(sessionInfo(*oauthSession)), Events: events,
-		Metrics: metrics, ActiveSessions: boolInt(oauthSession.Status.Phase == v1alpha1.SessionActive),
+		Metrics: metrics, ActiveSessions: boolInt(oauthSession.Phase == session.PhaseActive),
 		Page: page, PreviousPage: page - 1, NextPage: page + 1, HasNext: len(events) == 100,
 	})
 }
 
-func dashboardOwnsSession(claims *jwt.DashboardSessionToken, oauthSession *v1alpha1.OAuthSession) bool {
-	return oauthSession.Status.Subject != "" && oauthSession.Status.Issuer != "" &&
-		claims.Subject == oauthSession.Status.Subject && claims.Issuer == oauthSession.Status.Issuer
+func dashboardOwnsSession(claims *jwt.DashboardSessionToken, oauthSession *session.Session) bool {
+	return oauthSession.Subject != "" && oauthSession.Issuer != "" &&
+		claims.Subject == oauthSession.Subject && claims.Issuer == oauthSession.Issuer
 }
 
 func (h *DashboardHandler) validCSRF(r *http.Request, claims *jwt.DashboardSessionToken) bool {
@@ -245,16 +244,16 @@ func dashboardLoginCookiePath(secure bool) string {
 	return "/callback"
 }
 
-func sessionInfo(item v1alpha1.OAuthSession) SessionInfo {
-	info := SessionInfo{SessionID: item.Spec.SessionID, UserID: item.Spec.UserID, Email: item.Status.Email, Username: item.Status.Username, Phase: string(item.Status.Phase), CreatedAt: item.Spec.CreatedAt.Time}
-	if !item.Spec.LastUsed.IsZero() {
-		info.LastUsed = item.Spec.LastUsed.Time
+func sessionInfo(item session.Session) SessionInfo {
+	info := SessionInfo{SessionID: item.SessionID, UserID: item.UserID, Email: item.Email, Username: item.Username, Phase: string(item.Phase), CreatedAt: item.CreatedAt}
+	if !item.LastUsed.IsZero() {
+		info.LastUsed = item.LastUsed
 	}
-	if item.Status.CompletedAt != nil {
-		info.CompletedAt = item.Status.CompletedAt.Time
+	if item.CompletedAt != nil {
+		info.CompletedAt = *item.CompletedAt
 	}
-	if item.Status.RevokedAt != nil {
-		info.RevokedAt = item.Status.RevokedAt.Time
+	if item.RevokedAt != nil {
+		info.RevokedAt = *item.RevokedAt
 	}
 	return info
 }

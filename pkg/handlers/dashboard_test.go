@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	v1alpha1 "kauth/pkg/apis/kauth.io/v1alpha1"
 	"kauth/pkg/jwt"
+	"kauth/pkg/session"
 )
 
 func TestDashboardCSRF(t *testing.T) {
@@ -43,17 +43,17 @@ func TestDashboardCSRF(t *testing.T) {
 
 func TestDashboardOwnsSession(t *testing.T) {
 	claims := &jwt.DashboardSessionToken{Email: "reused@example.com", Subject: "new-subject", Issuer: "https://issuer.example"}
-	if dashboardOwnsSession(claims, &v1alpha1.OAuthSession{Status: v1alpha1.OAuthSessionStatus{
+	if dashboardOwnsSession(claims, &session.Session{
 		Email: "reused@example.com", Subject: "old-subject", Issuer: "https://issuer.example",
-	}}) {
+	}) {
 		t.Fatal("email reuse must not grant access to another OIDC subject")
 	}
-	if !dashboardOwnsSession(claims, &v1alpha1.OAuthSession{Status: v1alpha1.OAuthSessionStatus{
+	if !dashboardOwnsSession(claims, &session.Session{
 		Email: "reused@example.com", Subject: "new-subject", Issuer: "https://issuer.example",
-	}}) {
+	}) {
 		t.Fatal("matching issuer and subject should grant access")
 	}
-	if dashboardOwnsSession(claims, &v1alpha1.OAuthSession{Status: v1alpha1.OAuthSessionStatus{Email: "reused@example.com"}}) {
+	if dashboardOwnsSession(claims, &session.Session{Email: "reused@example.com"}) {
 		t.Fatal("sessions without immutable ownership must not be accessible")
 	}
 }

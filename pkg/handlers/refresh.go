@@ -10,14 +10,12 @@ import (
 	"slices"
 	"time"
 
-	v1alpha1 "kauth/pkg/apis/kauth.io/v1alpha1"
 	"kauth/pkg/audit"
 	"kauth/pkg/jwt"
 	"kauth/pkg/oauth"
 	"kauth/pkg/session"
 
 	"golang.org/x/oauth2"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
 type RefreshHandler struct {
@@ -80,7 +78,7 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ctx := r.Context()
-	var currentSession *v1alpha1.OAuthSession
+	var currentSession *session.Session
 
 	// Validate and decrypt refresh token
 	refreshToken, err := h.jwtManager.ValidateRefreshToken(req.RefreshToken)
@@ -110,14 +108,14 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 		// Update last-used before validating so the expiry goroutine sees fresh
 		// activity and does not race to expire a session that is actively in use.
 		_ = h.sessionClient.UpdateLastUsed(ctx, refreshToken.SessionID)
-		if err := h.sessionClient.ValidateSession(ctx, refreshToken.SessionID, v1alpha1.SessionActive); err != nil {
+		if err := h.sessionClient.ValidateSession(ctx, refreshToken.SessionID, session.PhaseActive); err != nil {
 			slog.WarnContext(ctx, "refresh: session invalid", "user", refreshToken.UserEmail, "error", err)
 			http.Error(w, "Session is no longer active", http.StatusUnauthorized)
 			return
 		}
 
 		currentSession, err = h.sessionClient.Get(ctx, refreshToken.SessionID)
-		if err != nil || subtle.ConstantTimeCompare([]byte(req.RefreshToken), []byte(currentSession.Status.RefreshToken)) != 1 {
+		if err != nil || subtle.ConstantTimeCompare([]byte(req.RefreshToken), []byte(currentSession.RefreshToken)) != 1 {
 			slog.WarnContext(ctx, "refresh: replay attack detected", "user", refreshToken.UserEmail, "session", refreshToken.SessionID)
 			http.Error(w, "Token replay detected", http.StatusUnauthorized)
 			return
@@ -155,9 +153,9 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Token verification failed", http.StatusInternalServerError)
 		return
 	}
-	if currentSession != nil && (currentSession.Status.Subject == "" || currentSession.Status.Issuer == "" ||
-		subtle.ConstantTimeCompare([]byte(claims.Sub), []byte(currentSession.Status.Subject)) != 1 ||
-		subtle.ConstantTimeCompare([]byte(verifiedIDToken.Issuer), []byte(currentSession.Status.Issuer)) != 1) {
+	if currentSession != nil && (currentSession.Subject == "" || currentSession.Issuer == "" ||
+		subtle.ConstantTimeCompare([]byte(claims.Sub), []byte(currentSession.Subject)) != 1 ||
+		subtle.ConstantTimeCompare([]byte(verifiedIDToken.Issuer), []byte(currentSession.Issuer)) != 1) {
 		slog.WarnContext(ctx, "refresh: immutable identity mismatch", "user", refreshToken.UserEmail, "session", refreshToken.SessionID)
 		http.Error(w, "Token identity mismatch", http.StatusUnauthorized)
 		return
@@ -204,8 +202,8 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 
 	// Update session with new refresh token
 	if refreshToken.SessionID != "" {
-		err := h.sessionClient.RotateRefreshToken(ctx, refreshToken.SessionID, req.RefreshToken, v1alpha1.OAuthSessionStatus{
-			Phase:        v1alpha1.SessionActive,
+		err := h.sessionClient.RotateRefreshToken(ctx, refreshToken.SessionID, req.RefreshToken, session.Status{
+			Phase:        session.PhaseActive,
 			Email:        claims.Email,
 			Username:     claims.PreferredUsername,
 			Subject:      claims.Sub,
@@ -214,7 +212,7 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 			Groups:       claims.Groups,
 		})
 		if err != nil {
-			if errors.Is(err, session.ErrRefreshTokenReplayed) || apierrors.IsConflict(err) {
+			if errors.Is(err, session.ErrRefreshTokenReplayed) {
 				slog.WarnContext(ctx, "refresh: concurrent replay rejected", "user", refreshToken.UserEmail, "session", refreshToken.SessionID)
 				http.Error(w, "Token replay detected", http.StatusUnauthorized)
 			} else {

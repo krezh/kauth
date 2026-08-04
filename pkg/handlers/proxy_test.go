@@ -14,14 +14,14 @@ import (
 	"testing"
 	"time"
 
-	v1alpha1 "kauth/pkg/apis/kauth.io/v1alpha1"
 	"kauth/pkg/jwt"
+	"kauth/pkg/session"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type fakeSessionStore struct {
-	session *v1alpha1.OAuthSession
+	session *session.Session
 	err     error
 	touched string
 }
@@ -29,10 +29,10 @@ type fakeSessionStore struct {
 type blockingSessionStore struct {
 	gets    atomic.Int32
 	release chan struct{}
-	session *v1alpha1.OAuthSession
+	session *session.Session
 }
 
-func (s *blockingSessionStore) Get(context.Context, string) (*v1alpha1.OAuthSession, error) {
+func (s *blockingSessionStore) Get(context.Context, string) (*session.Session, error) {
 	s.gets.Add(1)
 	<-s.release
 	return s.session, nil
@@ -40,7 +40,7 @@ func (s *blockingSessionStore) Get(context.Context, string) (*v1alpha1.OAuthSess
 
 func (*blockingSessionStore) TouchLastUsed(context.Context, string, time.Duration) error { return nil }
 
-func (f *fakeSessionStore) Get(_ context.Context, _ string) (*v1alpha1.OAuthSession, error) {
+func (f *fakeSessionStore) Get(_ context.Context, _ string) (*session.Session, error) {
 	return f.session, f.err
 }
 
@@ -58,12 +58,12 @@ func newTestJWTManager(t *testing.T) *jwt.Manager {
 	return manager
 }
 
-func newActiveSession(email string, groups ...string) *v1alpha1.OAuthSession {
-	return &v1alpha1.OAuthSession{Status: v1alpha1.OAuthSessionStatus{
-		Phase:  v1alpha1.SessionActive,
+func newActiveSession(email string, groups ...string) *session.Session {
+	return &session.Session{
+		Phase:  session.PhaseActive,
 		Email:  email,
 		Groups: groups,
-	}}
+	}
 }
 
 func TestSessionAuthenticator(t *testing.T) {
@@ -76,17 +76,17 @@ func TestSessionAuthenticator(t *testing.T) {
 	tests := []struct {
 		name        string
 		token       string
-		session     *v1alpha1.OAuthSession
+		session     *session.Session
 		wantErr     bool
 		wantTouched bool
 	}{
 		{name: "active", token: token, session: newActiveSession("user@example.com", "developers"), wantTouched: true},
-		{name: "recently active", token: token, session: func() *v1alpha1.OAuthSession {
-			session := newActiveSession("user@example.com", "developers")
-			session.Spec.LastUsed = metav1.Now()
-			return session
+		{name: "recently active", token: token, session: func() *session.Session {
+			sess := newActiveSession("user@example.com", "developers")
+			sess.LastUsed = time.Now()
+			return sess
 		}()},
-		{name: "revoked", token: token, session: &v1alpha1.OAuthSession{Status: v1alpha1.OAuthSessionStatus{Phase: v1alpha1.SessionRevoked, Email: "user@example.com"}}, wantErr: true},
+		{name: "revoked", token: token, session: &session.Session{Phase: session.PhaseRevoked, Email: "user@example.com"}, wantErr: true},
 		{name: "invalid token", token: "invalid", session: newActiveSession("user@example.com"), wantErr: true},
 		{name: "empty email", token: token, session: newActiveSession(""), wantErr: true},
 	}

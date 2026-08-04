@@ -27,11 +27,11 @@ import (
 	"testing"
 	"time"
 
-	v1alpha1 "kauth/pkg/apis/kauth.io/v1alpha1"
 	"kauth/pkg/audit"
 	"kauth/pkg/session"
 	"kauth/pkg/token"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -45,32 +45,37 @@ const (
 	testNamespace  = "kauth-e2e"
 	testGroup      = "kauth-e2e-allowed"
 	testUser       = "e2e-user@example.com"
+	// e2eClusterName must match the CLUSTER_NAME set in deployKauth's Helm values.
+	e2eClusterName = "e2e"
 )
 
 var environment *e2eEnvironment
 
 type e2eEnvironment struct {
-	repoRoot       string
-	tempDir        string
-	clusterName    string
-	clusterConfig  string
-	image          string
-	proxyURL       string
-	proxyCA        []byte
-	proxyServer    *httptest.Server
-	loginBrowser   *http.Client
-	backendPort    int
-	kauthBinary    string
-	serverBinary   string
-	oidcBinary     string
-	portForward    *exec.Cmd
-	portForwardLog *os.File
-	sessionClient  *session.Client
-	clientset      *kubernetes.Clientset
-	kubectlConfig  string
-	sessionID      string
-	apiToken       string
-	refreshToken   string
+	repoRoot         string
+	tempDir          string
+	clusterName      string
+	clusterConfig    string
+	image            string
+	proxyURL         string
+	proxyCA          []byte
+	proxyServer      *httptest.Server
+	loginBrowser     *http.Client
+	backendPort      int
+	kauthBinary      string
+	serverBinary     string
+	oidcBinary       string
+	portForward      *exec.Cmd
+	portForwardLog   *os.File
+	dbPort           int
+	dbPortForward    *exec.Cmd
+	dbPortForwardLog *bytes.Buffer
+	sessionClient    *session.Client
+	clientset        *kubernetes.Clientset
+	kubectlConfig    string
+	sessionID        string
+	apiToken         string
+	refreshToken     string
 }
 
 func TestMain(m *testing.M) {
@@ -173,10 +178,6 @@ func (e *e2eEnvironment) buildAndLoadImage() error {
 }
 
 func (e *e2eEnvironment) deployKauth() error {
-	if _, err := e.run("kubectl", "--kubeconfig", e.clusterConfig, "apply", "-f", filepath.Join(e.repoRoot, "helm", "crds", "oauthsession.yaml")); err != nil {
-		return err
-	}
-
 	backendPort, err := availablePort()
 	if err != nil {
 		return err
@@ -224,14 +225,14 @@ env:
   - name: BASE_URL
     value: %s
   - name: CLUSTER_NAME
-    value: e2e
+    value: %s
   - name: DATABASE_URL
     value: postgres://kauth:kauth@postgres.kauth.svc.cluster.local:5432/kauth?sslmode=disable
   - name: ADMIN_GROUPS
     value: kauth-e2e-allowed
   - name: AUDIT_QUEUE_SIZE
     value: "8"
-`, e.clusterName, base64.StdEncoding.EncodeToString(signingKey), base64.StdEncoding.EncodeToString(encryptionKey), e.proxyURL)
+`, e.clusterName, base64.StdEncoding.EncodeToString(signingKey), base64.StdEncoding.EncodeToString(encryptionKey), e.proxyURL, e2eClusterName)
 	valuesPath := filepath.Join(e.tempDir, "values.yaml")
 	if err := os.WriteFile(valuesPath, []byte(values), 0600); err != nil {
 		return err
@@ -402,6 +403,61 @@ func (e *e2eEnvironment) stopPortForward() {
 	e.portForwardLog = nil
 }
 
+func (e *e2eEnvironment) sessionDatabaseURL() string {
+	return fmt.Sprintf("postgres://kauth:kauth@127.0.0.1:%d/kauth?sslmode=disable", e.dbPort)
+}
+
+func (e *e2eEnvironment) startDBPortForward() error {
+	port, cmd, output, err := e.clusterPortForward(kauthNamespace, "service/postgres", 5432)
+	if err != nil {
+		return err
+	}
+	e.dbPort = port
+	e.dbPortForward = cmd
+	e.dbPortForwardLog = output
+
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		testPool, poolErr := pgxpool.New(context.Background(), e.sessionDatabaseURL())
+		if poolErr == nil {
+			pingErr := testPool.Ping(context.Background())
+			testPool.Close()
+			if pingErr == nil {
+				return nil
+			}
+		}
+		time.Sleep(250 * time.Millisecond)
+	}
+	return fmt.Errorf("db port-forward did not become ready:\n%s", output.String())
+}
+
+func (e *e2eEnvironment) stopDBPortForward() {
+	if e.dbPortForward != nil && e.dbPortForward.Process != nil {
+		_ = e.dbPortForward.Process.Kill()
+		_, _ = e.dbPortForward.Process.Wait()
+	}
+	e.dbPortForward = nil
+}
+
+// restartSessionClient rebuilds the DB port-forward and sessionClient after a Postgres pod identity change.
+func (e *e2eEnvironment) restartSessionClient(t *testing.T) {
+	t.Helper()
+	if e.sessionClient != nil {
+		_ = e.sessionClient.Close(context.Background())
+	}
+	e.stopDBPortForward()
+	if err := e.startDBPortForward(); err != nil {
+		t.Fatalf("restart DB port-forward: %v", err)
+	}
+	sessionCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	sessionClient, err := session.NewClient(sessionCtx, e.sessionDatabaseURL(), e2eClusterName)
+	if err != nil {
+		t.Fatalf("rebuild session client: %v", err)
+	}
+	e.sessionClient = sessionClient
+}
+
 func (e *e2eEnvironment) configureCluster() error {
 	config, err := clientcmd.BuildConfigFromFlags("", e.clusterConfig)
 	if err != nil {
@@ -411,7 +467,12 @@ func (e *e2eEnvironment) configureCluster() error {
 	if err != nil {
 		return err
 	}
-	e.sessionClient, err = session.NewClient(config, kauthNamespace)
+	if err := e.startDBPortForward(); err != nil {
+		return err
+	}
+	sessionCtx, sessionCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	e.sessionClient, err = session.NewClient(sessionCtx, e.sessionDatabaseURL(), e2eClusterName)
+	sessionCancel()
 	if err != nil {
 		return err
 	}
@@ -464,8 +525,8 @@ func (e *e2eEnvironment) configureCluster() error {
 	if _, err := e.sessionClient.Create(ctx, "other-user-session", "other-verifier", "other@example.com"); err != nil {
 		return err
 	}
-	if err := e.sessionClient.UpdateStatus(ctx, "other-user-session", v1alpha1.OAuthSessionStatus{
-		Phase: v1alpha1.SessionActive, Email: "other@example.com", Username: "other-user", Groups: []string{"users"},
+	if err := e.sessionClient.UpdateStatus(ctx, "other-user-session", session.Status{
+		Phase: session.PhaseActive, Email: "other@example.com", Username: "other-user", Groups: []string{"users"},
 	}); err != nil {
 		return err
 	}
@@ -1065,12 +1126,13 @@ func TestKauthProxyEndToEnd(t *testing.T) {
 		}
 	})
 
-	t.Run("database outage does not block proxy and queued audit recovers", func(t *testing.T) {
+	t.Run("database outage blocks auth and proxy recovers once Postgres is back", func(t *testing.T) {
+		// Postgres is a hard dependency for auth now, so an outage means 401, not 404.
 		environment.clusterKubectl(t, "--namespace", kauthNamespace, "scale", "statefulset/postgres", "--replicas=0")
 		environment.waitForNoPods(t, kauthNamespace, "app=postgres")
 
-		if status := environment.apiRequest(t, "/api/v1/namespaces/kauth-e2e/configmaps/db-outage-prime"); status != http.StatusNotFound {
-			t.Fatalf("proxy status during DB outage=%d, want 404", status)
+		if status := environment.apiRequest(t, "/api/v1/namespaces/kauth-e2e/configmaps/db-outage-prime"); status != http.StatusUnauthorized {
+			t.Fatalf("proxy status during DB outage=%d, want 401", status)
 		}
 		time.Sleep(500 * time.Millisecond)
 		statuses := make(chan int, 64)
@@ -1085,15 +1147,16 @@ func TestKauthProxyEndToEnd(t *testing.T) {
 		wait.Wait()
 		close(statuses)
 		for status := range statuses {
-			if status != http.StatusNotFound {
-				t.Errorf("proxy status during DB outage=%d, want 404", status)
+			if status != http.StatusUnauthorized {
+				t.Errorf("proxy status during DB outage=%d, want 401", status)
 			}
 		}
 
 		environment.clusterKubectl(t, "--namespace", kauthNamespace, "scale", "statefulset/postgres", "--replicas=1")
 		environment.clusterKubectl(t, "--namespace", kauthNamespace, "rollout", "status", "statefulset/postgres", "--timeout=120s")
+		environment.restartSessionClient(t)
 		client := environment.dashboardClient(t, "dashboard-user-code")
-		environment.waitDashboardContains(t, client, "/api/v1/namespaces/kauth-e2e/configmaps/db-outage-prime")
+		environment.waitForRecoveredRequest(t, client, "db-recovered-1")
 
 		environment.clusterKubectl(t, "--namespace", kauthNamespace, "delete", "pod/postgres-0", "--wait=true")
 		ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
@@ -1101,7 +1164,8 @@ func TestKauthProxyEndToEnd(t *testing.T) {
 		if err := environment.waitForPodReady(ctx, kauthNamespace, "postgres-0"); err != nil {
 			t.Fatal(err)
 		}
-		environment.waitDashboardContains(t, client, "/api/v1/namespaces/kauth-e2e/configmaps/db-outage-prime")
+		environment.restartSessionClient(t)
+		environment.waitForRecoveredRequest(t, client, "db-recovered-2")
 	})
 
 	t.Run("rolling restart preserves sessions and flushes audit", func(t *testing.T) {
@@ -1132,7 +1196,7 @@ func TestKauthProxyEndToEnd(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		if revoked.Status.APIToken != "" || revoked.Status.RefreshToken != "" {
+		if revoked.APIToken != "" || revoked.RefreshToken != "" {
 			t.Fatal("revocation did not scrub stored credentials")
 		}
 		output, err := environment.kubectlCommand("get", "configmaps")
@@ -1223,6 +1287,35 @@ func (e *e2eEnvironment) apiRequest(t *testing.T, path string) int {
 	}
 	_ = response.Body.Close()
 	return response.StatusCode
+}
+
+// Sends fresh markers (a dropped one never reappears) and checks the previous attempt's, giving the flush tick time to land it.
+func (e *e2eEnvironment) waitForRecoveredRequest(t *testing.T, client *http.Client, prefix string) {
+	t.Helper()
+	deadline := time.Now().Add(30 * time.Second)
+	var lastStatus int
+	var prevMarker string
+	for attempt := 0; ; attempt++ {
+		marker := fmt.Sprintf("/api/v1/namespaces/kauth-e2e/configmaps/%s-%d", prefix, attempt)
+		lastStatus = e.apiRequest(t, marker)
+		if prevMarker != "" {
+			response, err := client.Get(e.proxyURL + "/sessions/" + url.PathEscape(e.sessionID))
+			if err == nil {
+				body, _ := io.ReadAll(response.Body)
+				_ = response.Body.Close()
+				if response.StatusCode == http.StatusOK && strings.Contains(string(body), prevMarker) {
+					return
+				}
+			}
+		}
+		if lastStatus == http.StatusNotFound {
+			prevMarker = marker
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("no %s-* marker appeared in the dashboard within the deadline (last proxy status=%d)", prefix, lastStatus)
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
 }
 
 func (e *e2eEnvironment) waitDashboardContains(t *testing.T, client *http.Client, expected string) {
@@ -1406,6 +1499,7 @@ func (e *e2eEnvironment) cleanup() error {
 		return nil
 	}
 	e.stopPortForward()
+	e.stopDBPortForward()
 	if e.proxyServer != nil {
 		e.proxyServer.Close()
 	}

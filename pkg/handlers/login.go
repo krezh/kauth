@@ -15,14 +15,12 @@ import (
 	"sync"
 	"time"
 
-	v1alpha1 "kauth/pkg/apis/kauth.io/v1alpha1"
 	"kauth/pkg/audit"
 	"kauth/pkg/jwt"
 	"kauth/pkg/oauth"
 	"kauth/pkg/session"
 
 	"golang.org/x/oauth2"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
 type LoginHandler struct {
@@ -35,7 +33,6 @@ type LoginHandler struct {
 	allowedGroups     []string
 	secureCookie      bool
 
-	// CRD client for distributed session storage
 	sessionClient *session.Client
 
 	// Local SSE listeners (in-memory, per-pod)
@@ -82,7 +79,6 @@ func NewLoginHandler(
 		sseListeners:      make(map[string][]chan StatusResponse),
 	}
 
-	// Start watching for session updates from CRD
 	go h.watchSessions()
 
 	// Cleanup old sessions periodically (30 second TTL)
@@ -215,7 +211,7 @@ func (h *LoginHandler) HandleWatch(w http.ResponseWriter, r *http.Request) {
 	// completed between token validation and listener registration.
 	crdSession, err := h.sessionClient.Get(ctx, sessionID)
 	if err != nil {
-		if apierrors.IsNotFound(err) {
+		if errors.Is(err, session.ErrSessionNotFound) {
 			http.Error(w, "Session not found or expired", http.StatusNotFound)
 		} else {
 			http.Error(w, "Failed to get session", http.StatusInternalServerError)
@@ -229,17 +225,17 @@ func (h *LoginHandler) HandleWatch(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Connection", "keep-alive")
 
 	// If already active, send immediately.
-	if crdSession.Status.Phase == v1alpha1.SessionActive {
-		kubeconfig := h.kubeconfigGen.Generate(crdSession.Status.Email, crdSession.Status.Username)
+	if crdSession.Phase == session.PhaseActive {
+		kubeconfig := h.kubeconfigGen.Generate(crdSession.Email, crdSession.Username)
 		status := StatusResponse{
 			Ready:        true,
 			Kubeconfig:   kubeconfig,
-			RefreshToken: crdSession.Status.RefreshToken,
-			SessionID:    crdSession.Spec.SessionID,
-			APIToken:     crdSession.Status.APIToken,
+			RefreshToken: crdSession.RefreshToken,
+			SessionID:    crdSession.SessionID,
+			APIToken:     crdSession.APIToken,
 		}
-		if crdSession.Status.APIToken != "" {
-			if apiCredential, err := h.jwtManager.DecodeAPIToken(crdSession.Status.APIToken); err == nil {
+		if crdSession.APIToken != "" {
+			if apiCredential, err := h.jwtManager.DecodeAPIToken(crdSession.APIToken); err == nil {
 				status.SessionExpiry = apiCredential.ExpiresAt
 			}
 		}
@@ -248,8 +244,8 @@ func (h *LoginHandler) HandleWatch(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// If there's an error, send immediately.
-	if crdSession.Status.Error != "" {
-		h.sendFinalStatus(w, &StatusResponse{Ready: false, Error: crdSession.Status.Error})
+	if crdSession.Error != "" {
+		h.sendFinalStatus(w, &StatusResponse{Ready: false, Error: crdSession.Error})
 		return
 	}
 
@@ -313,14 +309,14 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	if !dashboardMode {
 		crdSession, err := h.sessionClient.Get(ctx, state)
 		if err != nil {
-			if apierrors.IsNotFound(err) {
+			if errors.Is(err, session.ErrSessionNotFound) {
 				http.Error(w, "Session not found or expired", http.StatusBadRequest)
 			} else {
 				http.Error(w, "Failed to get session", http.StatusInternalServerError)
 			}
 			return
 		}
-		if crdSession.Status.Phase != v1alpha1.SessionPending {
+		if crdSession.Phase != session.PhasePending {
 			http.Error(w, "Invalid login session", http.StatusBadRequest)
 			return
 		}
@@ -333,11 +329,11 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Failed to start login", http.StatusInternalServerError)
 			return
 		}
-		verifier = crdSession.Spec.Verifier
+		verifier = crdSession.Verifier
 	}
 	recordLoginError := func(message string) {
 		if !dashboardMode {
-			_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{Phase: v1alpha1.SessionFailed, Error: message})
+			_ = h.sessionClient.UpdateStatus(ctx, state, session.Status{Phase: session.PhaseFailed, Error: message})
 		}
 	}
 	if verifier == "" {
@@ -442,8 +438,8 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
-		Phase:        v1alpha1.SessionActive,
+	err = h.sessionClient.UpdateStatus(ctx, state, session.Status{
+		Phase:        session.PhaseActive,
 		Email:        claims.Email,
 		Username:     claims.PreferredUsername,
 		Subject:      claims.Sub,

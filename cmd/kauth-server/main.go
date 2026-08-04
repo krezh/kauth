@@ -141,14 +141,14 @@ func main() {
 	}
 	slog.Info("Kubernetes API upstream configured", "url", upstreamURL.Redacted())
 
-	// Create session client for managing OAuthSession CRDs
-	namespace := getEnv("KAUTH_NAMESPACE", "default")
-	sessionClient, err := session.NewClient(k8sConfig, namespace)
+	sessionCtx, sessionCancel := context.WithTimeout(ctx, 30*time.Second)
+	sessionClient, err := session.NewClient(sessionCtx, cfg.DatabaseURL, cfg.ClusterName)
+	sessionCancel()
 	if err != nil {
 		slog.Error("Failed to create session client", "error", err)
 		os.Exit(1)
 	}
-	slog.Info("Session client initialized", "namespace", namespace)
+	slog.Info("Session client initialized", "cluster", cfg.ClusterName)
 
 	databaseCtx, databaseCancel := context.WithTimeout(ctx, 30*time.Second)
 	requestStore, err := audit.NewPostgresStore(databaseCtx, cfg.DatabaseURL, cfg.AuditQueueSize, cfg.AuditRetention)
@@ -371,6 +371,9 @@ func main() {
 		}
 		if err := requestStore.Close(shutdownCtx); err != nil {
 			slog.Error("Audit database shutdown incomplete", "error", err)
+		}
+		if err := sessionClient.Close(shutdownCtx); err != nil {
+			slog.Error("Session database shutdown incomplete", "error", err)
 		}
 		slog.Info("Server stopped gracefully")
 	}

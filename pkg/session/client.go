@@ -2,605 +2,227 @@ package session
 
 import (
 	"context"
-	"crypto/subtle"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
-	v1alpha1 "kauth/pkg/apis/kauth.io/v1alpha1"
-	"kauth/pkg/validation"
-
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
-	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/runtime/schema"
-	"k8s.io/apimachinery/pkg/util/wait"
-	"k8s.io/apimachinery/pkg/watch"
-	"k8s.io/client-go/dynamic"
-	"k8s.io/client-go/rest"
-	"k8s.io/client-go/util/retry"
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
+	"github.com/jackc/pgx/v5/pgxpool"
 )
 
 var ErrRefreshTokenReplayed = errors.New("refresh token is no longer current")
 var ErrLoginAlreadyClaimed = errors.New("login session is no longer pending")
+var ErrSessionNotFound = errors.New("session not found")
 
-// lastUsedBackoff bounds the optimistic-concurrency retry for TouchLastUsed.
-// The throttle window already coalesces most concurrent writers into a no-op,
-// so a few short retries suffice; we don't depend on retry.DefaultBackoff
-// drifting in future k8s versions. Worst-case total wait is well under 200ms,
-// a small fraction of the API authentication timeout.
-var lastUsedBackoff = wait.Backoff{
-	Steps:    3,
-	Duration: 10 * time.Millisecond,
-	Factor:   2.0,
-	Jitter:   0.1,
-	Cap:      100 * time.Millisecond,
+// pgxIface is satisfied by both *pgxpool.Pool and pgx.Tx.
+type pgxIface interface {
+	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
 }
 
-// Client wraps Kubernetes dynamic client for OAuthSession operations
+// Client wraps a Postgres pool for OAuthSession operations, scoped to one cluster.
 type Client struct {
-	dynamicClient dynamic.Interface
-	namespace     string
+	pool      *pgxpool.Pool
+	cluster   string
+	hub       *Hub
+	lifecycle context.Context
+	cancel    context.CancelFunc
 }
 
-// NewClient creates a new OAuthSession client
-func NewClient(config *rest.Config, namespace string) (*Client, error) {
-	dynamicClient, err := dynamic.NewForConfig(config)
+// NewClient opens a pool, migrates the schema, and starts the LISTEN/NOTIFY hub.
+func NewClient(ctx context.Context, databaseURL, cluster string) (*Client, error) {
+	if databaseURL == "" {
+		return nil, errors.New("database URL is required")
+	}
+	if cluster == "" {
+		return nil, errors.New("cluster is required")
+	}
+	pool, err := pgxpool.New(ctx, databaseURL)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create dynamic client: %w", err)
+		return nil, fmt.Errorf("parse database configuration: %w", err)
+	}
+	if err := pool.Ping(ctx); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("connect to session database: %w", err)
+	}
+	if err := migrate(ctx, pool); err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("migrate session database: %w", err)
 	}
 
+	hub, err := NewHub(databaseURL)
+	if err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("create session hub: %w", err)
+	}
+
+	lifecycle, cancel := context.WithCancel(context.Background())
+	go hub.Run(lifecycle)
+
 	return &Client{
-		dynamicClient: dynamicClient,
-		namespace:     namespace,
+		pool:      pool,
+		cluster:   cluster,
+		hub:       hub,
+		lifecycle: lifecycle,
+		cancel:    cancel,
 	}, nil
 }
 
-// gvr returns the GroupVersionResource for OAuthSession
-func (c *Client) gvr() schema.GroupVersionResource {
-	return schema.GroupVersionResource{
-		Group:    "kauth.io",
-		Version:  "v1alpha1",
-		Resource: "oauthsessions",
-	}
+// Close stops the hub and closes the pool.
+func (c *Client) Close(ctx context.Context) error {
+	c.cancel()
+	c.pool.Close()
+	return nil
 }
 
-// Create creates a new OAuthSession
-func (c *Client) Create(ctx context.Context, sessionID, verifier, userID string) (*v1alpha1.OAuthSession, error) {
-	session := &v1alpha1.OAuthSession{
-		TypeMeta: metav1.TypeMeta{
-			APIVersion: "kauth.io/v1alpha1",
-			Kind:       "OAuthSession",
-		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      sanitizeName(sessionID),
-			Namespace: c.namespace,
-			Labels: map[string]string{
-				"app.kubernetes.io/managed-by": "kauth",
-			},
-		},
-		Spec: v1alpha1.OAuthSessionSpec{
-			SessionID: sessionID,
-			Verifier:  verifier,
-			UserID:    userID,
-			CreatedAt: metav1.Now(),
-		},
-		Status: v1alpha1.OAuthSessionStatus{
-			Phase: v1alpha1.SessionPending,
-		},
-	}
+// Subscribe registers for session events; callers must drain and unsubscribe.
+func (c *Client) Subscribe() (<-chan SessionEvent, func()) {
+	return c.hub.Subscribe()
+}
 
-	unstructuredObj := &unstructured.Unstructured{}
-	unstructuredMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(session)
+// Create creates a new pending session.
+func (c *Client) Create(ctx context.Context, sessionID, verifier, userID string) (*Session, error) {
+	_, err := c.pool.Exec(ctx, `
+		INSERT INTO oauth_sessions (session_id, cluster, verifier, user_id, created_at, phase)
+		VALUES ($1, $2, $3, $4, now(), $5)
+	`, sessionID, c.cluster, verifier, userID, string(PhasePending))
 	if err != nil {
-		return nil, fmt.Errorf("failed to convert to unstructured: %w", err)
+		return nil, fmt.Errorf("failed to create session: %w", err)
 	}
-	unstructuredObj.Object = unstructuredMap
-
-	_, err = c.dynamicClient.Resource(c.gvr()).Namespace(c.namespace).Create(
-		ctx,
-		unstructuredObj,
-		metav1.CreateOptions{},
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create OAuthSession: %w", err)
-	}
-
-	// The CRD has a status subresource, so the API server strips the status field
-	// from Create. Set Phase=Pending explicitly via UpdateStatus.
-	if err := c.UpdateStatus(ctx, sessionID, v1alpha1.OAuthSessionStatus{
-		Phase: v1alpha1.SessionPending,
-	}); err != nil {
-		_ = c.Delete(ctx, sessionID)
-		return nil, fmt.Errorf("failed to set initial session status: %w", err)
-	}
-
 	return c.Get(ctx, sessionID)
 }
 
-// Get retrieves an OAuthSession by session ID
-func (c *Client) Get(ctx context.Context, sessionID string) (*v1alpha1.OAuthSession, error) {
-	result, err := c.dynamicClient.Resource(c.gvr()).Namespace(c.namespace).Get(
-		ctx,
-		sanitizeName(sessionID),
-		metav1.GetOptions{},
-	)
-	if err != nil {
-		return nil, err
-	}
-
-	var session v1alpha1.OAuthSession
-	if err := runtime.DefaultUnstructuredConverter.FromUnstructured(result.Object, &session); err != nil {
-		return nil, fmt.Errorf("failed to convert from unstructured: %w", err)
-	}
-
-	return &session, nil
+// Get retrieves a session by ID.
+func (c *Client) Get(ctx context.Context, sessionID string) (*Session, error) {
+	row := c.pool.QueryRow(ctx, `SELECT `+sessionColumns+` FROM oauth_sessions WHERE cluster=$1 AND session_id=$2`,
+		c.cluster, sessionID)
+	return scanSession(row)
 }
 
-// UpdateStatus updates the status of an OAuthSession
-func (c *Client) UpdateStatus(ctx context.Context, sessionID string, status v1alpha1.OAuthSessionStatus) error {
-	session, err := c.Get(ctx, sessionID)
-	if err != nil {
-		return fmt.Errorf("failed to get session: %w", err)
-	}
+const sessionColumns = `session_id, verifier, user_id, created_at, last_used, phase, email,
+	       username, subject, issuer, refresh_token, revoked_at, expired_at,
+	       completed_at, error, groups, api_token`
 
-	// Refuse to re-activate a session that has reached a terminal state.
-	// This closes the TOCTOU window where a concurrent revoke between
-	// ValidateSession and UpdateStatus would be silently undone.
-	if status.Phase == v1alpha1.SessionActive &&
-		(session.Status.Phase == v1alpha1.SessionRevoked || session.Status.Phase == v1alpha1.SessionExpired || session.Status.Phase == v1alpha1.SessionFailed) {
-		return fmt.Errorf("session is in terminal state %s, cannot reactivate", session.Status.Phase)
-	}
-
-	existingAPIToken := session.Status.APIToken
-	existingCompletedAt := session.Status.CompletedAt
-	session.Status = status
-	// Preserve the APIToken across status updates that don't explicitly set one.
-	// The token is created once at login and must survive subsequent refresh cycles.
-	if status.APIToken == "" && existingAPIToken != "" {
-		session.Status.APIToken = existingAPIToken
-	}
-	if status.Phase == v1alpha1.SessionActive && status.CompletedAt == nil {
-		if existingCompletedAt != nil {
-			session.Status.CompletedAt = existingCompletedAt
-		} else {
-			now := metav1.Now()
-			session.Status.CompletedAt = &now
-		}
-	}
-
-	unstructuredObj := &unstructured.Unstructured{}
-	unstructuredMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(session)
-	if err != nil {
-		return fmt.Errorf("failed to convert to unstructured: %w", err)
-	}
-	unstructuredObj.Object = unstructuredMap
-
-	_, err = c.dynamicClient.Resource(c.gvr()).Namespace(c.namespace).UpdateStatus(
-		ctx,
-		unstructuredObj,
-		metav1.UpdateOptions{},
-	)
-	if err != nil {
-		return fmt.Errorf("failed to update status: %w", err)
-	}
-
-	return nil
+// rowScanner is satisfied by both pgx.Row and pgx.Rows.
+type rowScanner interface {
+	Scan(dest ...any) error
 }
 
-// ClaimLogin atomically moves a pending login into code exchange. The object
-// resource version ensures only one callback can claim a session.
-func (c *Client) ClaimLogin(ctx context.Context, sessionID string) error {
-	session, err := c.Get(ctx, sessionID)
+func scanSession(row rowScanner) (*Session, error) {
+	var s Session
+	var phase string
+	var lastUsed *time.Time
+	err := row.Scan(&s.SessionID, &s.Verifier, &s.UserID, &s.CreatedAt, &lastUsed,
+		&phase, &s.Email, &s.Username, &s.Subject, &s.Issuer, &s.RefreshToken,
+		&s.RevokedAt, &s.ExpiredAt, &s.CompletedAt, &s.Error, &s.Groups, &s.APIToken)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrSessionNotFound
+	}
 	if err != nil {
-		return fmt.Errorf("failed to get session: %w", err)
+		return nil, fmt.Errorf("failed to scan session: %w", err)
 	}
-	if session.Status.Phase != v1alpha1.SessionPending {
-		return ErrLoginAlreadyClaimed
+	s.Phase = Phase(phase)
+	if lastUsed != nil {
+		s.LastUsed = *lastUsed
 	}
-	session.Status.Phase = v1alpha1.SessionAuthenticating
-	unstructuredObj := &unstructured.Unstructured{}
-	unstructuredMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(session)
-	if err != nil {
-		return fmt.Errorf("failed to convert to unstructured: %w", err)
-	}
-	unstructuredObj.Object = unstructuredMap
-	if _, err := c.dynamicClient.Resource(c.gvr()).Namespace(c.namespace).UpdateStatus(ctx, unstructuredObj, metav1.UpdateOptions{}); err != nil {
-		if apierrors.IsConflict(err) {
-			return ErrLoginAlreadyClaimed
-		}
-		return fmt.Errorf("failed to claim login session: %w", err)
-	}
-	return nil
+	return &s, nil
 }
 
-// RotateRefreshToken replaces the current refresh token using the resource
-// version returned by Get. Concurrent attempts with the same token cannot both
-// commit successfully.
-func (c *Client) RotateRefreshToken(ctx context.Context, sessionID, currentToken string, status v1alpha1.OAuthSessionStatus) error {
-	return retry.OnError(lastUsedBackoff, apierrors.IsConflict, func() error {
-		session, err := c.Get(ctx, sessionID)
-		if err != nil {
-			return fmt.Errorf("failed to get session: %w", err)
-		}
-		if session.Status.Phase != v1alpha1.SessionActive {
-			return fmt.Errorf("session is not active")
-		}
-		if currentToken == "" || subtle.ConstantTimeCompare([]byte(currentToken), []byte(session.Status.RefreshToken)) != 1 {
-			return ErrRefreshTokenReplayed
-		}
-
-		existingAPIToken := session.Status.APIToken
-		existingCompletedAt := session.Status.CompletedAt
-		session.Status = status
-		if status.APIToken == "" {
-			session.Status.APIToken = existingAPIToken
-		}
-		if status.CompletedAt == nil {
-			session.Status.CompletedAt = existingCompletedAt
-		}
-
-		unstructuredObj := &unstructured.Unstructured{}
-		unstructuredMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(session)
-		if err != nil {
-			return fmt.Errorf("failed to convert to unstructured: %w", err)
-		}
-		unstructuredObj.Object = unstructuredMap
-		if _, err := c.dynamicClient.Resource(c.gvr()).Namespace(c.namespace).UpdateStatus(ctx, unstructuredObj, metav1.UpdateOptions{}); err != nil {
-			return fmt.Errorf("failed to rotate refresh token: %w", err)
-		}
-		return nil
-	})
-}
-
-// Revoke marks a session as revoked
-func (c *Client) Revoke(ctx context.Context, sessionID string) error {
-	session, err := c.Get(ctx, sessionID)
-	if err != nil {
-		return fmt.Errorf("failed to get session: %w", err)
-	}
-
-	if session.Status.Phase == v1alpha1.SessionRevoked {
-		return nil
-	}
-
-	now := metav1.Now()
-	session.Status.Phase = v1alpha1.SessionRevoked
-	session.Status.RevokedAt = &now
-	session.Status.RefreshToken = ""
-	session.Status.APIToken = ""
-
-	unstructuredObj := &unstructured.Unstructured{}
-	unstructuredMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(session)
-	if err != nil {
-		return fmt.Errorf("failed to convert to unstructured: %w", err)
-	}
-	unstructuredObj.Object = unstructuredMap
-
-	_, err = c.dynamicClient.Resource(c.gvr()).Namespace(c.namespace).UpdateStatus(
-		ctx,
-		unstructuredObj,
-		metav1.UpdateOptions{},
-	)
-	if err != nil {
-		return fmt.Errorf("failed to revoke session: %w", err)
-	}
-
-	return nil
-}
-
-// ListActive returns all sessions that are not revoked or expired
-func (c *Client) ListActive(ctx context.Context) ([]v1alpha1.OAuthSession, error) {
-	sessions, err := c.ListAll(ctx)
-	if err != nil {
-		return nil, err
-	}
-	active := make([]v1alpha1.OAuthSession, 0, len(sessions))
-	for _, session := range sessions {
-		if session.Status.Phase != v1alpha1.SessionRevoked && session.Status.Phase != v1alpha1.SessionExpired {
-			active = append(active, session)
-		}
-	}
-	return active, nil
-}
-
-// ListAll returns every managed OAuthSession, including terminal sessions.
-func (c *Client) ListAll(ctx context.Context) ([]v1alpha1.OAuthSession, error) {
-	list, err := c.dynamicClient.Resource(c.gvr()).Namespace(c.namespace).List(
-		ctx,
-		metav1.ListOptions{
-			LabelSelector: "app.kubernetes.io/managed-by=kauth",
-		},
-	)
+func (c *Client) queryList(ctx context.Context, whereExtra string, args ...any) ([]Session, error) {
+	rows, err := c.pool.Query(ctx, `SELECT `+sessionColumns+` FROM oauth_sessions WHERE cluster=$1`+whereExtra, args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list sessions: %w", err)
 	}
-
-	sessions := make([]v1alpha1.OAuthSession, 0, len(list.Items))
-	for _, item := range list.Items {
-		var session v1alpha1.OAuthSession
-		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(item.Object, &session); err != nil {
-			continue
+	defer rows.Close()
+	var out []Session
+	for rows.Next() {
+		s, err := scanSession(rows)
+		if err != nil {
+			return nil, err
 		}
-
-		sessions = append(sessions, session)
+		out = append(out, *s)
 	}
-	return sessions, nil
+	return out, rows.Err()
 }
 
-// ValidateSession checks if a session exists and has the expected phase
-func (c *Client) ValidateSession(ctx context.Context, sessionID string, expectedPhase v1alpha1.SessionPhase) error {
-	session, err := c.Get(ctx, sessionID)
+// ListActive returns every session not in a terminal phase.
+func (c *Client) ListActive(ctx context.Context) ([]Session, error) {
+	return c.queryList(ctx, ` AND phase NOT IN ($2,$3)`, c.cluster, string(PhaseRevoked), string(PhaseExpired))
+}
+
+// ListAll returns every session, including terminal ones.
+func (c *Client) ListAll(ctx context.Context) ([]Session, error) {
+	return c.queryList(ctx, ``, c.cluster)
+}
+
+// GetByUser matches userID against either the authenticated email or the pre-login user ID.
+func (c *Client) GetByUser(ctx context.Context, userID string) ([]Session, error) {
+	return c.queryList(ctx, ` AND (email=$2 OR user_id=$2)`, c.cluster, userID)
+}
+
+// ValidateSession checks a session exists and has the expected phase.
+func (c *Client) ValidateSession(ctx context.Context, sessionID string, expectedPhase Phase) error {
+	s, err := c.Get(ctx, sessionID)
 	if err != nil {
 		return fmt.Errorf("session not found: %w", err)
 	}
-
-	if session.Status.Phase != expectedPhase {
-		return fmt.Errorf("session is %s, expected %s", session.Status.Phase, expectedPhase)
+	if s.Phase != expectedPhase {
+		return fmt.Errorf("session is %s, expected %s", s.Phase, expectedPhase)
 	}
-
 	return nil
 }
 
-// UpdateLastUsed updates the last used timestamp for a session
+// UpdateLastUsed unconditionally bumps last_used.
 func (c *Client) UpdateLastUsed(ctx context.Context, sessionID string) error {
-	session, err := c.Get(ctx, sessionID)
-	if err != nil {
-		return fmt.Errorf("failed to get session: %w", err)
-	}
-
-	session.Spec.LastUsed = metav1.Now()
-
-	unstructuredObj := &unstructured.Unstructured{}
-	unstructuredMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(session)
-	if err != nil {
-		return fmt.Errorf("failed to convert to unstructured: %w", err)
-	}
-	unstructuredObj.Object = unstructuredMap
-
-	_, err = c.dynamicClient.Resource(c.gvr()).Namespace(c.namespace).Update(
-		ctx,
-		unstructuredObj,
-		metav1.UpdateOptions{},
-	)
+	tag, err := c.pool.Exec(ctx, `UPDATE oauth_sessions SET last_used=now() WHERE cluster=$1 AND session_id=$2`,
+		c.cluster, sessionID)
 	if err != nil {
 		return fmt.Errorf("failed to update last used: %w", err)
 	}
-
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("failed to update last used: %w", ErrSessionNotFound)
+	}
 	return nil
 }
 
-// TouchLastUsed bumps .spec.lastUsed on a session at most once per window. If
-// the stored timestamp is fresher than window (or a concurrent writer refreshes
-// it during the retry), the call is a no-op. Returns nil in the no-op case so
-// callers can fire-and-forget without distinguishing "skipped" from "written".
-//
-// The optimistic-concurrency retry is necessary because API requests can arrive
-// concurrently with refresh/revoke writes to the same CR; a plain Update would
-// fail with a conflict and silently drop the timestamp bump.
+// TouchLastUsed bumps last_used at most once per window; a zero-row result is a silent no-op.
 func (c *Client) TouchLastUsed(ctx context.Context, sessionID string, window time.Duration) error {
-	return retry.RetryOnConflict(lastUsedBackoff, func() error {
-		session, err := c.Get(ctx, sessionID)
-		if err != nil {
-			return err
-		}
-
-		if !session.Spec.LastUsed.IsZero() && time.Since(session.Spec.LastUsed.Time) < window {
-			return nil
-		}
-
-		session.Spec.LastUsed = metav1.Now()
-
-		unstructuredObj := &unstructured.Unstructured{}
-		unstructuredMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(session)
-		if err != nil {
-			return fmt.Errorf("failed to convert to unstructured: %w", err)
-		}
-		unstructuredObj.Object = unstructuredMap
-
-		_, err = c.dynamicClient.Resource(c.gvr()).Namespace(c.namespace).Update(
-			ctx,
-			unstructuredObj,
-			metav1.UpdateOptions{},
-		)
-		return err
-	})
+	_, err := c.pool.Exec(ctx, `
+		UPDATE oauth_sessions SET last_used=now()
+		WHERE cluster=$1 AND session_id=$2
+		  AND (last_used IS NULL OR last_used < now() - ($3::float8 * interval '1 second'))
+	`, c.cluster, sessionID, window.Seconds())
+	if err != nil {
+		return fmt.Errorf("failed to touch last used: %w", err)
+	}
+	return nil
 }
 
-// UpdateUserID updates the user ID in the session spec
+// UpdateUserID sets the pre-login user ID and bumps last_used.
 func (c *Client) UpdateUserID(ctx context.Context, sessionID, userID string) error {
-	session, err := c.Get(ctx, sessionID)
-	if err != nil {
-		return fmt.Errorf("failed to get session: %w", err)
-	}
-
-	session.Spec.UserID = userID
-	session.Spec.LastUsed = metav1.Now()
-
-	unstructuredObj := &unstructured.Unstructured{}
-	unstructuredMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(session)
-	if err != nil {
-		return fmt.Errorf("failed to convert to unstructured: %w", err)
-	}
-	unstructuredObj.Object = unstructuredMap
-
-	_, err = c.dynamicClient.Resource(c.gvr()).Namespace(c.namespace).Update(
-		ctx,
-		unstructuredObj,
-		metav1.UpdateOptions{},
-	)
+	tag, err := c.pool.Exec(ctx, `
+		UPDATE oauth_sessions SET user_id=$3, last_used=now()
+		WHERE cluster=$1 AND session_id=$2
+	`, c.cluster, sessionID, userID)
 	if err != nil {
 		return fmt.Errorf("failed to update user ID: %w", err)
 	}
-
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("failed to update user ID: %w", ErrSessionNotFound)
+	}
 	return nil
 }
 
-// GetByUser returns all sessions for a specific user
-func (c *Client) GetByUser(ctx context.Context, userID string) ([]v1alpha1.OAuthSession, error) {
-	list, err := c.dynamicClient.Resource(c.gvr()).Namespace(c.namespace).List(
-		ctx,
-		metav1.ListOptions{
-			LabelSelector: "app.kubernetes.io/managed-by=kauth",
-		},
-	)
-	if err != nil {
-		return nil, fmt.Errorf("failed to list sessions: %w", err)
-	}
-
-	var userSessions []v1alpha1.OAuthSession
-	for _, item := range list.Items {
-		var session v1alpha1.OAuthSession
-		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(item.Object, &session); err != nil {
-			continue
-		}
-
-		// Match on Status.Email (set after OAuth callback) or Spec.UserID
-		// (set earlier via UpdateUserID) so that in-progress sessions are
-		// included in bulk revoke operations.
-		if session.Status.Email == userID || session.Spec.UserID == userID {
-			userSessions = append(userSessions, session)
-		}
-	}
-
-	return userSessions, nil
-}
-
-// Delete deletes an OAuthSession
+// Delete removes a session row.
 func (c *Client) Delete(ctx context.Context, sessionID string) error {
-	err := c.dynamicClient.Resource(c.gvr()).Namespace(c.namespace).Delete(
-		ctx,
-		sanitizeName(sessionID),
-		metav1.DeleteOptions{},
-	)
+	tag, err := c.pool.Exec(ctx, `DELETE FROM oauth_sessions WHERE cluster=$1 AND session_id=$2`, c.cluster, sessionID)
 	if err != nil {
-		return fmt.Errorf("failed to delete OAuthSession: %w", err)
+		return fmt.Errorf("failed to delete session: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("failed to delete session: %w", ErrSessionNotFound)
 	}
 	return nil
-}
-
-// Watch watches for OAuthSession changes, resuming from resourceVersion if non-empty.
-func (c *Client) Watch(ctx context.Context, resourceVersion string) (watch.Interface, error) {
-	return c.dynamicClient.Resource(c.gvr()).Namespace(c.namespace).Watch(
-		ctx,
-		metav1.ListOptions{
-			LabelSelector:       "app.kubernetes.io/managed-by=kauth",
-			ResourceVersion:     resourceVersion,
-			AllowWatchBookmarks: true,
-		},
-	)
-}
-
-// CleanupOldSessions deletes terminal history and stale pending sessions using
-// separate retention windows.
-func (c *Client) CleanupOldSessions(ctx context.Context, terminalTTL, pendingTTL time.Duration) error {
-	list, err := c.dynamicClient.Resource(c.gvr()).Namespace(c.namespace).List(
-		ctx,
-		metav1.ListOptions{
-			LabelSelector: "app.kubernetes.io/managed-by=kauth",
-		},
-	)
-	if err != nil {
-		return fmt.Errorf("failed to list sessions: %w", err)
-	}
-
-	for _, item := range list.Items {
-		var session v1alpha1.OAuthSession
-		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(item.Object, &session); err != nil {
-			continue
-		}
-
-		// Only delete terminal or stale pending sessions; skip active ones
-		phase := session.Status.Phase
-		if phase != v1alpha1.SessionRevoked && phase != v1alpha1.SessionExpired && phase != v1alpha1.SessionPending && phase != v1alpha1.SessionAuthenticating && phase != v1alpha1.SessionFailed {
-			continue
-		}
-
-		// For revoked sessions use RevokedAt so freshly-revoked CRDs are kept
-		// long enough for all pods to observe the revocation before deletion.
-		var ageRef time.Time
-		if phase == v1alpha1.SessionRevoked && session.Status.RevokedAt != nil {
-			ageRef = session.Status.RevokedAt.Time
-		} else if phase == v1alpha1.SessionExpired && session.Status.ExpiredAt != nil {
-			ageRef = session.Status.ExpiredAt.Time
-		} else {
-			ageRef = session.Spec.CreatedAt.Time
-		}
-
-		ttl := terminalTTL
-		if phase == v1alpha1.SessionPending || phase == v1alpha1.SessionAuthenticating || phase == v1alpha1.SessionFailed {
-			ttl = pendingTTL
-		}
-		if ageRef.Before(time.Now().Add(-ttl)) {
-			_ = c.Delete(ctx, session.Spec.SessionID)
-		}
-	}
-
-	return nil
-}
-
-// ExpireInactiveSessions marks sessions as expired if they haven't been used within the TTL
-func (c *Client) ExpireInactiveSessions(ctx context.Context, ttl time.Duration) error {
-	list, err := c.dynamicClient.Resource(c.gvr()).Namespace(c.namespace).List(
-		ctx,
-		metav1.ListOptions{
-			LabelSelector: "app.kubernetes.io/managed-by=kauth",
-		},
-	)
-	if err != nil {
-		return fmt.Errorf("failed to list sessions: %w", err)
-	}
-
-	cutoff := time.Now().Add(-ttl)
-
-	for _, item := range list.Items {
-		var session v1alpha1.OAuthSession
-		if err := runtime.DefaultUnstructuredConverter.FromUnstructured(item.Object, &session); err != nil {
-			continue
-		}
-
-		// Only expire active sessions
-		if session.Status.Phase != v1alpha1.SessionActive {
-			continue
-		}
-
-		// Use LastUsed if set, otherwise use CreatedAt
-		lastActivity := session.Spec.CreatedAt.Time
-		if !session.Spec.LastUsed.IsZero() {
-			lastActivity = session.Spec.LastUsed.Time
-		}
-
-		if lastActivity.Before(cutoff) {
-			now := metav1.Now()
-			session.Status.Phase = v1alpha1.SessionExpired
-			session.Status.ExpiredAt = &now
-			session.Status.RefreshToken = ""
-			session.Status.APIToken = ""
-			unstructuredObj := &unstructured.Unstructured{}
-			unstructuredMap, err := runtime.DefaultUnstructuredConverter.ToUnstructured(&session)
-			if err != nil {
-				continue
-			}
-			unstructuredObj.Object = unstructuredMap
-
-			_, _ = c.dynamicClient.Resource(c.gvr()).Namespace(c.namespace).UpdateStatus(
-				ctx,
-				unstructuredObj,
-				metav1.UpdateOptions{},
-			)
-		}
-	}
-
-	return nil
-}
-
-// sanitizeName converts a session ID to a valid Kubernetes resource name
-func sanitizeName(sessionID string) string {
-	sanitized := validation.SanitizeToResourceName(sessionID)
-	if len(sanitized)+6 > 63 {
-		sanitized = strings.TrimRight(sanitized[:57], "-.")
-	}
-	return "oauth-" + sanitized
 }
