@@ -22,8 +22,8 @@ func HandleInfo(clusterName, clusterServer, issuerURL, clientID, baseURL string)
 			IssuerURL:     issuerURL,
 			ClientID:      clientID,
 			LoginURL:      baseURL + "/login",
-			RefreshURL:    baseURL + "/refresh",
-			DashboardURL:  baseURL + "/dashboard",
+			RefreshURL:    baseURL + "/api/refresh",
+			DashboardURL:  baseURL,
 		}
 
 		writeJSON(w, info)

@@ -22,6 +22,7 @@ var (
 
 // SessionToken contains OAuth flow state (encrypted, signed)
 type SessionToken struct {
+	Type      string    `json:"type"`
 	SessionID string    `json:"sessionID"`
 	Verifier  string    `json:"verifier"`
 	CreatedAt time.Time `json:"created_at"`
@@ -37,10 +38,9 @@ type APICredential struct {
 
 const apiCredentialType = "api"
 
-const (
-	dashboardLoginType   = "dashboard_login"
-	dashboardSessionType = "dashboard_session"
-)
+const dashboardSessionType = "dashboard_session"
+
+const dashboardLoginType = "dashboard_login"
 
 type DashboardLoginToken struct {
 	Type      string    `json:"type"`
@@ -61,6 +61,7 @@ type DashboardSessionToken struct {
 
 // RefreshToken contains refresh token data (encrypted, signed)
 type RefreshToken struct {
+	Type             string    `json:"type"`
 	UserEmail        string    `json:"user_email"`
 	OIDCRefreshToken string    `json:"oidc_refresh_token"`
 	RotationCounter  int       `json:"rotation_counter"`
@@ -68,6 +69,11 @@ type RefreshToken struct {
 	IssuedAt         time.Time `json:"issued_at"`
 	ExpiresAt        time.Time `json:"expires_at"`
 }
+
+const (
+	loginTokenType   = "login"
+	refreshTokenType = "refresh"
+)
 
 // Manager handles JWT creation and validation
 type Manager struct {
@@ -96,6 +102,7 @@ func NewManager(signingKey, encryptionKey []byte) (*Manager, error) {
 func (m *Manager) CreateSessionToken(sessionID, verifier string, ttl time.Duration) (string, error) {
 	now := time.Now()
 	session := SessionToken{
+		Type:      loginTokenType,
 		SessionID: sessionID,
 		Verifier:  verifier,
 		CreatedAt: now,
@@ -147,6 +154,9 @@ func (m *Manager) ValidateSessionToken(token string) (*SessionToken, error) {
 	}
 
 	// Check expiry
+	if session.Type != loginTokenType || session.SessionID == "" || session.Verifier == "" {
+		return nil, ErrInvalidToken
+	}
 	if time.Now().After(session.ExpiresAt) {
 		return nil, ErrExpiredToken
 	}
@@ -158,6 +168,7 @@ func (m *Manager) ValidateSessionToken(token string) (*SessionToken, error) {
 func (m *Manager) CreateRefreshToken(userEmail, oidcRefreshToken, sessionID string, rotationCounter int, ttl time.Duration) (string, error) {
 	now := time.Now()
 	refresh := RefreshToken{
+		Type:             refreshTokenType,
 		UserEmail:        userEmail,
 		OIDCRefreshToken: oidcRefreshToken,
 		RotationCounter:  rotationCounter,
@@ -212,6 +223,9 @@ func (m *Manager) ValidateRefreshToken(token string) (*RefreshToken, error) {
 	refresh, err := m.DecodeRefreshToken(token)
 	if err != nil {
 		return nil, err
+	}
+	if refresh.Type != refreshTokenType || refresh.SessionID == "" || refresh.UserEmail == "" {
+		return nil, ErrInvalidToken
 	}
 	if time.Now().After(refresh.ExpiresAt) {
 		return nil, ErrExpiredToken

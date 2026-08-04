@@ -48,7 +48,7 @@ func runLogout(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to marshal request: %w", err)
 		}
 
-		req, err := http.NewRequest(http.MethodPost, serverURL+"/revoke", bytes.NewBuffer(jsonData))
+		req, err := http.NewRequest(http.MethodPost, serverURL+"/api/revoke", bytes.NewBuffer(jsonData))
 		if err != nil {
 			return fmt.Errorf("failed to create request: %w", err)
 		}

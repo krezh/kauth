@@ -281,7 +281,7 @@ func RequestLogger(ipExtractor *ClientIPExtractor) func(http.Handler) http.Handl
 			duration := time.Since(start)
 
 			// Skip logging for health endpoint to reduce noise
-			if r.URL.Path == "/health" {
+			if r.URL.Path == "/api/health" {
 				return
 			}
 

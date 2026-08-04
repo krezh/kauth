@@ -65,7 +65,7 @@ resources:
 
 livenessProbe:
   httpGet:
-    path: /health
+    path: /api/health
     port: http
   initialDelaySeconds: 3
   periodSeconds: 10
@@ -74,7 +74,7 @@ livenessProbe:
 
 readinessProbe:
   httpGet:
-    path: /health
+    path: /api/health
     port: http
   initialDelaySeconds: 1
   periodSeconds: 5
@@ -121,6 +121,8 @@ env: []
   #   value: "production"
   # - name: BASE_URL
   #   value: "https://kauth.example.com"
+  # - name: ALLOW_INSECURE_HTTP
+  #   value: "false"         # Development only; production BASE_URL must use HTTPS
   # - name: SESSION_TTL
   #   value: "15m"           # Session token lifetime (default: 15m)
   # - name: REFRESH_TOKEN_TTL
@@ -155,9 +157,9 @@ envFrom: []
   #   JWT_SIGNING_KEY       - Base64 encoded, 32+ bytes (openssl rand -base64 32)
   #   JWT_ENCRYPTION_KEY    - Base64 encoded, exactly 32 bytes
   #   DATABASE_URL          - PostgreSQL connection string for audit history and dashboard metrics
-  # BASE_URL is also the Kubernetes API endpoint written to generated kubeconfigs.
+  # BASE_URL/k8s is the Kubernetes API endpoint written to generated kubeconfigs.
   # It must use a certificate trusted by kubectl clients in production.
-  # Register both BASE_URL/callback and BASE_URL/dashboard/callback with the OIDC provider.
+  # Register BASE_URL/callback with the OIDC provider.
 
 rbac:
   create: true

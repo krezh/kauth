@@ -13,11 +13,12 @@ type Config struct {
 	ClusterName string
 
 	// Server Configuration
-	BaseURL     string // e.g. https://kauth.example.com
-	ListenAddr  string
-	TLSCertFile string
-	TLSKeyFile  string
-	DatabaseURL string
+	BaseURL           string // e.g. https://kauth.example.com
+	ListenAddr        string
+	TLSCertFile       string
+	TLSKeyFile        string
+	DatabaseURL       string
+	AllowInsecureHTTP bool
 
 	// JWT Configuration (required for stateless operation)
 	JWTSigningKey     []byte        // 32+ bytes for HMAC-SHA256

@@ -31,7 +31,7 @@ func TestDashboardCSRF(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			form := url.Values{"csrf": []string{tt.token}}
-			req := httptest.NewRequest(http.MethodPost, "/dashboard/logout", strings.NewReader(form.Encode()))
+			req := httptest.NewRequest(http.MethodPost, "/logout", strings.NewReader(form.Encode()))
 			req.Header.Set("Content-Type", tt.contentType)
 			req.Header.Set("Origin", tt.origin)
 			if got := handler.validCSRF(req, claims); got != tt.want {
@@ -59,11 +59,29 @@ func TestDashboardOwnsSession(t *testing.T) {
 }
 
 func TestDashboardCookieScope(t *testing.T) {
-	handler := &DashboardHandler{secureCookie: true}
+	handler := &LoginHandler{secureCookie: true}
 	response := httptest.NewRecorder()
-	handler.setCookie(response, dashboardCookie, "value", time.Now().Add(time.Minute))
+	handler.setBrowserCookie(response, dashboardCookieName(true), "value", "/", time.Now().Add(time.Minute), http.SameSiteLaxMode)
 	cookies := response.Result().Cookies()
-	if len(cookies) != 1 || cookies[0].Path != "/dashboard" || !cookies[0].Secure || !cookies[0].HttpOnly || cookies[0].SameSite != http.SameSiteLaxMode {
+	if len(cookies) != 1 || cookies[0].Name != "__Host-kauth_dashboard" || cookies[0].Path != "/" || !cookies[0].Secure || !cookies[0].HttpOnly || cookies[0].SameSite != http.SameSiteLaxMode {
 		t.Fatalf("unexpected dashboard cookie: %#v", cookies)
+	}
+
+	response = httptest.NewRecorder()
+	handler.setBrowserCookie(response, dashboardLoginCookieName(true), "value", dashboardLoginCookiePath(true), time.Now().Add(time.Minute), http.SameSiteLaxMode)
+	if cookies := response.Result().Cookies(); len(cookies) != 1 || cookies[0].Name != "__Host-kauth_dashboard_login" || cookies[0].Path != "/" || !cookies[0].Secure || cookies[0].SameSite != http.SameSiteLaxMode {
+		t.Fatalf("unexpected login binding cookie: %#v", cookies)
+	}
+	if dashboardLoginCookieName(false) != dashboardLoginCookie || dashboardLoginCookiePath(false) != "/callback" {
+		t.Fatal("HTTP development cookie must remain unprefixed and callback-scoped")
+	}
+}
+
+func TestAnonymousDashboardDoesNotStartLogin(t *testing.T) {
+	handler := &DashboardHandler{}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/", nil))
+	if response.Code != http.StatusOK || !strings.Contains(response.Body.String(), "Sign in") {
+		t.Fatalf("anonymous dashboard = %d: %s", response.Code, response.Body.String())
 	}
 }

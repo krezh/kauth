@@ -69,10 +69,14 @@ func main() {
 			}
 		}
 		groups := []string{"kauth-e2e-allowed", "system:masters"}
+		email := "e2e-user@example.com"
 		if strings.HasPrefix(code, "dashboard-user-code.") {
 			groups = []string{"users"}
 		}
-		idToken, err := signIDToken(key, issuer, "e2e", groups)
+		if strings.HasPrefix(code, "dashboard-no-email-code.") {
+			email = ""
+		}
+		idToken, err := signIDToken(key, issuer, "e2e", email, groups)
 		if err != nil {
 			http.Error(w, "sign token", http.StatusInternalServerError)
 			return
@@ -92,7 +96,7 @@ func main() {
 	log.Fatal(http.ListenAndServe(":8080", mux))
 }
 
-func signIDToken(key *rsa.PrivateKey, issuer, audience string, groups []string) (string, error) {
+func signIDToken(key *rsa.PrivateKey, issuer, audience, email string, groups []string) (string, error) {
 	header, err := json.Marshal(map[string]string{"alg": "RS256", "kid": keyID, "typ": "JWT"})
 	if err != nil {
 		return "", err
@@ -102,7 +106,7 @@ func signIDToken(key *rsa.PrivateKey, issuer, audience string, groups []string) 
 		"iss":                issuer,
 		"aud":                audience,
 		"sub":                "e2e-user",
-		"email":              "e2e-user@example.com",
+		"email":              email,
 		"preferred_username": "e2e-user",
 		"name":               "E2E User",
 		"groups":             groups,
