@@ -224,28 +224,9 @@ func (h *LoginHandler) HandleWatch(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
-	// If already active, send immediately.
-	if crdSession.Phase == session.PhaseActive {
-		kubeconfig := h.kubeconfigGen.Generate(crdSession.Email, crdSession.Username)
-		status := StatusResponse{
-			Ready:        true,
-			Kubeconfig:   kubeconfig,
-			RefreshToken: crdSession.RefreshToken,
-			SessionID:    crdSession.SessionID,
-			APIToken:     crdSession.APIToken,
-		}
-		if crdSession.APIToken != "" {
-			if apiCredential, err := h.jwtManager.DecodeAPIToken(crdSession.APIToken); err == nil {
-				status.SessionExpiry = apiCredential.ExpiresAt
-			}
-		}
-		h.sendFinalStatus(w, &status)
-		return
-	}
-
-	// If there's an error, send immediately.
-	if crdSession.Error != "" {
-		h.sendFinalStatus(w, &StatusResponse{Ready: false, Error: crdSession.Error})
+	// If the session already completed, send immediately.
+	if status := h.loginStatus(crdSession); status != nil {
+		h.sendFinalStatus(w, status)
 		return
 	}
 
@@ -255,6 +236,7 @@ func (h *LoginHandler) HandleWatch(w http.ResponseWriter, r *http.Request) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
+	ticks := 0
 	for {
 		select {
 		case status := <-listener:
@@ -263,12 +245,60 @@ func (h *LoginHandler) HandleWatch(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 			return
 		case <-ticker.C:
+			ticks++
+			// LISTEN/NOTIFY cannot replay events emitted while the hub was
+			// disconnected, so re-read the session periodically to recover a
+			// completion whose notification was never delivered.
+			if ticks%watchPollTicks == 0 {
+				if status := h.pollLoginStatus(r, sessionID); status != nil {
+					h.sendFinalStatus(w, status)
+					return
+				}
+			}
 			_, _ = fmt.Fprintf(w, ": keepalive\n\n")
 			flusher.Flush()
 		case <-r.Context().Done():
 			return
 		}
 	}
+}
+
+// watchPollTicks is how many keepalive ticks pass between session re-reads.
+const watchPollTicks = 3
+
+func (h *LoginHandler) pollLoginStatus(r *http.Request, sessionID string) *StatusResponse {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	sess, err := h.sessionClient.Get(ctx, sessionID)
+	if err != nil {
+		return nil
+	}
+	return h.loginStatus(sess)
+}
+
+// loginStatus renders the terminal status of a session, or nil while it is still in progress.
+func (h *LoginHandler) loginStatus(sess *session.Session) *StatusResponse {
+	if sess.Phase != session.PhaseActive && sess.Error == "" {
+		return nil
+	}
+	var kubeconfig string
+	if sess.Phase == session.PhaseActive && sess.Email != "" {
+		kubeconfig = h.kubeconfigGen.Generate(sess.Email, sess.Username)
+	}
+	status := StatusResponse{
+		Ready:        sess.Phase == session.PhaseActive,
+		Kubeconfig:   kubeconfig,
+		RefreshToken: sess.RefreshToken,
+		SessionID:    sess.SessionID,
+		APIToken:     sess.APIToken,
+		Error:        sess.Error,
+	}
+	if sess.APIToken != "" {
+		if apiCredential, err := h.jwtManager.DecodeAPIToken(sess.APIToken); err == nil {
+			status.SessionExpiry = apiCredential.ExpiresAt
+		}
+	}
+	return &status
 }
 
 func (h *LoginHandler) sendFinalStatus(w http.ResponseWriter, status *StatusResponse) {

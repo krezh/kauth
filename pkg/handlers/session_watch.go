@@ -4,8 +4,6 @@ import (
 	"context"
 	"log/slog"
 	"time"
-
-	"kauth/pkg/session"
 )
 
 // notifyWorkers bounds the concurrent per-event session reads started by watchSessions.
@@ -58,32 +56,15 @@ func (h *LoginHandler) notifyListeners(sessionID string) {
 		slog.Error("session watch: failed to fetch session for notification", "session", sessionID[:min(8, len(sessionID))], "error", err)
 		return
 	}
-	if sess.Phase != session.PhaseActive && sess.Error == "" {
+	status := h.loginStatus(sess)
+	if status == nil {
 		return
-	}
-
-	var kubeconfig string
-	if sess.Phase == session.PhaseActive && sess.Email != "" {
-		kubeconfig = h.kubeconfigGen.Generate(sess.Email, sess.Username)
-	}
-	status := StatusResponse{
-		Ready:        sess.Phase == session.PhaseActive,
-		Kubeconfig:   kubeconfig,
-		RefreshToken: sess.RefreshToken,
-		SessionID:    sess.SessionID,
-		APIToken:     sess.APIToken,
-		Error:        sess.Error,
-	}
-	if sess.APIToken != "" {
-		if apiCredential, err := h.jwtManager.DecodeAPIToken(sess.APIToken); err == nil {
-			status.SessionExpiry = apiCredential.ExpiresAt
-		}
 	}
 
 	slog.Info("Notifying local listeners for session", "session", sessionID[:min(8, len(sessionID))], "count", len(listeners))
 	for _, listener := range listeners {
 		select {
-		case listener <- status:
+		case listener <- *status:
 		default:
 		}
 	}
