@@ -114,6 +114,24 @@ func TestFragmentTemplates(t *testing.T) {
 	}
 }
 
+func TestWriteFragmentFramesNewlinesInRenderedValues(t *testing.T) {
+	handler := &DashboardHandler{}
+	response := httptest.NewRecorder()
+	handler.writeFragment(response, response, "events-tbody", dashboardView{
+		Events: []audit.RequestEvent{{Method: "GET", Path: "/api/v1\n\nevent: injected\ndata: x", StatusCode: 200}},
+	})
+
+	body := response.Body.String()
+	if strings.Count(body, "\n\n") != 1 || !strings.HasSuffix(body, "\n\n") {
+		t.Fatalf("fragment = %q, want exactly one terminating blank line", body)
+	}
+	for _, line := range strings.Split(strings.TrimSuffix(body, "\n\n"), "\n") {
+		if !strings.HasPrefix(line, "event: ") && !strings.HasPrefix(line, "data: ") {
+			t.Fatalf("fragment line = %q, want an event: or data: field", line)
+		}
+	}
+}
+
 func TestAnonymousDashboardSSEReturns401NotSignInPage(t *testing.T) {
 	handler := &DashboardHandler{}
 	response := httptest.NewRecorder()

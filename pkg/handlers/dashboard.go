@@ -275,7 +275,10 @@ func (h *DashboardHandler) handleDashboardSSE(w http.ResponseWriter, r *http.Req
 		select {
 		case <-sessionEvents:
 			dirty = true
-		case <-auditEvents:
+		case ev := <-auditEvents:
+			if ev.Cluster != h.clusterName {
+				continue
+			}
 			dirty = true
 		case <-ticker.C:
 			if _, ok := h.dashboardClaims(r); !ok {
@@ -341,8 +344,20 @@ func (h *DashboardHandler) writeFragment(w http.ResponseWriter, flusher http.Flu
 	if err := dashboardTemplate.ExecuteTemplate(&buf, name, view); err != nil {
 		return
 	}
-	_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", name, buf.String())
+	_, _ = fmt.Fprintf(w, "event: %s\n%s\n", name, sseData(buf.String()))
 	flusher.Flush()
+}
+
+// sseData frames payload as SSE data lines. Rendered values (e.g. request paths) can
+// contain newlines, which would otherwise split or terminate the event.
+func sseData(payload string) string {
+	var b strings.Builder
+	for line := range strings.SplitSeq(strings.ReplaceAll(payload, "\r\n", "\n"), "\n") {
+		b.WriteString("data: ")
+		b.WriteString(strings.ReplaceAll(line, "\r", ""))
+		b.WriteString("\n")
+	}
+	return b.String()
 }
 
 func dashboardOwnsSession(claims *jwt.DashboardSessionToken, oauthSession *session.Session) bool {

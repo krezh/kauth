@@ -8,13 +8,34 @@ import (
 	"kauth/pkg/session"
 )
 
-// watchSessions fans out Active/errored sessions to local SSE listeners.
+// notifyWorkers bounds the concurrent per-event session reads started by watchSessions.
+const notifyWorkers = 8
+
+// watchSessions fans out Active/errored sessions to local SSE listeners. Notifications are
+// handed to a bounded worker pool so a slow session read cannot stall the subscription and
+// make the hub drop a login completion.
 func (h *LoginHandler) watchSessions() {
 	ch, unsubscribe := h.sessionClient.Subscribe()
 	defer unsubscribe()
 	slog.Info("Started watching session events")
+
+	work := make(chan string, notifyWorkers)
+	defer close(work)
+	for range notifyWorkers {
+		go func() {
+			for sessionID := range work {
+				h.notifyListeners(sessionID)
+			}
+		}()
+	}
+
 	for ev := range ch {
-		h.notifyListeners(ev.SessionID)
+		select {
+		case work <- ev.SessionID:
+		default:
+			// every worker is busy; handle it here rather than dropping the event
+			h.notifyListeners(ev.SessionID)
+		}
 	}
 }
 

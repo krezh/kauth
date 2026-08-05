@@ -54,7 +54,7 @@ func NewClient(ctx context.Context, databaseURL, cluster string) (*Client, error
 		return nil, fmt.Errorf("migrate session database: %w", err)
 	}
 
-	hub, err := NewHub(databaseURL)
+	hub, err := NewHub(databaseURL, cluster)
 	if err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("create session hub: %w", err)

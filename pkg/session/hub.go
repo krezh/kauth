@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"sync"
 	"time"
@@ -15,25 +16,34 @@ const sessionEventsChannel = "kauth_session_events"
 // SessionEvent is delivered to subscribers on session mutation; no tokens.
 type SessionEvent struct {
 	SessionID string `json:"session_id"`
+	Cluster   string `json:"cluster"`
 	Phase     Phase  `json:"phase"`
 	Subject   string `json:"subject"`
 	Issuer    string `json:"issuer"`
 }
 
+// subscriberBuffer is deliberately generous: an expiry sweep publishes one event per
+// expired session, and a dropped Active event stalls a waiting CLI login.
+const subscriberBuffer = 256
+
 // Hub fans out kauth_session_events NOTIFY payloads to local subscribers.
 type Hub struct {
 	databaseURL string
+	cluster     string
 	mu          sync.Mutex
 	subs        map[chan SessionEvent]struct{}
 }
 
-func NewHub(databaseURL string) (*Hub, error) {
-	return &Hub{databaseURL: databaseURL, subs: make(map[chan SessionEvent]struct{})}, nil
+func NewHub(databaseURL, cluster string) (*Hub, error) {
+	if cluster == "" {
+		return nil, errors.New("cluster is required")
+	}
+	return &Hub{databaseURL: databaseURL, cluster: cluster, subs: make(map[chan SessionEvent]struct{})}, nil
 }
 
 // Subscribe returns a channel to drain and an unsubscribe func; valid across reconnects.
 func (h *Hub) Subscribe() (<-chan SessionEvent, func()) {
-	ch := make(chan SessionEvent, 16)
+	ch := make(chan SessionEvent, subscriberBuffer)
 	h.mu.Lock()
 	h.subs[ch] = struct{}{}
 	h.mu.Unlock()
@@ -56,29 +66,39 @@ func (h *Hub) publish(ev SessionEvent) {
 	}
 }
 
+const (
+	minBackoff = time.Second
+	maxBackoff = 30 * time.Second
+	// healthyConnection is how long a LISTEN connection must stay up for the next
+	// reconnect to start over at minBackoff.
+	healthyConnection = 30 * time.Second
+)
+
 // Run holds a dedicated (non-pooled) LISTEN connection open, reconnecting with backoff on error.
 func (h *Hub) Run(ctx context.Context) {
-	backoff := time.Second
-	const maxBackoff = 30 * time.Second
+	backoff := minBackoff
 	for ctx.Err() == nil {
-		if err := h.listenOnce(ctx); err != nil {
-			slog.ErrorContext(ctx, "session hub: listen connection failed, reconnecting", "error", err, "backoff", backoff)
-			select {
-			case <-time.After(backoff):
-			case <-ctx.Done():
-				return
-			}
-			backoff *= 2
-			if backoff > maxBackoff {
-				backoff = maxBackoff
-			}
-			continue
+		var connectedAt time.Time
+		err := h.listenOnce(ctx, func() { connectedAt = time.Now() })
+		if !connectedAt.IsZero() && time.Since(connectedAt) >= healthyConnection {
+			backoff = minBackoff
 		}
-		backoff = time.Second
+		if err != nil {
+			slog.ErrorContext(ctx, "session hub: listen connection failed, reconnecting", "error", err, "backoff", backoff)
+		}
+		select {
+		case <-time.After(backoff):
+		case <-ctx.Done():
+			return
+		}
+		backoff *= 2
+		if backoff > maxBackoff {
+			backoff = maxBackoff
+		}
 	}
 }
 
-func (h *Hub) listenOnce(ctx context.Context) error {
+func (h *Hub) listenOnce(ctx context.Context, onConnected func()) error {
 	conn, err := pgx.Connect(ctx, h.databaseURL)
 	if err != nil {
 		return err
@@ -88,6 +108,7 @@ func (h *Hub) listenOnce(ctx context.Context) error {
 	if _, err := conn.Exec(ctx, "LISTEN "+sessionEventsChannel); err != nil {
 		return err
 	}
+	onConnected()
 	slog.InfoContext(ctx, "session hub: listening", "channel", sessionEventsChannel)
 
 	for {
@@ -98,6 +119,9 @@ func (h *Hub) listenOnce(ctx context.Context) error {
 		var ev SessionEvent
 		if err := json.Unmarshal([]byte(notification.Payload), &ev); err != nil {
 			slog.WarnContext(ctx, "session hub: dropping malformed notification", "error", err)
+			continue
+		}
+		if ev.Cluster != h.cluster {
 			continue
 		}
 		h.publish(ev)

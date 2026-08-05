@@ -15,7 +15,7 @@ func TestHub_TwoSubscribersReceiveOneNotify(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	hub, err := NewHub(dsn)
+	hub, err := NewHub(dsn, "test-cluster")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -51,5 +51,41 @@ func TestHub_TwoSubscribersReceiveOneNotify(t *testing.T) {
 		case <-time.After(5 * time.Second):
 			t.Fatalf("subscriber %d did not receive the event within 5s", i)
 		}
+	}
+}
+
+func TestHub_IgnoresEventsFromOtherClusters(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	hub, err := NewHub(dsn, "other-cluster")
+	if err != nil {
+		t.Fatal(err)
+	}
+	go hub.Run(ctx)
+
+	ch, unsub := hub.Subscribe()
+	defer unsub()
+
+	time.Sleep(200 * time.Millisecond)
+
+	client := testClient(t)
+	if _, err := client.Create(ctx, "foreign-cluster-session", "v", "user@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.UpdateStatus(ctx, "foreign-cluster-session", Status{
+		Phase: PhaseActive, Subject: "sub-123", Issuer: "https://issuer.example.com",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case ev := <-ch:
+		t.Fatalf("received event for cluster %q, want none", ev.Cluster)
+	case <-time.After(time.Second):
 	}
 }

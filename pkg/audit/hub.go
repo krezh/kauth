@@ -52,29 +52,39 @@ func (h *Hub) publish(ev AuditEvent) {
 	}
 }
 
+const (
+	minBackoff = time.Second
+	maxBackoff = 30 * time.Second
+	// healthyConnection is how long a LISTEN connection must stay up for the next
+	// reconnect to start over at minBackoff.
+	healthyConnection = 30 * time.Second
+)
+
 // Run holds a dedicated (non-pooled) LISTEN connection open, reconnecting with backoff on error.
 func (h *Hub) Run(ctx context.Context) {
-	backoff := time.Second
-	const maxBackoff = 30 * time.Second
+	backoff := minBackoff
 	for ctx.Err() == nil {
-		if err := h.listenOnce(ctx); err != nil {
-			slog.ErrorContext(ctx, "audit hub: listen connection failed, reconnecting", "error", err, "backoff", backoff)
-			select {
-			case <-time.After(backoff):
-			case <-ctx.Done():
-				return
-			}
-			backoff *= 2
-			if backoff > maxBackoff {
-				backoff = maxBackoff
-			}
-			continue
+		var connectedAt time.Time
+		err := h.listenOnce(ctx, func() { connectedAt = time.Now() })
+		if !connectedAt.IsZero() && time.Since(connectedAt) >= healthyConnection {
+			backoff = minBackoff
 		}
-		backoff = time.Second
+		if err != nil {
+			slog.ErrorContext(ctx, "audit hub: listen connection failed, reconnecting", "error", err, "backoff", backoff)
+		}
+		select {
+		case <-time.After(backoff):
+		case <-ctx.Done():
+			return
+		}
+		backoff *= 2
+		if backoff > maxBackoff {
+			backoff = maxBackoff
+		}
 	}
 }
 
-func (h *Hub) listenOnce(ctx context.Context) error {
+func (h *Hub) listenOnce(ctx context.Context, onConnected func()) error {
 	conn, err := pgx.Connect(ctx, h.databaseURL)
 	if err != nil {
 		return err
@@ -84,6 +94,7 @@ func (h *Hub) listenOnce(ctx context.Context) error {
 	if _, err := conn.Exec(ctx, "LISTEN "+auditEventsChannel); err != nil {
 		return err
 	}
+	onConnected()
 	slog.InfoContext(ctx, "audit hub: listening", "channel", auditEventsChannel)
 
 	for {

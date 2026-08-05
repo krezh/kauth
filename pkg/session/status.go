@@ -64,7 +64,7 @@ func (c *Client) UpdateStatus(ctx context.Context, sessionID string, status Stat
 		if status.Phase != PhaseActive && status.Error == "" {
 			return nil, nil
 		}
-		return []SessionEvent{{SessionID: sessionID, Phase: status.Phase, Subject: status.Subject, Issuer: status.Issuer}}, nil
+		return []SessionEvent{{SessionID: sessionID, Cluster: c.cluster, Phase: status.Phase, Subject: status.Subject, Issuer: status.Issuer}}, nil
 	})
 	if err != nil {
 		return err
@@ -159,7 +159,7 @@ func (c *Client) Revoke(ctx context.Context, sessionID string) error {
 		} else if err != nil {
 			return nil, fmt.Errorf("failed to revoke session: %w", err)
 		}
-		return []SessionEvent{{SessionID: sessionID, Phase: PhaseRevoked, Subject: subject, Issuer: issuer}}, nil
+		return []SessionEvent{{SessionID: sessionID, Cluster: c.cluster, Phase: PhaseRevoked, Subject: subject, Issuer: issuer}}, nil
 	})
 	if err != nil {
 		return err

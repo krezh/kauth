@@ -46,7 +46,7 @@ func (c *Client) ExpireInactiveSessions(ctx context.Context, ttl time.Duration) 
 			if err := rows.Scan(&sessionID, &subject, &issuer); err != nil {
 				return nil, fmt.Errorf("failed to scan expired session: %w", err)
 			}
-			events = append(events, SessionEvent{SessionID: sessionID, Phase: PhaseExpired, Subject: subject, Issuer: issuer})
+			events = append(events, SessionEvent{SessionID: sessionID, Cluster: c.cluster, Phase: PhaseExpired, Subject: subject, Issuer: issuer})
 		}
 		return events, rows.Err()
 	})
