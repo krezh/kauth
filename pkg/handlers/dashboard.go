@@ -273,7 +273,10 @@ func (h *DashboardHandler) handleDashboardSSE(w http.ResponseWriter, r *http.Req
 	var dirty bool
 	for {
 		select {
-		case <-sessionEvents:
+		case ev := <-sessionEvents:
+			if ev.Cluster != h.clusterName {
+				continue
+			}
 			dirty = true
 		case ev := <-auditEvents:
 			if ev.Cluster != h.clusterName {
@@ -289,41 +292,45 @@ func (h *DashboardHandler) handleDashboardSSE(w http.ResponseWriter, r *http.Req
 				flusher.Flush()
 				continue
 			}
-			h.pushDashboardFragments(w, flusher, claims, sessionID, page)
-			dirty = false
+			// keep dirty set when the push failed so the next tick retries
+			dirty = !h.pushDashboardFragments(r.Context(), w, flusher, claims, sessionID, page)
 		case <-r.Context().Done():
 			return
 		}
 	}
 }
 
-func (h *DashboardHandler) pushDashboardFragments(w http.ResponseWriter, flusher http.Flusher, claims *jwt.DashboardSessionToken, sessionID string, page int) {
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+// pushDashboardFragments reports whether it wrote the fragments for this stream.
+func (h *DashboardHandler) pushDashboardFragments(parent context.Context, w http.ResponseWriter, flusher http.Flusher, claims *jwt.DashboardSessionToken, sessionID string, page int) bool {
+	ctx, cancel := context.WithTimeout(parent, 10*time.Second)
 	defer cancel()
 
 	if sessionID == "" {
 		data, err := h.loadOverview(ctx, claims)
 		if err != nil {
-			return
+			return false
 		}
 		metrics, err := h.loadOverviewMetrics(ctx, data)
 		if err != nil {
-			return
+			return false
 		}
 		view := dashboardView{Sessions: data.Sessions, ActiveSessions: data.ActiveSessions, Metrics: metrics}
 		h.writeFragment(w, flusher, "stat-strip", view)
 		h.writeFragment(w, flusher, "sessions-tbody", view)
-		return
+		return true
 	}
 
 	admin := (&CallerClaims{Email: claims.Email, Groups: claims.Groups}).isAdmin(h.adminGroups)
 	oauthSession, err := h.sessions.Get(ctx, sessionID)
-	if err != nil || (!admin && !dashboardOwnsSession(claims, oauthSession)) {
-		return
+	if err != nil {
+		return false
+	}
+	if !admin && !dashboardOwnsSession(claims, oauthSession) {
+		return true
 	}
 	metrics, err := h.requests.SessionMetrics(ctx, h.clusterName, sessionID, time.Now().Add(-30*24*time.Hour))
 	if err != nil {
-		return
+		return false
 	}
 	view := dashboardView{
 		Detail: ptrTo(sessionInfo(*oauthSession)), Metrics: metrics,
@@ -332,11 +339,14 @@ func (h *DashboardHandler) pushDashboardFragments(w http.ResponseWriter, flusher
 	h.writeFragment(w, flusher, "stat-strip", view)
 	h.writeFragment(w, flusher, "detail-stats", view)
 	if page == 1 {
-		if events, err := h.requests.ListSession(ctx, h.clusterName, sessionID, 100, 0); err == nil {
-			view.Events = events
-			h.writeFragment(w, flusher, "events-tbody", view)
+		events, err := h.requests.ListSession(ctx, h.clusterName, sessionID, 100, 0)
+		if err != nil {
+			return false
 		}
+		view.Events = events
+		h.writeFragment(w, flusher, "events-tbody", view)
 	}
+	return true
 }
 
 func (h *DashboardHandler) writeFragment(w http.ResponseWriter, flusher http.Flusher, name string, view dashboardView) {
