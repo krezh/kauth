@@ -183,9 +183,9 @@ func (c *Client) RevokeByUser(ctx context.Context, userID string) (int, error) {
 		rows, err := tx.Query(ctx, `
 			UPDATE oauth_sessions
 			SET phase=$3, revoked_at=now(), refresh_token='', api_token=''
-			WHERE cluster=$1 AND (email=$2 OR user_id=$2) AND phase != $3
+			WHERE cluster=$1 AND (email=$2 OR user_id=$2) AND phase NOT IN ($3,$4)
 			RETURNING session_id, subject, issuer
-		`, c.cluster, userID, string(PhaseRevoked))
+		`, c.cluster, userID, string(PhaseRevoked), string(PhaseExpired))
 		if err != nil {
 			return nil, fmt.Errorf("failed to revoke user sessions: %w", err)
 		}
