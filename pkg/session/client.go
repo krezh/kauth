@@ -109,7 +109,7 @@ func (c *Client) Get(ctx context.Context, sessionID string) (*Session, error) {
 
 const sessionColumns = `session_id, verifier, user_id, created_at, last_used, phase, email,
 	       username, subject, issuer, refresh_token, revoked_at, expired_at,
-	       completed_at, error, groups, api_token`
+	       completed_at, error, groups, api_token, token_rotation`
 
 // rowScanner is satisfied by both pgx.Row and pgx.Rows.
 type rowScanner interface {
@@ -122,7 +122,7 @@ func scanSession(row rowScanner) (*Session, error) {
 	var lastUsed *time.Time
 	err := row.Scan(&s.SessionID, &s.Verifier, &s.UserID, &s.CreatedAt, &lastUsed,
 		&phase, &s.Email, &s.Username, &s.Subject, &s.Issuer, &s.RefreshToken,
-		&s.RevokedAt, &s.ExpiredAt, &s.CompletedAt, &s.Error, &s.Groups, &s.APIToken)
+		&s.RevokedAt, &s.ExpiredAt, &s.CompletedAt, &s.Error, &s.Groups, &s.APIToken, &s.TokenRotation)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return nil, ErrSessionNotFound
 	}

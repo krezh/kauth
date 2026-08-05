@@ -33,6 +33,9 @@ type Session struct {
 	Error        string
 	Groups       []string
 	APIToken     string
+	// TokenRotation increments on every refresh-token rotation and is the
+	// non-secret value RotateRefreshToken uses to detect a replay.
+	TokenRotation int64
 }
 
 // Status is the partial-update shape accepted by UpdateStatus and RotateRefreshToken.

@@ -3,6 +3,7 @@ package audit
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -19,13 +20,18 @@ type AuditEvent struct {
 
 // Hub fans out kauth_audit_events NOTIFY payloads to local subscribers.
 type Hub struct {
-	databaseURL string
-	mu          sync.Mutex
-	subs        map[chan AuditEvent]struct{}
+	// connConfig is parsed once so the raw DSN, password included, is not retained.
+	connConfig *pgx.ConnConfig
+	mu         sync.Mutex
+	subs       map[chan AuditEvent]struct{}
 }
 
-func NewHub(databaseURL string) *Hub {
-	return &Hub{databaseURL: databaseURL, subs: make(map[chan AuditEvent]struct{})}
+func NewHub(databaseURL string) (*Hub, error) {
+	connConfig, err := pgx.ParseConfig(databaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse database configuration: %w", err)
+	}
+	return &Hub{connConfig: connConfig, subs: make(map[chan AuditEvent]struct{})}, nil
 }
 
 // Subscribe returns a channel to drain and an unsubscribe func; valid across reconnects.
@@ -85,7 +91,7 @@ func (h *Hub) Run(ctx context.Context) {
 }
 
 func (h *Hub) listenOnce(ctx context.Context, onConnected func()) error {
-	conn, err := pgx.Connect(ctx, h.databaseURL)
+	conn, err := pgx.ConnectConfig(ctx, h.connConfig.Copy())
 	if err != nil {
 		return err
 	}

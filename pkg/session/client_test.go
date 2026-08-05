@@ -278,21 +278,36 @@ func TestClient_RotateRefreshTokenRejectsReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := client.RotateRefreshToken(ctx, "rotation-test", "replayed", Status{
-		Phase: PhaseActive, RefreshToken: "next",
-	}); !errors.Is(err, ErrRefreshTokenReplayed) {
-		t.Fatalf("RotateRefreshToken() with wrong token error = %v, want ErrRefreshTokenReplayed", err)
+	current, err := client.Get(ctx, "rotation-test")
+	if err != nil {
+		t.Fatal(err)
 	}
 
-	if err := client.RotateRefreshToken(ctx, "rotation-test", "current", Status{
+	if err := client.RotateRefreshToken(ctx, "rotation-test", current.TokenRotation+1, Status{
+		Phase: PhaseActive, RefreshToken: "next",
+	}); !errors.Is(err, ErrRefreshTokenReplayed) {
+		t.Fatalf("RotateRefreshToken() with a stale rotation error = %v, want ErrRefreshTokenReplayed", err)
+	}
+
+	if err := client.RotateRefreshToken(ctx, "rotation-test", current.TokenRotation, Status{
 		Phase: PhaseActive, RefreshToken: "next",
 	}); err != nil {
 		t.Fatal(err)
 	}
 
+	// The counter advanced, so replaying the same rotation loses the compare-and-set.
+	if err := client.RotateRefreshToken(ctx, "rotation-test", current.TokenRotation, Status{
+		Phase: PhaseActive, RefreshToken: "replayed",
+	}); !errors.Is(err, ErrRefreshTokenReplayed) {
+		t.Fatalf("RotateRefreshToken() replay error = %v, want ErrRefreshTokenReplayed", err)
+	}
+
 	got, err := client.Get(ctx, "rotation-test")
 	if err != nil {
 		t.Fatal(err)
+	}
+	if got.TokenRotation != current.TokenRotation+1 {
+		t.Errorf("TokenRotation = %d, want %d", got.TokenRotation, current.TokenRotation+1)
 	}
 	if got.RefreshToken != "next" {
 		t.Errorf("RefreshToken = %q, want %q", got.RefreshToken, "next")
@@ -313,7 +328,7 @@ func TestClient_RotateRefreshTokenRejectsInactiveSession(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	err := client.RotateRefreshToken(ctx, "inactive-rotation-test", "whatever", Status{
+	err := client.RotateRefreshToken(ctx, "inactive-rotation-test", 0, Status{
 		Phase: PhaseActive, RefreshToken: "next",
 	})
 	if err == nil || errors.Is(err, ErrRefreshTokenReplayed) {
@@ -321,20 +336,20 @@ func TestClient_RotateRefreshTokenRejectsInactiveSession(t *testing.T) {
 	}
 }
 
-func TestClient_RotateRefreshTokenRejectsEmptyToken(t *testing.T) {
+func TestClient_RotateRefreshTokenRejectsScrubbedToken(t *testing.T) {
 	client := testClient(t)
 	ctx := context.Background()
 
 	if _, err := client.Create(ctx, "empty-token-test", "verifier", ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := client.UpdateStatus(ctx, "empty-token-test", Status{Phase: PhaseActive, RefreshToken: "current"}); err != nil {
+	if err := client.UpdateStatus(ctx, "empty-token-test", Status{Phase: PhaseActive, RefreshToken: ""}); err != nil {
 		t.Fatal(err)
 	}
 
-	err := client.RotateRefreshToken(ctx, "empty-token-test", "", Status{Phase: PhaseActive, RefreshToken: "next"})
+	err := client.RotateRefreshToken(ctx, "empty-token-test", 0, Status{Phase: PhaseActive, RefreshToken: "next"})
 	if !errors.Is(err, ErrRefreshTokenReplayed) {
-		t.Errorf("RotateRefreshToken() with empty currentToken error = %v, want ErrRefreshTokenReplayed", err)
+		t.Errorf("RotateRefreshToken() on a session without a stored token error = %v, want ErrRefreshTokenReplayed", err)
 	}
 }
 

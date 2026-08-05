@@ -106,10 +106,12 @@ func (c *Client) ClaimLogin(ctx context.Context, sessionID string) error {
 }
 
 // RotateRefreshToken swaps the token in one conditional UPDATE guarding against replay; not published.
-func (c *Client) RotateRefreshToken(ctx context.Context, sessionID, currentToken string, status Status) error {
-	if currentToken == "" {
-		return ErrRefreshTokenReplayed
-	}
+//
+// The guard is the non-secret token_rotation counter the caller read alongside the
+// token it verified, so the stored secret is never compared by the database: only a
+// rotation that started from the current counter wins, and concurrent replays of the
+// same token lose the compare-and-set.
+func (c *Client) RotateRefreshToken(ctx context.Context, sessionID string, rotation int64, status Status) error {
 	groups := status.Groups
 	if groups == nil {
 		groups = []string{}
@@ -118,11 +120,13 @@ func (c *Client) RotateRefreshToken(ctx context.Context, sessionID, currentToken
 		UPDATE oauth_sessions
 		SET phase=$3, email=$4, username=$5, subject=$6, issuer=$7, refresh_token=$8, groups=$9,
 		    api_token = COALESCE(NULLIF($10,''), api_token),
-		    completed_at = COALESCE($11, completed_at)
-		WHERE cluster=$1 AND session_id=$2 AND phase=$12 AND refresh_token=$13
+		    completed_at = COALESCE($11, completed_at),
+		    token_rotation = token_rotation + 1
+		WHERE cluster=$1 AND session_id=$2 AND phase=$12 AND token_rotation=$13
+		  AND refresh_token <> ''
 	`, c.cluster, sessionID, string(status.Phase), status.Email, status.Username,
 		status.Subject, status.Issuer, status.RefreshToken, groups,
-		status.APIToken, status.CompletedAt, string(PhaseActive), currentToken)
+		status.APIToken, status.CompletedAt, string(PhaseActive), rotation)
 	if err != nil {
 		return fmt.Errorf("failed to rotate refresh token: %w", err)
 	}

@@ -131,8 +131,13 @@ func NewPostgresStore(ctx context.Context, databaseURL string, queueSize int, re
 		return nil, fmt.Errorf("migrate audit database: %w", err)
 	}
 
+	hub, err := NewHub(databaseURL)
+	if err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("create audit hub: %w", err)
+	}
+
 	lifecycle, cancel := context.WithCancel(context.Background())
-	hub := NewHub(databaseURL)
 	go hub.Run(lifecycle)
 	store := &PostgresStore{
 		pool:      pool,

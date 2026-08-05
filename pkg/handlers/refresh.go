@@ -115,7 +115,8 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 		}
 
 		currentSession, err = h.sessionClient.Get(ctx, refreshToken.SessionID)
-		if err != nil || subtle.ConstantTimeCompare([]byte(req.RefreshToken), []byte(currentSession.RefreshToken)) != 1 {
+		if err != nil || currentSession.RefreshToken == "" ||
+			subtle.ConstantTimeCompare([]byte(req.RefreshToken), []byte(currentSession.RefreshToken)) != 1 {
 			slog.WarnContext(ctx, "refresh: replay attack detected", "user", refreshToken.UserEmail, "session", refreshToken.SessionID)
 			http.Error(w, "Token replay detected", http.StatusUnauthorized)
 			return
@@ -202,7 +203,7 @@ func (h *RefreshHandler) HandleRefresh(w http.ResponseWriter, r *http.Request) {
 
 	// Update session with new refresh token
 	if refreshToken.SessionID != "" {
-		err := h.sessionClient.RotateRefreshToken(ctx, refreshToken.SessionID, req.RefreshToken, session.Status{
+		err := h.sessionClient.RotateRefreshToken(ctx, refreshToken.SessionID, currentSession.TokenRotation, session.Status{
 			Phase:        session.PhaseActive,
 			Email:        claims.Email,
 			Username:     claims.PreferredUsername,

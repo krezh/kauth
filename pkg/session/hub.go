@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"sync"
 	"time"
@@ -28,17 +29,22 @@ const subscriberBuffer = 256
 
 // Hub fans out kauth_session_events NOTIFY payloads to local subscribers.
 type Hub struct {
-	databaseURL string
-	cluster     string
-	mu          sync.Mutex
-	subs        map[chan SessionEvent]struct{}
+	// connConfig is parsed once so the raw DSN, password included, is not retained.
+	connConfig *pgx.ConnConfig
+	cluster    string
+	mu         sync.Mutex
+	subs       map[chan SessionEvent]struct{}
 }
 
 func NewHub(databaseURL, cluster string) (*Hub, error) {
 	if cluster == "" {
 		return nil, errors.New("cluster is required")
 	}
-	return &Hub{databaseURL: databaseURL, cluster: cluster, subs: make(map[chan SessionEvent]struct{})}, nil
+	connConfig, err := pgx.ParseConfig(databaseURL)
+	if err != nil {
+		return nil, fmt.Errorf("parse database configuration: %w", err)
+	}
+	return &Hub{connConfig: connConfig, cluster: cluster, subs: make(map[chan SessionEvent]struct{})}, nil
 }
 
 // Subscribe returns a channel to drain and an unsubscribe func; valid across reconnects.
@@ -99,7 +105,7 @@ func (h *Hub) Run(ctx context.Context) {
 }
 
 func (h *Hub) listenOnce(ctx context.Context, onConnected func()) error {
-	conn, err := pgx.Connect(ctx, h.databaseURL)
+	conn, err := pgx.ConnectConfig(ctx, h.connConfig.Copy())
 	if err != nil {
 		return err
 	}

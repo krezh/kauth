@@ -26,14 +26,19 @@ CREATE TABLE IF NOT EXISTS oauth_sessions (
     error          TEXT NOT NULL DEFAULT '',
     groups         TEXT[] NOT NULL DEFAULT '{}',
     api_token      TEXT NOT NULL DEFAULT '',
+    token_rotation BIGINT NOT NULL DEFAULT 0,
     PRIMARY KEY (cluster, session_id)
 );
+ALTER TABLE oauth_sessions
+    ADD COLUMN IF NOT EXISTS token_rotation BIGINT NOT NULL DEFAULT 0;
 CREATE INDEX IF NOT EXISTS oauth_sessions_email_idx
     ON oauth_sessions (cluster, email) WHERE email <> '';
 CREATE INDEX IF NOT EXISTS oauth_sessions_user_id_idx
     ON oauth_sessions (cluster, user_id) WHERE user_id <> '';
 CREATE INDEX IF NOT EXISTS oauth_sessions_phase_idx
     ON oauth_sessions (cluster, phase);
+CREATE INDEX IF NOT EXISTS oauth_sessions_created_at_idx
+    ON oauth_sessions (cluster, created_at DESC);
 `
 
 func migrate(ctx context.Context, pool *pgxpool.Pool) error {
