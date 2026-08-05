@@ -32,6 +32,7 @@ type DashboardHandler struct {
 	clusterName  string
 	adminGroups  []string
 	secureCookie bool
+	static       http.Handler
 }
 
 type DashboardConfig struct {
@@ -46,6 +47,7 @@ func NewDashboardHandler(jwtManager *jwt.Manager, sessions *session.Client, requ
 		baseURL: config.BaseURL, clusterName: config.ClusterName,
 		adminGroups:  config.AdminGroups,
 		secureCookie: strings.HasPrefix(config.BaseURL, "https://"),
+		static:       newStaticHandler(),
 	}
 }
 
@@ -55,7 +57,13 @@ func (h *DashboardHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.handleLogout(w, r)
 	case "/":
 		h.requireSession(h.handleOverview)(w, r)
+	case "/sse/dashboard":
+		h.handleDashboardSSE(w, r)
 	default:
+		if strings.HasPrefix(r.URL.Path, "/static/") {
+			h.static.ServeHTTP(w, r)
+			return
+		}
 		if strings.HasPrefix(r.URL.Path, "/sessions/") {
 			h.requireSession(h.handleSession)(w, r)
 			return
@@ -105,55 +113,69 @@ func (h *DashboardHandler) dashboardClaims(r *http.Request) (*jwt.DashboardSessi
 	return claims, err == nil
 }
 
-func (h *DashboardHandler) handleOverview(w http.ResponseWriter, r *http.Request, claims *jwt.DashboardSessionToken) {
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer cancel()
-	admin := (&CallerClaims{Email: claims.Email, Groups: claims.Groups}).isAdmin(h.adminGroups)
-	var sessionsList []SessionInfo
-	var ownedSessionIDs []string
+// overviewData is the admin/owner-scoped session listing shared by the full page and its SSE fragment.
+type overviewData struct {
+	Admin          bool
+	Sessions       []SessionInfo
+	OwnedIDs       []string
+	ActiveSessions int
+}
+
+func (h *DashboardHandler) loadOverview(ctx context.Context, claims *jwt.DashboardSessionToken) (overviewData, error) {
+	var data overviewData
+	data.Admin = (&CallerClaims{Email: claims.Email, Groups: claims.Groups}).isAdmin(h.adminGroups)
 	var rawSessions []session.Session
 	var err error
-	if admin {
+	if data.Admin {
 		rawSessions, err = h.sessions.ListAll(ctx)
 	} else {
 		rawSessions, err = h.sessions.GetByUser(ctx, claims.Email)
 	}
 	if err != nil {
+		return overviewData{}, err
+	}
+	for _, item := range rawSessions {
+		if !data.Admin && item.Email == "" {
+			continue
+		}
+		if !data.Admin && !dashboardOwnsSession(claims, &item) {
+			continue
+		}
+		data.Sessions = append(data.Sessions, sessionInfo(item))
+		if !data.Admin {
+			data.OwnedIDs = append(data.OwnedIDs, item.SessionID)
+		}
+		if item.Phase == session.PhaseActive {
+			data.ActiveSessions++
+		}
+	}
+	sort.Slice(data.Sessions, func(i, j int) bool { return data.Sessions[i].CreatedAt.After(data.Sessions[j].CreatedAt) })
+	return data, nil
+}
+
+func (h *DashboardHandler) loadOverviewMetrics(ctx context.Context, data overviewData) (audit.RequestMetrics, error) {
+	if data.Admin {
+		return h.requests.GlobalMetrics(ctx, h.clusterName, time.Now().Add(-24*time.Hour))
+	}
+	return h.requests.SessionsMetrics(ctx, h.clusterName, data.OwnedIDs, time.Now().Add(-24*time.Hour))
+}
+
+func (h *DashboardHandler) handleOverview(w http.ResponseWriter, r *http.Request, claims *jwt.DashboardSessionToken) {
+	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+	defer cancel()
+	data, err := h.loadOverview(ctx, claims)
+	if err != nil {
 		h.renderError(w, http.StatusServiceUnavailable, "Sessions are temporarily unavailable")
 		return
 	}
-	for _, item := range rawSessions {
-		if !admin && item.Email == "" {
-			continue
-		}
-		if !admin && !dashboardOwnsSession(claims, &item) {
-			continue
-		}
-		sessionsList = append(sessionsList, sessionInfo(item))
-		if !admin {
-			ownedSessionIDs = append(ownedSessionIDs, item.SessionID)
-		}
-	}
-	activeSessions := 0
-	for _, item := range sessionsList {
-		if item.Phase == string(session.PhaseActive) {
-			activeSessions++
-		}
-	}
-	sort.Slice(sessionsList, func(i, j int) bool { return sessionsList[i].CreatedAt.After(sessionsList[j].CreatedAt) })
-	var metrics audit.RequestMetrics
-	if admin {
-		metrics, err = h.requests.GlobalMetrics(ctx, h.clusterName, time.Now().Add(-24*time.Hour))
-	} else {
-		metrics, err = h.requests.SessionsMetrics(ctx, h.clusterName, ownedSessionIDs, time.Now().Add(-24*time.Hour))
-	}
+	metrics, err := h.loadOverviewMetrics(ctx, data)
 	if err != nil {
 		h.renderError(w, http.StatusServiceUnavailable, "Request metrics are temporarily unavailable")
 		return
 	}
 	h.render(w, dashboardView{
-		Title: "Sessions", Cluster: h.clusterName, Email: claims.Email, Admin: admin,
-		CSRF: claims.CSRFToken, Sessions: sessionsList, ActiveSessions: activeSessions, Metrics: metrics,
+		Title: "Sessions", Cluster: h.clusterName, Email: claims.Email, Admin: data.Admin,
+		CSRF: claims.CSRFToken, Sessions: data.Sessions, ActiveSessions: data.ActiveSessions, Metrics: metrics,
 	})
 }
 
@@ -199,6 +221,127 @@ func (h *DashboardHandler) handleSession(w http.ResponseWriter, r *http.Request,
 		Metrics: metrics, ActiveSessions: boolInt(oauthSession.Phase == session.PhaseActive),
 		Page: page, PreviousPage: page - 1, NextPage: page + 1, HasNext: len(events) == 100,
 	})
+}
+
+// dashboardPushInterval coalesces bursts of hub events and sets how often the session cookie is re-checked.
+const dashboardPushInterval = 2 * time.Second
+
+func (h *DashboardHandler) handleDashboardSSE(w http.ResponseWriter, r *http.Request) {
+	claims, ok := h.dashboardClaims(r)
+	if !ok {
+		http.Error(w, "Unauthorized", http.StatusUnauthorized)
+		return
+	}
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		http.Error(w, "Streaming unsupported", http.StatusInternalServerError)
+		return
+	}
+	sessionID := r.URL.Query().Get("session")
+	page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+	if page < 1 {
+		page = 1
+	}
+
+	if sessionID != "" {
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		oauthSession, err := h.sessions.Get(ctx, sessionID)
+		cancel()
+		if err != nil {
+			http.NotFound(w, r)
+			return
+		}
+		admin := (&CallerClaims{Email: claims.Email, Groups: claims.Groups}).isAdmin(h.adminGroups)
+		if !admin && !dashboardOwnsSession(claims, oauthSession) {
+			http.Error(w, "Forbidden", http.StatusForbidden)
+			return
+		}
+	}
+
+	sessionEvents, unsubscribeSessions := h.sessions.Subscribe()
+	defer unsubscribeSessions()
+	auditEvents, unsubscribeAudit := h.requests.Subscribe()
+	defer unsubscribeAudit()
+
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+
+	ticker := time.NewTicker(dashboardPushInterval)
+	defer ticker.Stop()
+
+	var dirty bool
+	for {
+		select {
+		case <-sessionEvents:
+			dirty = true
+		case <-auditEvents:
+			dirty = true
+		case <-ticker.C:
+			if _, ok := h.dashboardClaims(r); !ok {
+				return
+			}
+			if !dirty {
+				_, _ = fmt.Fprintf(w, ": keepalive\n\n")
+				flusher.Flush()
+				continue
+			}
+			h.pushDashboardFragments(w, flusher, claims, sessionID, page)
+			dirty = false
+		case <-r.Context().Done():
+			return
+		}
+	}
+}
+
+func (h *DashboardHandler) pushDashboardFragments(w http.ResponseWriter, flusher http.Flusher, claims *jwt.DashboardSessionToken, sessionID string, page int) {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	if sessionID == "" {
+		data, err := h.loadOverview(ctx, claims)
+		if err != nil {
+			return
+		}
+		metrics, err := h.loadOverviewMetrics(ctx, data)
+		if err != nil {
+			return
+		}
+		view := dashboardView{Sessions: data.Sessions, ActiveSessions: data.ActiveSessions, Metrics: metrics}
+		h.writeFragment(w, flusher, "stat-strip", view)
+		h.writeFragment(w, flusher, "sessions-tbody", view)
+		return
+	}
+
+	admin := (&CallerClaims{Email: claims.Email, Groups: claims.Groups}).isAdmin(h.adminGroups)
+	oauthSession, err := h.sessions.Get(ctx, sessionID)
+	if err != nil || (!admin && !dashboardOwnsSession(claims, oauthSession)) {
+		return
+	}
+	metrics, err := h.requests.SessionMetrics(ctx, h.clusterName, sessionID, time.Now().Add(-30*24*time.Hour))
+	if err != nil {
+		return
+	}
+	view := dashboardView{
+		Detail: ptrTo(sessionInfo(*oauthSession)), Metrics: metrics,
+		ActiveSessions: boolInt(oauthSession.Phase == session.PhaseActive),
+	}
+	h.writeFragment(w, flusher, "detail-stats", view)
+	if page == 1 {
+		if events, err := h.requests.ListSession(ctx, h.clusterName, sessionID, 100, 0); err == nil {
+			view.Events = events
+			h.writeFragment(w, flusher, "events-tbody", view)
+		}
+	}
+}
+
+func (h *DashboardHandler) writeFragment(w http.ResponseWriter, flusher http.Flusher, name string, view dashboardView) {
+	var buf strings.Builder
+	if err := dashboardTemplate.ExecuteTemplate(&buf, name, view); err != nil {
+		return
+	}
+	_, _ = fmt.Fprintf(w, "event: %s\ndata: %s\n\n", name, buf.String())
+	flusher.Flush()
 }
 
 func dashboardOwnsSession(claims *jwt.DashboardSessionToken, oauthSession *session.Session) bool {

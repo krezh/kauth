@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -107,6 +108,31 @@ func TestSessionAuthenticator(t *testing.T) {
 			}
 			if (store.touched != "") != tt.wantTouched {
 				t.Fatalf("touched session = %q, wantTouched %v", store.touched, tt.wantTouched)
+			}
+		})
+	}
+}
+
+func TestSessionAuthenticatorDistinguishesStoreErrors(t *testing.T) {
+	manager := newTestJWTManager(t)
+	token, err := manager.CreateAPIToken("session-1", time.Hour)
+	if err != nil {
+		t.Fatalf("CreateAPIToken: %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		storeErr error
+		wantErr  error
+	}{
+		{name: "session not found", storeErr: session.ErrSessionNotFound, wantErr: ErrUnauthorized},
+		{name: "database unavailable", storeErr: errors.New("connection refused"), wantErr: ErrSessionStoreUnavailable},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			authenticator := &SessionAuthenticator{jwtManager: manager, sessionClient: &fakeSessionStore{err: tt.storeErr}}
+			if _, err := authenticator.Authenticate(context.Background(), token); !errors.Is(err, tt.wantErr) {
+				t.Fatalf("Authenticate() error = %v, want %v", err, tt.wantErr)
 			}
 		})
 	}
@@ -231,6 +257,39 @@ func TestKubernetesProxyHandlerUnauthorized(t *testing.T) {
 		t.Fatalf("decode status: %v", err)
 	}
 	if status.Kind != "Status" || status.Reason != metav1.StatusReasonUnauthorized || status.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %#v", status)
+	}
+}
+
+func TestKubernetesProxyHandlerServiceUnavailable(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("upstream should not be called")
+	}))
+	defer upstream.Close()
+
+	manager := newTestJWTManager(t)
+	token, err := manager.CreateAPIToken("session-1", time.Hour)
+	if err != nil {
+		t.Fatalf("CreateAPIToken: %v", err)
+	}
+	handler := NewKubernetesProxyHandler(
+		&SessionAuthenticator{jwtManager: manager, sessionClient: &fakeSessionStore{err: errors.New("connection refused")}},
+		mustParseURL(t, upstream.URL),
+		http.DefaultTransport,
+	)
+	req := httptest.NewRequest(http.MethodGet, "/api", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("response = %d", rr.Code)
+	}
+	var status metav1.Status
+	if err := json.Unmarshal(rr.Body.Bytes(), &status); err != nil {
+		t.Fatalf("decode status: %v", err)
+	}
+	if status.Kind != "Status" || status.Reason != metav1.StatusReasonServiceUnavailable || status.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %#v", status)
 	}
 }

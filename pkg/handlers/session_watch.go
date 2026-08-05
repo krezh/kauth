@@ -30,7 +30,9 @@ func (h *LoginHandler) notifyListeners(sessionID string) {
 		return
 	}
 
-	sess, err := h.sessionClient.Get(context.Background(), sessionID)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	sess, err := h.sessionClient.Get(ctx, sessionID)
 	if err != nil {
 		slog.Error("session watch: failed to fetch session for notification", "session", sessionID[:min(8, len(sessionID))], "error", err)
 		return

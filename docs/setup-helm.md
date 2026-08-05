@@ -63,20 +63,16 @@ helm install kauth oci://ghcr.io/krezh/charts/kauth-server \
   --values kauth-values.yaml
 ```
 
-The chart installs the OAuthSession CRD, service account, namespaced session
-permissions, and cluster-scoped user/group impersonation permissions.
+The chart installs the service account and cluster-scoped user/group
+impersonation permissions. PostgreSQL is a hard dependency: kauth cannot
+authenticate requests while it is unreachable.
 
 The dashboard is served at `https://kauth.example.com/`, kauth's control API is
 under `/api`, and generated kubeconfigs use `https://kauth.example.com/k8s`.
 
 ## Upgrade
 
-Helm does not update CRDs stored in a chart's `crds/` directory. Apply the CRD
-from the new release before upgrading:
-
 ```sh
-kubectl apply --server-side \
-  -f https://raw.githubusercontent.com/krezh/kauth/v<VERSION>/helm/crds/oauthsession.yaml
 helm upgrade kauth oci://ghcr.io/krezh/charts/kauth-server \
   --namespace kauth \
   --version <VERSION> \
@@ -84,6 +80,14 @@ helm upgrade kauth oci://ghcr.io/krezh/charts/kauth-server \
 ```
 
 Users upgrading from webhook credentials must log in again.
+
+Upgrading from a release before sessions moved to PostgreSQL: the chart no
+longer installs the `oauthsessions.kauth.io` CRD, and Helm never removes CRDs
+it previously installed, so delete it manually once the upgrade is complete:
+
+```sh
+kubectl delete crd oauthsessions.kauth.io
+```
 
 ## Login
 

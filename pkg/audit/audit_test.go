@@ -38,6 +38,11 @@ func (*captureRequestStore) GlobalMetrics(context.Context, string, time.Time) (R
 	return RequestMetrics{}, nil
 }
 
+func (*captureRequestStore) Subscribe() (<-chan AuditEvent, func()) {
+	ch := make(chan AuditEvent)
+	return ch, func() {}
+}
+
 func (*captureRequestStore) Close(context.Context) error { return nil }
 
 func TestLog_CallsGetClientIP(t *testing.T) {

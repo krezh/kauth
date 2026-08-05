@@ -17,8 +17,8 @@ func testClient(t *testing.T) *Client {
 	if err != nil {
 		t.Fatalf("NewClient() error = %v", err)
 	}
-	if _, err := c.pool.Exec(ctx, "TRUNCATE TABLE oauth_sessions"); err != nil {
-		t.Fatalf("truncate: %v", err)
+	if _, err := c.pool.Exec(ctx, "DELETE FROM oauth_sessions WHERE cluster=$1", c.cluster); err != nil {
+		t.Fatalf("cleanup: %v", err)
 	}
 	t.Cleanup(func() {
 		_ = c.Close(context.Background())

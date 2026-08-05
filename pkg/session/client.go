@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -15,12 +14,8 @@ var ErrRefreshTokenReplayed = errors.New("refresh token is no longer current")
 var ErrLoginAlreadyClaimed = errors.New("login session is no longer pending")
 var ErrSessionNotFound = errors.New("session not found")
 
-// pgxIface is satisfied by both *pgxpool.Pool and pgx.Tx.
-type pgxIface interface {
-	Exec(ctx context.Context, sql string, args ...any) (pgconn.CommandTag, error)
-	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
-	Query(ctx context.Context, sql string, args ...any) (pgx.Rows, error)
-}
+// maxPoolConns caps pgxpool's NumCPU-scaling default so replicas don't exhaust Postgres' max_connections.
+const maxPoolConns = 10
 
 // Client wraps a Postgres pool for OAuthSession operations, scoped to one cluster.
 type Client struct {
@@ -39,9 +34,16 @@ func NewClient(ctx context.Context, databaseURL, cluster string) (*Client, error
 	if cluster == "" {
 		return nil, errors.New("cluster is required")
 	}
-	pool, err := pgxpool.New(ctx, databaseURL)
+	poolConfig, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse database configuration: %w", err)
+	}
+	if poolConfig.MaxConns > maxPoolConns {
+		poolConfig.MaxConns = maxPoolConns
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
+	if err != nil {
+		return nil, fmt.Errorf("open session database pool: %w", err)
 	}
 	if err := pool.Ping(ctx); err != nil {
 		pool.Close()

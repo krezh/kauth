@@ -14,6 +14,7 @@ import (
 const lastUsedThrottle = 30 * time.Second
 
 var ErrUnauthorized = errors.New("unauthorized")
+var ErrSessionStoreUnavailable = errors.New("session store unavailable")
 
 type sessionStore interface {
 	Get(ctx context.Context, sessionID string) (*session.Session, error)
@@ -48,7 +49,10 @@ func (a *SessionAuthenticator) Authenticate(ctx context.Context, rawToken string
 		return a.sessionClient.Get(ctx, credential.SessionID)
 	})
 	if err != nil {
-		return nil, ErrUnauthorized
+		if errors.Is(err, session.ErrSessionNotFound) {
+			return nil, ErrUnauthorized
+		}
+		return nil, ErrSessionStoreUnavailable
 	}
 	sess, ok := value.(*session.Session)
 	if !ok || sess.Phase != session.PhaseActive || sess.Email == "" {

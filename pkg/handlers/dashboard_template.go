@@ -96,33 +96,26 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
         <span class="count">{{if .Detail}}{{.Detail.Email}}{{else}}{{len .Sessions}} total{{end}}</span>
         <span class="scope">Kubernetes access telemetry</span>
       </div>
-      <div class="stat-strip">
-        <div class="strip-seg ok"><span class="strip-lbl">Active</span><strong class="strip-val">{{.ActiveSessions}}</strong><i class="strip-share" style="width:100%"></i></div>
-        <div class="strip-seg"><span class="strip-lbl">Requests</span><strong class="strip-val">{{.Metrics.Requests}}</strong><i class="strip-share" style="width:72%"></i></div>
-        <div class="strip-seg warn"><span class="strip-lbl">4xx</span><strong class="strip-val">{{.Metrics.ClientErrors}}</strong><i class="strip-share" style="width:38%;background:var(--warn)"></i></div>
-        <div class="strip-seg error"><span class="strip-lbl">5xx</span><strong class="strip-val">{{.Metrics.ServerErrors}}</strong><i class="strip-share" style="width:12%;background:var(--error)"></i></div>
-        <div class="strip-seg"><span class="strip-lbl">P95</span><strong class="strip-val">{{duration .Metrics.P95}}</strong><i class="strip-share" style="width:44%"></i></div>
-        <div class="strip-seg"><span class="strip-lbl">Traffic</span><strong class="strip-val">{{bytes .Metrics.ResponseBytes}}</strong><i class="strip-share" style="width:58%"></i></div>
-      </div>
+      {{template "stat-strip" .}}
       {{if .Detail}}
-      <div class="detail-stats">
-        <div class="detail-stat"><div class="detail-stat-label">Identity</div><div class="detail-stat-value">{{.Detail.Email}}</div></div>
-        <div class="detail-stat"><div class="detail-stat-label">State</div><div class="detail-stat-value"><span class="pill {{phaseClass .Detail.Phase}}">{{.Detail.Phase}}</span></div></div>
-        <div class="detail-stat"><div class="detail-stat-label">Created</div><div class="detail-stat-value">{{when .Detail.CreatedAt}}</div></div>
-        <div class="detail-stat"><div class="detail-stat-label">Last used</div><div class="detail-stat-value">{{when .Detail.LastUsed}}</div></div>
-      </div>
+      {{template "detail-stats" .}}
       <div class="section">API request history</div>
       <div class="table-wrap">
-        {{if .Events}}<table class="data-table"><thead><tr><th>Time</th><th>Method</th><th>Path</th><th>Status</th><th>Latency</th><th>Bytes</th></tr></thead><tbody>{{range .Events}}<tr><td class="cell-muted">{{when .OccurredAt}}</td><td class="request-method">{{.Method}}</td><td class="path">{{.Path}}</td><td class="status-{{statusClass .StatusCode}}">{{.StatusCode}}</td><td>{{duration .Duration}}</td><td>{{bytes .ResponseBytes}}</td></tr>{{end}}</tbody></table>{{else}}<div class="empty">No API requests recorded for this session.</div>{{end}}
+        <table class="data-table"><thead><tr><th>Time</th><th>Method</th><th>Path</th><th>Status</th><th>Latency</th><th>Bytes</th></tr></thead>{{template "events-tbody" .}}</table>
       </div>
       <div class="pager">{{if gt .Page 1}}<a href="?page={{.PreviousPage}}">Previous</a>{{end}}{{if .HasNext}}<a href="?page={{.NextPage}}">Next</a>{{end}}</div>
       {{else}}
       <div class="table-wrap">
-        {{if .Sessions}}<table class="data-table"><thead><tr><th>Session</th><th>User</th><th>State</th><th>Created</th><th>Last used</th></tr></thead><tbody>{{range .Sessions}}<tr><td><a class="session-link" href="/sessions/{{urlquery .SessionID}}">{{short .SessionID}}</a></td><td class="user-cell">{{.Email}}</td><td><span class="pill {{phaseClass .Phase}}">{{.Phase}}</span></td><td class="cell-muted">{{when .CreatedAt}}</td><td class="cell-muted">{{when .LastUsed}}</td></tr>{{end}}</tbody></table>{{else}}<div class="empty">No sessions found.</div>{{end}}
+        <table class="data-table"><thead><tr><th>Session</th><th>User</th><th>State</th><th>Created</th><th>Last used</th></tr></thead>{{template "sessions-tbody" .}}</table>
       </div>
       {{end}}
     </main>
   </div>
 </div>
+<script src="/static/dashboard-sse.js"></script>
 </body>
-</html>`))
+</html>
+{{define "stat-strip"}}<div id="stat-strip" class="stat-strip"><div class="strip-seg ok"><span class="strip-lbl">Active</span><strong class="strip-val">{{.ActiveSessions}}</strong><i class="strip-share" style="width:100%"></i></div><div class="strip-seg"><span class="strip-lbl">Requests</span><strong class="strip-val">{{.Metrics.Requests}}</strong><i class="strip-share" style="width:72%"></i></div><div class="strip-seg warn"><span class="strip-lbl">4xx</span><strong class="strip-val">{{.Metrics.ClientErrors}}</strong><i class="strip-share" style="width:38%;background:var(--warn)"></i></div><div class="strip-seg error"><span class="strip-lbl">5xx</span><strong class="strip-val">{{.Metrics.ServerErrors}}</strong><i class="strip-share" style="width:12%;background:var(--error)"></i></div><div class="strip-seg"><span class="strip-lbl">P95</span><strong class="strip-val">{{duration .Metrics.P95}}</strong><i class="strip-share" style="width:44%"></i></div><div class="strip-seg"><span class="strip-lbl">Traffic</span><strong class="strip-val">{{bytes .Metrics.ResponseBytes}}</strong><i class="strip-share" style="width:58%"></i></div></div>{{end}}
+{{define "detail-stats"}}<div id="detail-stats" class="detail-stats"><div class="detail-stat"><div class="detail-stat-label">Identity</div><div class="detail-stat-value">{{.Detail.Email}}</div></div><div class="detail-stat"><div class="detail-stat-label">State</div><div class="detail-stat-value"><span class="pill {{phaseClass .Detail.Phase}}">{{.Detail.Phase}}</span></div></div><div class="detail-stat"><div class="detail-stat-label">Created</div><div class="detail-stat-value">{{when .Detail.CreatedAt}}</div></div><div class="detail-stat"><div class="detail-stat-label">Last used</div><div class="detail-stat-value">{{when .Detail.LastUsed}}</div></div></div>{{end}}
+{{define "events-tbody"}}<tbody id="events-tbody">{{if .Events}}{{range .Events}}<tr><td class="cell-muted">{{when .OccurredAt}}</td><td class="request-method">{{.Method}}</td><td class="path">{{.Path}}</td><td class="status-{{statusClass .StatusCode}}">{{.StatusCode}}</td><td>{{duration .Duration}}</td><td>{{bytes .ResponseBytes}}</td></tr>{{end}}{{else}}<tr><td colspan="6" class="empty">No API requests recorded for this session.</td></tr>{{end}}</tbody>{{end}}
+{{define "sessions-tbody"}}<tbody id="sessions-tbody">{{if .Sessions}}{{range .Sessions}}<tr><td><a class="session-link" href="/sessions/{{urlquery .SessionID}}">{{short .SessionID}}</a></td><td class="user-cell">{{.Email}}</td><td><span class="pill {{phaseClass .Phase}}">{{.Phase}}</span></td><td class="cell-muted">{{when .CreatedAt}}</td><td class="cell-muted">{{when .LastUsed}}</td></tr>{{end}}{{else}}<tr><td colspan="5" class="empty">No sessions found.</td></tr>{{end}}</tbody>{{end}}`))

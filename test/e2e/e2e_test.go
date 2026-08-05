@@ -1127,12 +1127,12 @@ func TestKauthProxyEndToEnd(t *testing.T) {
 	})
 
 	t.Run("database outage blocks auth and proxy recovers once Postgres is back", func(t *testing.T) {
-		// Postgres is a hard dependency for auth now, so an outage means 401, not 404.
+		// Postgres is a hard dependency for auth now: an outage means 503 (store unavailable), not 401/404.
 		environment.clusterKubectl(t, "--namespace", kauthNamespace, "scale", "statefulset/postgres", "--replicas=0")
 		environment.waitForNoPods(t, kauthNamespace, "app=postgres")
 
-		if status := environment.apiRequest(t, "/api/v1/namespaces/kauth-e2e/configmaps/db-outage-prime"); status != http.StatusUnauthorized {
-			t.Fatalf("proxy status during DB outage=%d, want 401", status)
+		if status := environment.apiRequest(t, "/api/v1/namespaces/kauth-e2e/configmaps/db-outage-prime"); status != http.StatusServiceUnavailable {
+			t.Fatalf("proxy status during DB outage=%d, want 503", status)
 		}
 		time.Sleep(500 * time.Millisecond)
 		statuses := make(chan int, 64)
@@ -1147,8 +1147,8 @@ func TestKauthProxyEndToEnd(t *testing.T) {
 		wait.Wait()
 		close(statuses)
 		for status := range statuses {
-			if status != http.StatusUnauthorized {
-				t.Errorf("proxy status during DB outage=%d, want 401", status)
+			if status != http.StatusServiceUnavailable {
+				t.Errorf("proxy status during DB outage=%d, want 503", status)
 			}
 		}
 

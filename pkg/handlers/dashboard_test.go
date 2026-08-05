@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"kauth/pkg/audit"
 	"kauth/pkg/jwt"
 	"kauth/pkg/session"
 )
@@ -74,6 +75,51 @@ func TestDashboardCookieScope(t *testing.T) {
 	}
 	if dashboardLoginCookieName(false) != dashboardLoginCookie || dashboardLoginCookiePath(false) != "/callback" {
 		t.Fatal("HTTP development cookie must remain unprefixed and callback-scoped")
+	}
+}
+
+func TestFragmentTemplates(t *testing.T) {
+	overview := dashboardView{
+		Sessions:       []SessionInfo{{SessionID: "sess-1", Email: "user@example.com", Phase: "Active", CreatedAt: time.Now()}},
+		ActiveSessions: 1,
+		Metrics:        audit.RequestMetrics{Requests: 5, ClientErrors: 1},
+	}
+	for _, tt := range []struct {
+		name     string
+		template string
+		view     dashboardView
+		want     []string
+	}{
+		{"stat-strip", "stat-strip", overview, []string{`id="stat-strip"`, "5"}},
+		{"sessions-tbody with rows", "sessions-tbody", overview, []string{`id="sessions-tbody"`, "sess-1", "user@example.com"}},
+		{"sessions-tbody empty", "sessions-tbody", dashboardView{}, []string{`id="sessions-tbody"`, "No sessions found."}},
+		{"detail-stats", "detail-stats", dashboardView{Detail: &SessionInfo{Email: "user@example.com", Phase: "Revoked"}}, []string{`id="detail-stats"`, "user@example.com", "Revoked"}},
+		{"events-tbody with rows", "events-tbody", dashboardView{Events: []audit.RequestEvent{{Method: "GET", Path: "/x", StatusCode: 200}}}, []string{`id="events-tbody"`, "/x", "200"}},
+		{"events-tbody empty", "events-tbody", dashboardView{}, []string{`id="events-tbody"`, "No API requests recorded for this session."}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf strings.Builder
+			if err := dashboardTemplate.ExecuteTemplate(&buf, tt.template, tt.view); err != nil {
+				t.Fatalf("ExecuteTemplate(%q) error = %v", tt.template, err)
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(buf.String(), want) {
+					t.Errorf("ExecuteTemplate(%q) = %q, want substring %q", tt.template, buf.String(), want)
+				}
+			}
+			if strings.Contains(buf.String(), "\n") {
+				t.Errorf("ExecuteTemplate(%q) contains a raw newline, which breaks SSE data: framing", tt.template)
+			}
+		})
+	}
+}
+
+func TestAnonymousDashboardSSEReturns401NotSignInPage(t *testing.T) {
+	handler := &DashboardHandler{}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/sse/dashboard", nil))
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous /sse/dashboard status = %d, want 401 (a 200 sign-in page makes EventSource retry forever)", response.Code)
 	}
 }
 

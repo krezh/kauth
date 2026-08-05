@@ -1,6 +1,10 @@
 package session
 
-import "context"
+import (
+	"context"
+
+	"github.com/jackc/pgx/v5/pgxpool"
+)
 
 const schema = `
 CREATE TABLE IF NOT EXISTS oauth_sessions (
@@ -26,11 +30,23 @@ CREATE TABLE IF NOT EXISTS oauth_sessions (
 );
 CREATE INDEX IF NOT EXISTS oauth_sessions_email_idx
     ON oauth_sessions (cluster, email) WHERE email <> '';
+CREATE INDEX IF NOT EXISTS oauth_sessions_user_id_idx
+    ON oauth_sessions (cluster, user_id) WHERE user_id <> '';
 CREATE INDEX IF NOT EXISTS oauth_sessions_phase_idx
     ON oauth_sessions (cluster, phase);
 `
 
-func migrate(ctx context.Context, pool pgxIface) error {
-	_, err := pool.Exec(ctx, schema)
-	return err
+func migrate(ctx context.Context, pool *pgxpool.Pool) error {
+	tx, err := pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+	if _, err := tx.Exec(ctx, `SELECT pg_advisory_xact_lock(hashtext('kauth_session_schema'))`); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(ctx, schema); err != nil {
+		return err
+	}
+	return tx.Commit(ctx)
 }
