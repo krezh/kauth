@@ -326,6 +326,7 @@ func (h *DashboardHandler) pushDashboardFragments(w http.ResponseWriter, flusher
 		Detail: ptrTo(sessionInfo(*oauthSession)), Metrics: metrics,
 		ActiveSessions: boolInt(oauthSession.Phase == session.PhaseActive),
 	}
+	h.writeFragment(w, flusher, "stat-strip", view)
 	h.writeFragment(w, flusher, "detail-stats", view)
 	if page == 1 {
 		if events, err := h.requests.ListSession(ctx, h.clusterName, sessionID, 100, 0); err == nil {
