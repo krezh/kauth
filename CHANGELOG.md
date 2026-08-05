@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.2.28](https://github.com/krezh/kauth/compare/0.2.27...0.2.28) (2026-08-05)
+
+
+### Features
+
+* Postgres-backed sessions + live SSE dashboard ([caab0e9](https://github.com/krezh/kauth/commit/caab0e99eeb842fadcfef9a632a803fec9dc894a))
+
+
+### Miscellaneous Chores
+
+* **nix:** lock file maintenance flake.lock ([#310](https://github.com/krezh/kauth/issues/310)) ([4b72959](https://github.com/krezh/kauth/commit/4b72959714c8871bdfef0a0378eeb7bf5989ee6e))
+
 ## [0.2.27](https://github.com/krezh/kauth/compare/0.2.26...0.2.27) (2026-08-04)
 
 
