@@ -15,14 +15,12 @@ import (
 	"sync"
 	"time"
 
-	v1alpha1 "kauth/pkg/apis/kauth.io/v1alpha1"
 	"kauth/pkg/audit"
 	"kauth/pkg/jwt"
 	"kauth/pkg/oauth"
 	"kauth/pkg/session"
 
 	"golang.org/x/oauth2"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 )
 
 type LoginHandler struct {
@@ -35,12 +33,13 @@ type LoginHandler struct {
 	allowedGroups     []string
 	secureCookie      bool
 
-	// CRD client for distributed session storage
 	sessionClient *session.Client
 
 	// Local SSE listeners (in-memory, per-pod)
 	sseListeners map[string][]chan StatusResponse
 	sseMutex     sync.RWMutex
+
+	shutdown context.Context
 }
 
 type StartLoginResponse struct {
@@ -65,6 +64,7 @@ func NewLoginHandler(
 	sessionTTL, refreshTokenTTL, sessionHistoryTTL time.Duration,
 	allowedGroups []string,
 	sessionClient *session.Client,
+	shutdown context.Context,
 ) *LoginHandler {
 	h := &LoginHandler{
 		provider:   provider,
@@ -80,9 +80,9 @@ func NewLoginHandler(
 		secureCookie:      strings.HasPrefix(baseURL, "https://"),
 		sessionClient:     sessionClient,
 		sseListeners:      make(map[string][]chan StatusResponse),
+		shutdown:          shutdown,
 	}
 
-	// Start watching for session updates from CRD
 	go h.watchSessions()
 
 	// Cleanup old sessions periodically (30 second TTL)
@@ -215,7 +215,7 @@ func (h *LoginHandler) HandleWatch(w http.ResponseWriter, r *http.Request) {
 	// completed between token validation and listener registration.
 	crdSession, err := h.sessionClient.Get(ctx, sessionID)
 	if err != nil {
-		if apierrors.IsNotFound(err) {
+		if errors.Is(err, session.ErrSessionNotFound) {
 			http.Error(w, "Session not found or expired", http.StatusNotFound)
 		} else {
 			http.Error(w, "Failed to get session", http.StatusInternalServerError)
@@ -228,28 +228,9 @@ func (h *LoginHandler) HandleWatch(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 
-	// If already active, send immediately.
-	if crdSession.Status.Phase == v1alpha1.SessionActive {
-		kubeconfig := h.kubeconfigGen.Generate(crdSession.Status.Email, crdSession.Status.Username)
-		status := StatusResponse{
-			Ready:        true,
-			Kubeconfig:   kubeconfig,
-			RefreshToken: crdSession.Status.RefreshToken,
-			SessionID:    crdSession.Spec.SessionID,
-			APIToken:     crdSession.Status.APIToken,
-		}
-		if crdSession.Status.APIToken != "" {
-			if apiCredential, err := h.jwtManager.DecodeAPIToken(crdSession.Status.APIToken); err == nil {
-				status.SessionExpiry = apiCredential.ExpiresAt
-			}
-		}
-		h.sendFinalStatus(w, &status)
-		return
-	}
-
-	// If there's an error, send immediately.
-	if crdSession.Status.Error != "" {
-		h.sendFinalStatus(w, &StatusResponse{Ready: false, Error: crdSession.Status.Error})
+	// If the session already completed, send immediately.
+	if status := h.loginStatus(crdSession); status != nil {
+		h.sendFinalStatus(w, status)
 		return
 	}
 
@@ -259,6 +240,7 @@ func (h *LoginHandler) HandleWatch(w http.ResponseWriter, r *http.Request) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
+	ticks := 0
 	for {
 		select {
 		case status := <-listener:
@@ -267,12 +249,62 @@ func (h *LoginHandler) HandleWatch(w http.ResponseWriter, r *http.Request) {
 			flusher.Flush()
 			return
 		case <-ticker.C:
+			ticks++
+			// LISTEN/NOTIFY cannot replay events emitted while the hub was
+			// disconnected, so re-read the session periodically to recover a
+			// completion whose notification was never delivered.
+			if ticks%watchPollTicks == 0 {
+				if status := h.pollLoginStatus(r, sessionID); status != nil {
+					h.sendFinalStatus(w, status)
+					return
+				}
+			}
 			_, _ = fmt.Fprintf(w, ": keepalive\n\n")
 			flusher.Flush()
 		case <-r.Context().Done():
 			return
+		case <-h.shutdown.Done():
+			return
 		}
 	}
+}
+
+// watchPollTicks is how many keepalive ticks pass between session re-reads.
+const watchPollTicks = 3
+
+func (h *LoginHandler) pollLoginStatus(r *http.Request, sessionID string) *StatusResponse {
+	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+	defer cancel()
+	sess, err := h.sessionClient.Get(ctx, sessionID)
+	if err != nil {
+		return nil
+	}
+	return h.loginStatus(sess)
+}
+
+// loginStatus renders the terminal status of a session, or nil while it is still in progress.
+func (h *LoginHandler) loginStatus(sess *session.Session) *StatusResponse {
+	if sess.Phase != session.PhaseActive && sess.Error == "" {
+		return nil
+	}
+	var kubeconfig string
+	if sess.Phase == session.PhaseActive && sess.Email != "" {
+		kubeconfig = h.kubeconfigGen.Generate(sess.Email, sess.Username)
+	}
+	status := StatusResponse{
+		Ready:        sess.Phase == session.PhaseActive,
+		Kubeconfig:   kubeconfig,
+		RefreshToken: sess.RefreshToken,
+		SessionID:    sess.SessionID,
+		APIToken:     sess.APIToken,
+		Error:        sess.Error,
+	}
+	if sess.APIToken != "" {
+		if apiCredential, err := h.jwtManager.DecodeAPIToken(sess.APIToken); err == nil {
+			status.SessionExpiry = apiCredential.ExpiresAt
+		}
+	}
+	return &status
 }
 
 func (h *LoginHandler) sendFinalStatus(w http.ResponseWriter, status *StatusResponse) {
@@ -313,14 +345,14 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 	if !dashboardMode {
 		crdSession, err := h.sessionClient.Get(ctx, state)
 		if err != nil {
-			if apierrors.IsNotFound(err) {
+			if errors.Is(err, session.ErrSessionNotFound) {
 				http.Error(w, "Session not found or expired", http.StatusBadRequest)
 			} else {
 				http.Error(w, "Failed to get session", http.StatusInternalServerError)
 			}
 			return
 		}
-		if crdSession.Status.Phase != v1alpha1.SessionPending {
+		if crdSession.Phase != session.PhasePending {
 			http.Error(w, "Invalid login session", http.StatusBadRequest)
 			return
 		}
@@ -333,11 +365,11 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Failed to start login", http.StatusInternalServerError)
 			return
 		}
-		verifier = crdSession.Spec.Verifier
+		verifier = crdSession.Verifier
 	}
 	recordLoginError := func(message string) {
 		if !dashboardMode {
-			_ = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{Phase: v1alpha1.SessionFailed, Error: message})
+			_ = h.sessionClient.UpdateStatus(ctx, state, session.Status{Phase: session.PhaseFailed, Error: message})
 		}
 	}
 	if verifier == "" {
@@ -442,8 +474,8 @@ func (h *LoginHandler) HandleCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = h.sessionClient.UpdateStatus(ctx, state, v1alpha1.OAuthSessionStatus{
-		Phase:        v1alpha1.SessionActive,
+	err = h.sessionClient.UpdateStatus(ctx, state, session.Status{
+		Phase:        session.PhaseActive,
 		Email:        claims.Email,
 		Username:     claims.PreferredUsername,
 		Subject:      claims.Sub,

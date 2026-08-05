@@ -1,38 +1,6 @@
 {{- if .Values.rbac.create -}}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: Role
-metadata:
-  name: {{ include "kauth.fullname" . }}
-  labels:
-    {{- include "kauth.labels" . | nindent 4 }}
-rules:
-  # OAuthSession CRD operations
-  - apiGroups: ["kauth.io"]
-    resources: ["oauthsessions"]
-    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-
-  # OAuthSession status updates
-  - apiGroups: ["kauth.io"]
-    resources: ["oauthsessions/status"]
-    verbs: ["get", "update", "patch"]
----
-apiVersion: rbac.authorization.k8s.io/v1
-kind: RoleBinding
-metadata:
-  name: {{ include "kauth.fullname" . }}
-  labels:
-    {{- include "kauth.labels" . | nindent 4 }}
-roleRef:
-  apiGroup: rbac.authorization.k8s.io
-  kind: Role
-  name: {{ include "kauth.fullname" . }}
-subjects:
-  - kind: ServiceAccount
-    name: {{ include "kauth.serviceAccountName" . }}
-    namespace: {{ .Release.Namespace }}
----
-apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
   name: {{ include "kauth.impersonatorName" . }}

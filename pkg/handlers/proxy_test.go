@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -14,14 +15,14 @@ import (
 	"testing"
 	"time"
 
-	v1alpha1 "kauth/pkg/apis/kauth.io/v1alpha1"
 	"kauth/pkg/jwt"
+	"kauth/pkg/session"
 
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
 
 type fakeSessionStore struct {
-	session *v1alpha1.OAuthSession
+	session *session.Session
 	err     error
 	touched string
 }
@@ -29,10 +30,10 @@ type fakeSessionStore struct {
 type blockingSessionStore struct {
 	gets    atomic.Int32
 	release chan struct{}
-	session *v1alpha1.OAuthSession
+	session *session.Session
 }
 
-func (s *blockingSessionStore) Get(context.Context, string) (*v1alpha1.OAuthSession, error) {
+func (s *blockingSessionStore) Get(context.Context, string) (*session.Session, error) {
 	s.gets.Add(1)
 	<-s.release
 	return s.session, nil
@@ -40,7 +41,7 @@ func (s *blockingSessionStore) Get(context.Context, string) (*v1alpha1.OAuthSess
 
 func (*blockingSessionStore) TouchLastUsed(context.Context, string, time.Duration) error { return nil }
 
-func (f *fakeSessionStore) Get(_ context.Context, _ string) (*v1alpha1.OAuthSession, error) {
+func (f *fakeSessionStore) Get(_ context.Context, _ string) (*session.Session, error) {
 	return f.session, f.err
 }
 
@@ -58,12 +59,12 @@ func newTestJWTManager(t *testing.T) *jwt.Manager {
 	return manager
 }
 
-func newActiveSession(email string, groups ...string) *v1alpha1.OAuthSession {
-	return &v1alpha1.OAuthSession{Status: v1alpha1.OAuthSessionStatus{
-		Phase:  v1alpha1.SessionActive,
+func newActiveSession(email string, groups ...string) *session.Session {
+	return &session.Session{
+		Phase:  session.PhaseActive,
 		Email:  email,
 		Groups: groups,
-	}}
+	}
 }
 
 func TestSessionAuthenticator(t *testing.T) {
@@ -76,17 +77,17 @@ func TestSessionAuthenticator(t *testing.T) {
 	tests := []struct {
 		name        string
 		token       string
-		session     *v1alpha1.OAuthSession
+		session     *session.Session
 		wantErr     bool
 		wantTouched bool
 	}{
 		{name: "active", token: token, session: newActiveSession("user@example.com", "developers"), wantTouched: true},
-		{name: "recently active", token: token, session: func() *v1alpha1.OAuthSession {
-			session := newActiveSession("user@example.com", "developers")
-			session.Spec.LastUsed = metav1.Now()
-			return session
+		{name: "recently active", token: token, session: func() *session.Session {
+			sess := newActiveSession("user@example.com", "developers")
+			sess.LastUsed = time.Now()
+			return sess
 		}()},
-		{name: "revoked", token: token, session: &v1alpha1.OAuthSession{Status: v1alpha1.OAuthSessionStatus{Phase: v1alpha1.SessionRevoked, Email: "user@example.com"}}, wantErr: true},
+		{name: "revoked", token: token, session: &session.Session{Phase: session.PhaseRevoked, Email: "user@example.com"}, wantErr: true},
 		{name: "invalid token", token: "invalid", session: newActiveSession("user@example.com"), wantErr: true},
 		{name: "empty email", token: token, session: newActiveSession(""), wantErr: true},
 	}
@@ -107,6 +108,31 @@ func TestSessionAuthenticator(t *testing.T) {
 			}
 			if (store.touched != "") != tt.wantTouched {
 				t.Fatalf("touched session = %q, wantTouched %v", store.touched, tt.wantTouched)
+			}
+		})
+	}
+}
+
+func TestSessionAuthenticatorDistinguishesStoreErrors(t *testing.T) {
+	manager := newTestJWTManager(t)
+	token, err := manager.CreateAPIToken("session-1", time.Hour)
+	if err != nil {
+		t.Fatalf("CreateAPIToken: %v", err)
+	}
+
+	tests := []struct {
+		name     string
+		storeErr error
+		wantErr  error
+	}{
+		{name: "session not found", storeErr: session.ErrSessionNotFound, wantErr: ErrUnauthorized},
+		{name: "database unavailable", storeErr: errors.New("connection refused"), wantErr: ErrSessionStoreUnavailable},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			authenticator := &SessionAuthenticator{jwtManager: manager, sessionClient: &fakeSessionStore{err: tt.storeErr}}
+			if _, err := authenticator.Authenticate(context.Background(), token); !errors.Is(err, tt.wantErr) {
+				t.Fatalf("Authenticate() error = %v, want %v", err, tt.wantErr)
 			}
 		})
 	}
@@ -231,6 +257,39 @@ func TestKubernetesProxyHandlerUnauthorized(t *testing.T) {
 		t.Fatalf("decode status: %v", err)
 	}
 	if status.Kind != "Status" || status.Reason != metav1.StatusReasonUnauthorized || status.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %#v", status)
+	}
+}
+
+func TestKubernetesProxyHandlerServiceUnavailable(t *testing.T) {
+	upstream := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		t.Fatal("upstream should not be called")
+	}))
+	defer upstream.Close()
+
+	manager := newTestJWTManager(t)
+	token, err := manager.CreateAPIToken("session-1", time.Hour)
+	if err != nil {
+		t.Fatalf("CreateAPIToken: %v", err)
+	}
+	handler := NewKubernetesProxyHandler(
+		&SessionAuthenticator{jwtManager: manager, sessionClient: &fakeSessionStore{err: errors.New("connection refused")}},
+		mustParseURL(t, upstream.URL),
+		http.DefaultTransport,
+	)
+	req := httptest.NewRequest(http.MethodGet, "/api", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusServiceUnavailable {
+		t.Fatalf("response = %d", rr.Code)
+	}
+	var status metav1.Status
+	if err := json.Unmarshal(rr.Body.Bytes(), &status); err != nil {
+		t.Fatalf("decode status: %v", err)
+	}
+	if status.Kind != "Status" || status.Reason != metav1.StatusReasonServiceUnavailable || status.Code != http.StatusServiceUnavailable {
 		t.Fatalf("status = %#v", status)
 	}
 }

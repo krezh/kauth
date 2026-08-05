@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"time"
 
-	v1alpha1 "kauth/pkg/apis/kauth.io/v1alpha1"
 	"kauth/pkg/audit"
 	"kauth/pkg/session"
 )
@@ -63,7 +62,7 @@ func (h *RevokeHandler) HandleRevoke(w http.ResponseWriter, r *http.Request) {
 	// Validate all authorization upfront before any mutations so that a
 	// forbidden user_email check cannot silently succeed after session_id was
 	// already revoked.
-	var singleSess *v1alpha1.OAuthSession
+	var singleSess *session.Session
 	if req.SessionID != "" {
 		s, err := h.sessionClient.Get(ctx, req.SessionID)
 		if err != nil {
@@ -72,11 +71,11 @@ func (h *RevokeHandler) HandleRevoke(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		singleSess = s
-		if !canRevokeSession(caller, admin, singleSess.Status.Email) {
+		if !canRevokeSession(caller, admin, singleSess.Email) {
 			audit.Log(ctx, r, "session_revoke_denied",
 				"session_id", req.SessionID,
 				"caller", caller.Email,
-				"owner", singleSess.Status.Email,
+				"owner", singleSess.Email,
 			)
 			http.Error(w, "Forbidden: not your session", http.StatusForbidden)
 			return
@@ -104,34 +103,21 @@ func (h *RevokeHandler) HandleRevoke(w http.ResponseWriter, r *http.Request) {
 		revoked = 1
 		audit.Log(ctx, r, "session_revoked",
 			"session_id", req.SessionID,
-			"owner", singleSess.Status.Email,
+			"owner", singleSess.Email,
 			"caller", caller.Email,
 		)
-		slog.InfoContext(ctx, "revoke: session revoked", "session_id", req.SessionID, "owner", singleSess.Status.Email, "by", caller.Email)
+		slog.InfoContext(ctx, "revoke: session revoked", "session_id", req.SessionID, "owner", singleSess.Email, "by", caller.Email)
 	}
 
 	if req.UserEmail != "" {
 
-		sessions, err := h.sessionClient.GetByUser(ctx, req.UserEmail)
+		count, err := h.sessionClient.RevokeByUser(ctx, req.UserEmail)
 		if err != nil {
-			slog.ErrorContext(ctx, "revoke: failed to list user sessions", "user_email", req.UserEmail, "error", err)
-			http.Error(w, "Failed to find user sessions", http.StatusInternalServerError)
+			slog.ErrorContext(ctx, "revoke: failed to revoke user sessions", "user_email", req.UserEmail, "error", err)
+			http.Error(w, "Failed to revoke user sessions", http.StatusInternalServerError)
 			return
 		}
-
-		for _, s := range sessions {
-			if s.Status.Phase == v1alpha1.SessionRevoked || s.Status.Phase == v1alpha1.SessionExpired {
-				continue
-			}
-			if s.Spec.SessionID == req.SessionID {
-				continue // already revoked in the session_id block above
-			}
-			if err := h.sessionClient.Revoke(ctx, s.Spec.SessionID); err != nil {
-				slog.WarnContext(ctx, "revoke: failed to revoke session", "session_id", s.Spec.SessionID, "error", err)
-				continue
-			}
-			revoked++
-		}
+		revoked += count
 
 		audit.Log(ctx, r, "sessions_revoked",
 			"user_email", req.UserEmail,

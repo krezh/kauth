@@ -9,18 +9,9 @@ than Helm. The container needs a kubeconfig for the cluster it proxies.
 - An OIDC client
 - A public HTTPS endpoint for port 8080
 - A kubeconfig readable inside the container
-- The OAuthSession CRD from `helm/crds/oauthsession.yaml`
 
-The kubeconfig identity needs namespaced CRUD and watch access to
-`oauthsessions.kauth.io` and `oauthsessions/status`. It also needs cluster-scoped
-`impersonate` access to core `users` and `groups`.
-
-Create the session namespace and install the CRD before starting kauth:
-
-```sh
-kubectl create namespace kauth
-kubectl apply --server-side -f helm/crds/oauthsession.yaml
-```
+The kubeconfig identity needs cluster-scoped `impersonate` access to core
+`users` and `groups`.
 
 Register this OIDC redirect URI:
 
@@ -41,7 +32,6 @@ JWT_ENCRYPTION_KEY=<base64-encoded-32-byte-key>
 DATABASE_URL=postgres://kauth:<password>@postgres.example.com:5432/kauth?sslmode=verify-full&sslrootcert=/certs/postgres-ca.crt
 BASE_URL=https://kauth.example.com
 CLUSTER_NAME=production
-KAUTH_NAMESPACE=kauth
 ADMIN_GROUPS=platform-admins
 KUBECONFIG=/config/kubeconfig
 ```
@@ -56,6 +46,10 @@ docker run --rm \
   --volume "$PWD/postgres-ca.crt:/certs/postgres-ca.crt:ro" \
   ghcr.io/krezh/kauth-server:latest
 ```
+
+The database account must be able to create the session and audit tables and
+indexes. PostgreSQL is a hard dependency: kauth cannot authenticate requests
+while it is unreachable.
 
 Terminate public TLS at a reverse proxy or gateway in front of port 8080. To
 terminate TLS in kauth instead, mount the certificate and key and set

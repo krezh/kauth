@@ -7,18 +7,9 @@ Use the server binary for local development or a directly managed host.
 - A PostgreSQL database
 - An OIDC client
 - A kubeconfig for the cluster kauth will proxy
-- The OAuthSession CRD from `helm/crds/oauthsession.yaml`
 
-The kubeconfig identity needs namespaced CRUD and watch access to
-`oauthsessions.kauth.io` and `oauthsessions/status`. It also needs cluster-scoped
-`impersonate` access to core `users` and `groups`.
-
-Create the session namespace and install the CRD before starting kauth:
-
-```sh
-kubectl create namespace kauth
-kubectl apply --server-side -f helm/crds/oauthsession.yaml
-```
+The kubeconfig identity needs cluster-scoped `impersonate` access to core
+`users` and `groups`.
 
 Register this OIDC redirect URI:
 
@@ -48,15 +39,16 @@ export JWT_ENCRYPTION_KEY="$(openssl rand -base64 32)"
 export DATABASE_URL='postgres://kauth:<password>@postgres.example.com:5432/kauth?sslmode=verify-full&sslrootcert=/etc/kauth/postgres-ca.crt'
 export BASE_URL=https://kauth.example.com
 export CLUSTER_NAME=production
-export KAUTH_NAMESPACE=kauth
 export ADMIN_GROUPS=platform-admins
 export KUBECONFIG="$HOME/.kube/config"
 
 kauth-server
 ```
 
-The database account must be able to create the audit table and indexes. Kauth
-must reach PostgreSQL and Kubernetes during startup.
+The database account must be able to create the session and audit tables and
+indexes. PostgreSQL is a hard dependency: kauth cannot authenticate requests
+while it is unreachable. Kauth must reach PostgreSQL and Kubernetes during
+startup.
 
 Terminate public TLS at a reverse proxy, or set `TLS_CERT_FILE` and
 `TLS_KEY_FILE` to terminate TLS in kauth.

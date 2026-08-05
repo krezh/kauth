@@ -5,7 +5,6 @@ import (
 	"errors"
 	"time"
 
-	v1alpha1 "kauth/pkg/apis/kauth.io/v1alpha1"
 	"kauth/pkg/jwt"
 	"kauth/pkg/session"
 
@@ -15,9 +14,10 @@ import (
 const lastUsedThrottle = 30 * time.Second
 
 var ErrUnauthorized = errors.New("unauthorized")
+var ErrSessionStoreUnavailable = errors.New("session store unavailable")
 
 type sessionStore interface {
-	Get(ctx context.Context, sessionID string) (*v1alpha1.OAuthSession, error)
+	Get(ctx context.Context, sessionID string) (*session.Session, error)
 	TouchLastUsed(ctx context.Context, sessionID string, window time.Duration) error
 }
 
@@ -49,22 +49,25 @@ func (a *SessionAuthenticator) Authenticate(ctx context.Context, rawToken string
 		return a.sessionClient.Get(ctx, credential.SessionID)
 	})
 	if err != nil {
-		return nil, ErrUnauthorized
+		if errors.Is(err, session.ErrSessionNotFound) {
+			return nil, ErrUnauthorized
+		}
+		return nil, ErrSessionStoreUnavailable
 	}
-	oauthSession, ok := value.(*v1alpha1.OAuthSession)
-	if !ok || oauthSession.Status.Phase != v1alpha1.SessionActive || oauthSession.Status.Email == "" {
+	sess, ok := value.(*session.Session)
+	if !ok || sess.Phase != session.PhaseActive || sess.Email == "" {
 		return nil, ErrUnauthorized
 	}
 
-	// Avoid a second CRD read on every API call when activity is already fresh.
-	if oauthSession.Spec.LastUsed.IsZero() || time.Since(oauthSession.Spec.LastUsed.Time) >= lastUsedThrottle {
+	// Avoid a second read on every API call when activity is already fresh.
+	if sess.LastUsed.IsZero() || time.Since(sess.LastUsed) >= lastUsedThrottle {
 		// Authentication remains successful if this best-effort update fails.
 		_ = a.sessionClient.TouchLastUsed(ctx, credential.SessionID, lastUsedThrottle)
 	}
 
 	return &Identity{
 		SessionID: credential.SessionID,
-		Username:  oauthSession.Status.Email,
-		Groups:    oauthSession.Status.Groups,
+		Username:  sess.Email,
+		Groups:    sess.Groups,
 	}, nil
 }

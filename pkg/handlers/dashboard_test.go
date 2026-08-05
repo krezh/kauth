@@ -8,8 +8,9 @@ import (
 	"testing"
 	"time"
 
-	v1alpha1 "kauth/pkg/apis/kauth.io/v1alpha1"
+	"kauth/pkg/audit"
 	"kauth/pkg/jwt"
+	"kauth/pkg/session"
 )
 
 func TestDashboardCSRF(t *testing.T) {
@@ -43,17 +44,17 @@ func TestDashboardCSRF(t *testing.T) {
 
 func TestDashboardOwnsSession(t *testing.T) {
 	claims := &jwt.DashboardSessionToken{Email: "reused@example.com", Subject: "new-subject", Issuer: "https://issuer.example"}
-	if dashboardOwnsSession(claims, &v1alpha1.OAuthSession{Status: v1alpha1.OAuthSessionStatus{
+	if dashboardOwnsSession(claims, &session.Session{
 		Email: "reused@example.com", Subject: "old-subject", Issuer: "https://issuer.example",
-	}}) {
+	}) {
 		t.Fatal("email reuse must not grant access to another OIDC subject")
 	}
-	if !dashboardOwnsSession(claims, &v1alpha1.OAuthSession{Status: v1alpha1.OAuthSessionStatus{
+	if !dashboardOwnsSession(claims, &session.Session{
 		Email: "reused@example.com", Subject: "new-subject", Issuer: "https://issuer.example",
-	}}) {
+	}) {
 		t.Fatal("matching issuer and subject should grant access")
 	}
-	if dashboardOwnsSession(claims, &v1alpha1.OAuthSession{Status: v1alpha1.OAuthSessionStatus{Email: "reused@example.com"}}) {
+	if dashboardOwnsSession(claims, &session.Session{Email: "reused@example.com"}) {
 		t.Fatal("sessions without immutable ownership must not be accessible")
 	}
 }
@@ -74,6 +75,91 @@ func TestDashboardCookieScope(t *testing.T) {
 	}
 	if dashboardLoginCookieName(false) != dashboardLoginCookie || dashboardLoginCookiePath(false) != "/callback" {
 		t.Fatal("HTTP development cookie must remain unprefixed and callback-scoped")
+	}
+}
+
+func TestFragmentTemplates(t *testing.T) {
+	overview := dashboardView{
+		Sessions:       []SessionInfo{{SessionID: "sess-1", Email: "user@example.com", Phase: "Active", CreatedAt: time.Now()}},
+		ActiveSessions: 1,
+		Metrics:        audit.RequestMetrics{Requests: 5, ClientErrors: 1},
+	}
+	for _, tt := range []struct {
+		name     string
+		template string
+		view     dashboardView
+		want     []string
+	}{
+		{"stat-strip", "stat-strip", overview, []string{`id="stat-strip"`, "5"}},
+		{"nav-summary", "nav-summary", overview, []string{`id="nav-summary"`, "5"}},
+		{"view-count overview", "view-count", overview, []string{`id="view-count"`, "1 total"}},
+		{"view-count detail", "view-count", dashboardView{Detail: &SessionInfo{Email: "user@example.com"}}, []string{`id="view-count"`, "user@example.com"}},
+		{"sessions-tbody with rows", "sessions-tbody", overview, []string{`id="sessions-tbody"`, "sess-1", "user@example.com"}},
+		{"sessions-tbody empty", "sessions-tbody", dashboardView{}, []string{`id="sessions-tbody"`, "No sessions found."}},
+		{"detail-stats", "detail-stats", dashboardView{Detail: &SessionInfo{Email: "user@example.com", Phase: "Revoked"}}, []string{`id="detail-stats"`, "user@example.com", "Revoked"}},
+		{"events-tbody with rows", "events-tbody", dashboardView{Events: []audit.RequestEvent{{Method: "GET", Path: "/x", StatusCode: 200}}}, []string{`id="events-tbody"`, "/x", "200"}},
+		{"events-tbody empty", "events-tbody", dashboardView{}, []string{`id="events-tbody"`, "No API requests recorded for this session."}},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf strings.Builder
+			if err := dashboardTemplate.ExecuteTemplate(&buf, tt.template, tt.view); err != nil {
+				t.Fatalf("ExecuteTemplate(%q) error = %v", tt.template, err)
+			}
+			for _, want := range tt.want {
+				if !strings.Contains(buf.String(), want) {
+					t.Errorf("ExecuteTemplate(%q) = %q, want substring %q", tt.template, buf.String(), want)
+				}
+			}
+			if strings.Contains(buf.String(), "\n") {
+				t.Errorf("ExecuteTemplate(%q) contains a raw newline, which breaks SSE data: framing", tt.template)
+			}
+		})
+	}
+}
+
+func TestWriteFragmentFramesNewlinesInRenderedValues(t *testing.T) {
+	handler := &DashboardHandler{}
+	response := httptest.NewRecorder()
+	handler.writeFragment(response, response, "events-tbody", dashboardView{
+		Events: []audit.RequestEvent{{Method: "GET", Path: "/api/v1\n\nevent: injected\ndata: x", StatusCode: 200}},
+	})
+
+	body := response.Body.String()
+	if strings.Count(body, "\n\n") != 1 || !strings.HasSuffix(body, "\n\n") {
+		t.Fatalf("fragment = %q, want exactly one terminating blank line", body)
+	}
+	for _, line := range strings.Split(strings.TrimSuffix(body, "\n\n"), "\n") {
+		if !strings.HasPrefix(line, "event: ") && !strings.HasPrefix(line, "data: ") {
+			t.Fatalf("fragment line = %q, want an event: or data: field", line)
+		}
+	}
+}
+
+func TestAnonymousDashboardSSEReturns401NotSignInPage(t *testing.T) {
+	handler := &DashboardHandler{}
+	response := httptest.NewRecorder()
+	handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/sse/dashboard", nil))
+	if response.Code != http.StatusUnauthorized {
+		t.Fatalf("anonymous /sse/dashboard status = %d, want 401 (a 200 sign-in page makes EventSource retry forever)", response.Code)
+	}
+}
+
+func TestSSELimiterBoundsConcurrentStreamsPerKey(t *testing.T) {
+	limiter := newSSELimiter()
+	for i := range maxSSEStreamsPerUser {
+		if !limiter.acquire("user-a") {
+			t.Fatalf("acquire %d for user-a should have succeeded", i)
+		}
+	}
+	if limiter.acquire("user-a") {
+		t.Fatal("acquire should fail once user-a is at the limit")
+	}
+	if !limiter.acquire("user-b") {
+		t.Fatal("a different key must not be blocked by user-a's limit")
+	}
+	limiter.release("user-a")
+	if !limiter.acquire("user-a") {
+		t.Fatal("releasing a slot should let a new acquire succeed")
 	}
 }
 

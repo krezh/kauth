@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -14,6 +15,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// maxPoolConns caps pgxpool's NumCPU-scaling default so replicas don't exhaust Postgres' max_connections.
+const maxPoolConns = 10
 
 const schema = `
 CREATE TABLE IF NOT EXISTS api_requests (
@@ -81,11 +85,13 @@ type RequestStore interface {
 	SessionMetrics(context.Context, string, string, time.Time) (RequestMetrics, error)
 	SessionsMetrics(context.Context, string, []string, time.Time) (RequestMetrics, error)
 	GlobalMetrics(context.Context, string, time.Time) (RequestMetrics, error)
+	Subscribe() (<-chan AuditEvent, func())
 	Close(context.Context) error
 }
 
 type PostgresStore struct {
 	pool      *pgxpool.Pool
+	hub       *Hub
 	queue     chan RequestEvent
 	stop      chan struct{}
 	done      chan struct{}
@@ -105,9 +111,16 @@ func NewPostgresStore(ctx context.Context, databaseURL string, queueSize int, re
 	if queueSize <= 0 {
 		queueSize = 8192
 	}
-	pool, err := pgxpool.New(ctx, databaseURL)
+	poolConfig, err := pgxpool.ParseConfig(databaseURL)
 	if err != nil {
 		return nil, fmt.Errorf("parse database configuration: %w", err)
+	}
+	if poolConfig.MaxConns > maxPoolConns {
+		poolConfig.MaxConns = maxPoolConns
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, poolConfig)
+	if err != nil {
+		return nil, fmt.Errorf("open audit database pool: %w", err)
 	}
 	if err := pool.Ping(ctx); err != nil {
 		pool.Close()
@@ -118,9 +131,17 @@ func NewPostgresStore(ctx context.Context, databaseURL string, queueSize int, re
 		return nil, fmt.Errorf("migrate audit database: %w", err)
 	}
 
+	hub, err := NewHub(databaseURL)
+	if err != nil {
+		pool.Close()
+		return nil, fmt.Errorf("create audit hub: %w", err)
+	}
+
 	lifecycle, cancel := context.WithCancel(context.Background())
+	go hub.Run(lifecycle)
 	store := &PostgresStore{
 		pool:      pool,
+		hub:       hub,
 		queue:     make(chan RequestEvent, queueSize),
 		stop:      make(chan struct{}),
 		done:      make(chan struct{}),
@@ -130,6 +151,11 @@ func NewPostgresStore(ctx context.Context, databaseURL string, queueSize int, re
 	}
 	go store.run()
 	return store, nil
+}
+
+// Subscribe registers for post-flush audit events; callers must drain and unsubscribe.
+func (s *PostgresStore) Subscribe() (<-chan AuditEvent, func()) {
+	return s.hub.Subscribe()
 }
 
 func (s *PostgresStore) Record(event RequestEvent) bool {
@@ -223,7 +249,14 @@ func (s *PostgresStore) insertBatch(ctx context.Context, events []RequestEvent) 
 	if len(events) == 0 {
 		return nil
 	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback(context.Background()) }()
+
 	batch := &pgx.Batch{}
+	clusters := make(map[string]struct{}, 1)
 	for _, event := range events {
 		var sessionID, username, remoteAddr any
 		if event.SessionID != "" {
@@ -235,6 +268,7 @@ func (s *PostgresStore) insertBatch(ctx context.Context, events []RequestEvent) 
 		if event.RemoteAddr != "" {
 			remoteAddr = event.RemoteAddr
 		}
+		clusters[event.Cluster] = struct{}{}
 		batch.Queue(`INSERT INTO api_requests (
             event_id, occurred_at, cluster, request_id, session_id, username,
             groups, authenticated, method, path, status_code, response_bytes,
@@ -247,14 +281,23 @@ func (s *PostgresStore) insertBatch(ctx context.Context, events []RequestEvent) 
 			remoteAddr, event.UserAgent,
 		)
 	}
-	results := s.pool.SendBatch(ctx, batch)
+	results := tx.SendBatch(ctx, batch)
 	for range events {
 		if _, err := results.Exec(); err != nil {
 			_ = results.Close()
 			return err
 		}
 	}
-	return results.Close()
+	if err := results.Close(); err != nil {
+		return err
+	}
+	for cluster := range clusters {
+		payload, _ := json.Marshal(AuditEvent{Cluster: cluster})
+		if _, err := tx.Exec(ctx, "SELECT pg_notify($1, $2)", auditEventsChannel, string(payload)); err != nil {
+			return err
+		}
+	}
+	return tx.Commit(ctx)
 }
 
 func (s *PostgresStore) ListSession(ctx context.Context, cluster, sessionID string, limit, offset int) ([]RequestEvent, error) {

@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"time"
 
-	v1alpha1 "kauth/pkg/apis/kauth.io/v1alpha1"
 	"kauth/pkg/session"
 )
 
@@ -63,7 +62,7 @@ func (h *SessionsHandler) HandleListSessions(w http.ResponseWriter, r *http.Requ
 		userEmail = caller.Email
 	}
 
-	var sessions []v1alpha1.OAuthSession
+	var sessions []session.Session
 	var err error
 
 	if userEmail != "" {
@@ -80,21 +79,21 @@ func (h *SessionsHandler) HandleListSessions(w http.ResponseWriter, r *http.Requ
 	sessionInfos := make([]SessionInfo, 0, len(sessions))
 	for _, s := range sessions {
 		info := SessionInfo{
-			SessionID: s.Spec.SessionID,
-			UserID:    s.Spec.UserID,
-			Email:     s.Status.Email,
-			Username:  s.Status.Username,
-			Phase:     string(s.Status.Phase),
-			CreatedAt: s.Spec.CreatedAt.Time,
+			SessionID: s.SessionID,
+			UserID:    s.UserID,
+			Email:     s.Email,
+			Username:  s.Username,
+			Phase:     string(s.Phase),
+			CreatedAt: s.CreatedAt,
 		}
-		if !s.Spec.LastUsed.IsZero() {
-			info.LastUsed = s.Spec.LastUsed.Time
+		if !s.LastUsed.IsZero() {
+			info.LastUsed = s.LastUsed
 		}
-		if s.Status.RevokedAt != nil {
-			info.RevokedAt = s.Status.RevokedAt.Time
+		if s.RevokedAt != nil {
+			info.RevokedAt = *s.RevokedAt
 		}
-		if s.Status.CompletedAt != nil {
-			info.CompletedAt = s.Status.CompletedAt.Time
+		if s.CompletedAt != nil {
+			info.CompletedAt = *s.CompletedAt
 		}
 		sessionInfos = append(sessionInfos, info)
 	}

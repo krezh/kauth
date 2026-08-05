@@ -3,6 +3,7 @@ package handlers
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httputil"
@@ -68,6 +69,10 @@ func (h *KubernetesProxyHandler) ServeHTTP(w http.ResponseWriter, r *http.Reques
 	cancel()
 	if err != nil {
 		identity = nil
+		if errors.Is(err, ErrSessionStoreUnavailable) {
+			writeKubernetesStatus(rw, http.StatusServiceUnavailable, metav1.StatusReasonServiceUnavailable, "session store unavailable")
+			return
+		}
 		h.unauthorized(rw)
 		return
 	}

@@ -123,6 +123,10 @@ func main() {
 
 	ctx := context.Background()
 
+	// shutdownSignal is canceled the moment a shutdown signal arrives, before server.Shutdown starts its grace period.
+	shutdownSignal, cancelShutdownSignal := context.WithCancel(context.Background())
+	defer cancelShutdownSignal()
+
 	// Initialize Kubernetes client
 	k8sConfig, err := getK8sConfig()
 	if err != nil {
@@ -141,14 +145,14 @@ func main() {
 	}
 	slog.Info("Kubernetes API upstream configured", "url", upstreamURL.Redacted())
 
-	// Create session client for managing OAuthSession CRDs
-	namespace := getEnv("KAUTH_NAMESPACE", "default")
-	sessionClient, err := session.NewClient(k8sConfig, namespace)
+	sessionCtx, sessionCancel := context.WithTimeout(ctx, 30*time.Second)
+	sessionClient, err := session.NewClient(sessionCtx, cfg.DatabaseURL, cfg.ClusterName)
+	sessionCancel()
 	if err != nil {
 		slog.Error("Failed to create session client", "error", err)
 		os.Exit(1)
 	}
-	slog.Info("Session client initialized", "namespace", namespace)
+	slog.Info("Session client initialized", "cluster", cfg.ClusterName)
 
 	databaseCtx, databaseCancel := context.WithTimeout(ctx, 30*time.Second)
 	requestStore, err := audit.NewPostgresStore(databaseCtx, cfg.DatabaseURL, cfg.AuditQueueSize, cfg.AuditRetention)
@@ -175,7 +179,7 @@ func main() {
 	dashboardHandler := handlers.NewDashboardHandler(jwtManager, sessionClient, requestStore, handlers.DashboardConfig{
 		BaseURL: cfg.BaseURL, ClusterName: cfg.ClusterName,
 		AdminGroups: cfg.AdminGroups,
-	})
+	}, shutdownSignal)
 
 	go func() {
 		maxRetries := 60
@@ -202,6 +206,7 @@ func main() {
 					cfg.SessionHistoryTTL,
 					cfg.AllowedGroups,
 					sessionClient,
+					shutdownSignal,
 				)
 				refreshHandler = handlers.NewRefreshHandler(
 					provider,
@@ -358,6 +363,7 @@ func main() {
 		os.Exit(1)
 	case sig := <-stop:
 		slog.Info("Shutdown signal received", "signal", sig.String())
+		cancelShutdownSignal()
 
 		// Create shutdown context with timeout
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
@@ -371,6 +377,9 @@ func main() {
 		}
 		if err := requestStore.Close(shutdownCtx); err != nil {
 			slog.Error("Audit database shutdown incomplete", "error", err)
+		}
+		if err := sessionClient.Close(shutdownCtx); err != nil {
+			slog.Error("Session database shutdown incomplete", "error", err)
 		}
 		slog.Info("Server stopped gracefully")
 	}
