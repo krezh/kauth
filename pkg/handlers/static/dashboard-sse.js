@@ -10,7 +10,7 @@
       if (el) el.outerHTML = e.data;
     };
   }
-  ["stat-strip", "sessions-tbody", "detail-stats", "events-tbody"].forEach(function (id) {
+  ["stat-strip", "sessions-tbody", "detail-stats", "events-tbody", "nav-summary", "view-count"].forEach(function (id) {
     es.addEventListener(id, swap(id));
   });
 })();

@@ -39,7 +39,7 @@ func TestDashboardSSE_PushesFragmentOnSessionEvent(t *testing.T) {
 		t.Fatalf("jwt.NewManager() error = %v", err)
 	}
 
-	handler := NewDashboardHandler(jwtManager, sessionClient, requestStore, DashboardConfig{ClusterName: "sse-test-cluster"})
+	handler := NewDashboardHandler(jwtManager, sessionClient, requestStore, DashboardConfig{ClusterName: "sse-test-cluster"}, context.Background())
 	server := httptest.NewServer(handler)
 	t.Cleanup(server.Close)
 

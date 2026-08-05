@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -13,6 +14,9 @@ import (
 var ErrRefreshTokenReplayed = errors.New("refresh token is no longer current")
 var ErrLoginAlreadyClaimed = errors.New("login session is no longer pending")
 var ErrSessionNotFound = errors.New("session not found")
+
+// maxListResults bounds dashboard/API listing queries so a large retained history can't force an unbounded scan and transfer.
+const maxListResults = 500
 
 // maxPoolConns caps pgxpool's NumCPU-scaling default so replicas don't exhaust Postgres' max_connections.
 const maxPoolConns = 10
@@ -133,7 +137,7 @@ func scanSession(row rowScanner) (*Session, error) {
 }
 
 func (c *Client) queryList(ctx context.Context, whereExtra string, args ...any) ([]Session, error) {
-	rows, err := c.pool.Query(ctx, `SELECT `+sessionColumns+` FROM oauth_sessions WHERE cluster=$1`+whereExtra, args...)
+	rows, err := c.pool.Query(ctx, `SELECT `+sessionColumns+` FROM oauth_sessions WHERE cluster=$1`+whereExtra+` ORDER BY created_at DESC LIMIT `+strconv.Itoa(maxListResults), args...)
 	if err != nil {
 		return nil, fmt.Errorf("failed to list sessions: %w", err)
 	}

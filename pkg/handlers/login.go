@@ -38,6 +38,8 @@ type LoginHandler struct {
 	// Local SSE listeners (in-memory, per-pod)
 	sseListeners map[string][]chan StatusResponse
 	sseMutex     sync.RWMutex
+
+	shutdown context.Context
 }
 
 type StartLoginResponse struct {
@@ -62,6 +64,7 @@ func NewLoginHandler(
 	sessionTTL, refreshTokenTTL, sessionHistoryTTL time.Duration,
 	allowedGroups []string,
 	sessionClient *session.Client,
+	shutdown context.Context,
 ) *LoginHandler {
 	h := &LoginHandler{
 		provider:   provider,
@@ -77,6 +80,7 @@ func NewLoginHandler(
 		secureCookie:      strings.HasPrefix(baseURL, "https://"),
 		sessionClient:     sessionClient,
 		sseListeners:      make(map[string][]chan StatusResponse),
+		shutdown:          shutdown,
 	}
 
 	go h.watchSessions()
@@ -258,6 +262,8 @@ func (h *LoginHandler) HandleWatch(w http.ResponseWriter, r *http.Request) {
 			_, _ = fmt.Fprintf(w, ": keepalive\n\n")
 			flusher.Flush()
 		case <-r.Context().Done():
+			return
+		case <-h.shutdown.Done():
 			return
 		}
 	}

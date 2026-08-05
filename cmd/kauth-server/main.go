@@ -123,6 +123,10 @@ func main() {
 
 	ctx := context.Background()
 
+	// shutdownSignal is canceled the moment a shutdown signal arrives, before server.Shutdown starts its grace period.
+	shutdownSignal, cancelShutdownSignal := context.WithCancel(context.Background())
+	defer cancelShutdownSignal()
+
 	// Initialize Kubernetes client
 	k8sConfig, err := getK8sConfig()
 	if err != nil {
@@ -175,7 +179,7 @@ func main() {
 	dashboardHandler := handlers.NewDashboardHandler(jwtManager, sessionClient, requestStore, handlers.DashboardConfig{
 		BaseURL: cfg.BaseURL, ClusterName: cfg.ClusterName,
 		AdminGroups: cfg.AdminGroups,
-	})
+	}, shutdownSignal)
 
 	go func() {
 		maxRetries := 60
@@ -202,6 +206,7 @@ func main() {
 					cfg.SessionHistoryTTL,
 					cfg.AllowedGroups,
 					sessionClient,
+					shutdownSignal,
 				)
 				refreshHandler = handlers.NewRefreshHandler(
 					provider,
@@ -358,6 +363,7 @@ func main() {
 		os.Exit(1)
 	case sig := <-stop:
 		slog.Info("Shutdown signal received", "signal", sig.String())
+		cancelShutdownSignal()
 
 		// Create shutdown context with timeout
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

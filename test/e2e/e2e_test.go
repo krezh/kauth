@@ -1173,8 +1173,39 @@ func TestKauthProxyEndToEnd(t *testing.T) {
 		if status := environment.apiRequest(t, marker); status != http.StatusNotFound {
 			t.Fatalf("marker status=%d, want 404", status)
 		}
+
+		// An open dashboard tab must not block shutdown: hold a live SSE stream across the restart.
+		sseClient := environment.dashboardClient(t, "dashboard-user-code")
+		sseRequest, err := http.NewRequest(http.MethodGet, environment.proxyURL+"/sse/dashboard", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		sseResponse, err := sseClient.Do(sseRequest)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if sseResponse.StatusCode != http.StatusOK {
+			t.Fatalf("dashboard SSE status=%d, want 200", sseResponse.StatusCode)
+		}
+		sseClosed := make(chan struct{})
+		go func() {
+			_, _ = io.Copy(io.Discard, sseResponse.Body)
+			_ = sseResponse.Body.Close()
+			close(sseClosed)
+		}()
+
+		restartStarted := time.Now()
 		environment.clusterKubectl(t, "--namespace", kauthNamespace, "rollout", "restart", "deployment/kauth-server")
 		environment.clusterKubectl(t, "--namespace", kauthNamespace, "rollout", "status", "deployment/kauth-server", "--timeout=180s")
+		if rolloutDuration := time.Since(restartStarted); rolloutDuration > 15*time.Second {
+			t.Errorf("rollout with an open dashboard SSE connection took %s, want well under 30s", rolloutDuration)
+		}
+		select {
+		case <-sseClosed:
+		case <-time.After(20 * time.Second):
+			t.Error("dashboard SSE connection was never closed by the restarting pod")
+		}
+
 		environment.stopPortForward()
 		if err := environment.startPortForward(); err != nil {
 			t.Fatal(err)

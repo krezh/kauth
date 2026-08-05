@@ -80,12 +80,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
   <div class="body">
     <aside class="sidebar">
       <div class="sidebar-section">Access</div>
-      <a class="nav-item active" href="/">Sessions <span class="nav-count">{{len .Sessions}}</span></a>
-      <div class="sidebar-section">Telemetry</div>
-      <div class="side-kv"><span>Requests</span><b>{{.Metrics.Requests}}</b></div>
-      <div class="side-kv"><span>4xx</span><b class="status-warn">{{.Metrics.ClientErrors}}</b></div>
-      <div class="side-kv"><span>5xx</span><b class="status-error">{{.Metrics.ServerErrors}}</b></div>
-      <div class="side-kv"><span>P95</span><b>{{duration .Metrics.P95}}</b></div>
+      {{template "nav-summary" .}}
       <div class="sidebar-section">Scope</div>
       <div class="side-kv"><span>Cluster</span><b>{{.Cluster}}</b></div>
       <div class="side-kv"><span>Window</span><b>{{if .Detail}}30d{{else}}24h{{end}}</b></div>
@@ -93,7 +88,7 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
     <main class="main">
       <div class="view-head">
         <h1 class="view-title">{{if .Detail}}Session / {{short .Detail.SessionID}}{{else}}{{if .Admin}}All sessions{{else}}Your sessions{{end}}{{end}}</h1>
-        <span class="count">{{if .Detail}}{{.Detail.Email}}{{else}}{{len .Sessions}} total{{end}}</span>
+        {{template "view-count" .}}
         <span class="scope">Kubernetes access telemetry</span>
       </div>
       {{template "stat-strip" .}}
@@ -115,6 +110,8 @@ var dashboardTemplate = template.Must(template.New("dashboard").Funcs(template.F
 <script src="/static/dashboard-sse.js"></script>
 </body>
 </html>
+{{define "nav-summary"}}<div id="nav-summary"><a class="nav-item active" href="/">Sessions <span class="nav-count">{{len .Sessions}}</span></a><div class="sidebar-section">Telemetry</div><div class="side-kv"><span>Requests</span><b>{{.Metrics.Requests}}</b></div><div class="side-kv"><span>4xx</span><b class="status-warn">{{.Metrics.ClientErrors}}</b></div><div class="side-kv"><span>5xx</span><b class="status-error">{{.Metrics.ServerErrors}}</b></div><div class="side-kv"><span>P95</span><b>{{duration .Metrics.P95}}</b></div></div>{{end}}
+{{define "view-count"}}<span id="view-count" class="count">{{if .Detail}}{{.Detail.Email}}{{else}}{{len .Sessions}} total{{end}}</span>{{end}}
 {{define "stat-strip"}}<div id="stat-strip" class="stat-strip"><div class="strip-seg ok"><span class="strip-lbl">Active</span><strong class="strip-val">{{.ActiveSessions}}</strong><i class="strip-share" style="width:100%"></i></div><div class="strip-seg"><span class="strip-lbl">Requests</span><strong class="strip-val">{{.Metrics.Requests}}</strong><i class="strip-share" style="width:72%"></i></div><div class="strip-seg warn"><span class="strip-lbl">4xx</span><strong class="strip-val">{{.Metrics.ClientErrors}}</strong><i class="strip-share" style="width:38%;background:var(--warn)"></i></div><div class="strip-seg error"><span class="strip-lbl">5xx</span><strong class="strip-val">{{.Metrics.ServerErrors}}</strong><i class="strip-share" style="width:12%;background:var(--error)"></i></div><div class="strip-seg"><span class="strip-lbl">P95</span><strong class="strip-val">{{duration .Metrics.P95}}</strong><i class="strip-share" style="width:44%"></i></div><div class="strip-seg"><span class="strip-lbl">Traffic</span><strong class="strip-val">{{bytes .Metrics.ResponseBytes}}</strong><i class="strip-share" style="width:58%"></i></div></div>{{end}}
 {{define "detail-stats"}}<div id="detail-stats" class="detail-stats"><div class="detail-stat"><div class="detail-stat-label">Identity</div><div class="detail-stat-value">{{.Detail.Email}}</div></div><div class="detail-stat"><div class="detail-stat-label">State</div><div class="detail-stat-value"><span class="pill {{phaseClass .Detail.Phase}}">{{.Detail.Phase}}</span></div></div><div class="detail-stat"><div class="detail-stat-label">Created</div><div class="detail-stat-value">{{when .Detail.CreatedAt}}</div></div><div class="detail-stat"><div class="detail-stat-label">Last used</div><div class="detail-stat-value">{{when .Detail.LastUsed}}</div></div></div>{{end}}
 {{define "events-tbody"}}<tbody id="events-tbody">{{if .Events}}{{range .Events}}<tr><td class="cell-muted">{{when .OccurredAt}}</td><td class="request-method">{{.Method}}</td><td class="path">{{.Path}}</td><td class="status-{{statusClass .StatusCode}}">{{.StatusCode}}</td><td>{{duration .Duration}}</td><td>{{bytes .ResponseBytes}}</td></tr>{{end}}{{else}}<tr><td colspan="6" class="empty">No API requests recorded for this session.</td></tr>{{end}}</tbody>{{end}}

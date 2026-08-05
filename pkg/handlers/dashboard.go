@@ -33,6 +33,7 @@ type DashboardHandler struct {
 	adminGroups  []string
 	secureCookie bool
 	static       http.Handler
+	shutdown     context.Context
 }
 
 type DashboardConfig struct {
@@ -41,13 +42,15 @@ type DashboardConfig struct {
 	AdminGroups []string
 }
 
-func NewDashboardHandler(jwtManager *jwt.Manager, sessions *session.Client, requests audit.RequestStore, config DashboardConfig) *DashboardHandler {
+// shutdown is canceled the moment a shutdown signal arrives, so long-lived SSE handlers return promptly instead of blocking http.Server.Shutdown's grace period.
+func NewDashboardHandler(jwtManager *jwt.Manager, sessions *session.Client, requests audit.RequestStore, config DashboardConfig, shutdown context.Context) *DashboardHandler {
 	return &DashboardHandler{
 		jwtManager: jwtManager, sessions: sessions, requests: requests,
 		baseURL: config.BaseURL, clusterName: config.ClusterName,
 		adminGroups:  config.AdminGroups,
 		secureCookie: strings.HasPrefix(config.BaseURL, "https://"),
 		static:       newStaticHandler(),
+		shutdown:     shutdown,
 	}
 }
 
@@ -270,53 +273,72 @@ func (h *DashboardHandler) handleDashboardSSE(w http.ResponseWriter, r *http.Req
 	ticker := time.NewTicker(dashboardPushInterval)
 	defer ticker.Stop()
 
-	var dirty bool
+	var sessionsDirty, auditDirty bool
+	var cache pushCache
 	for {
 		select {
 		case ev := <-sessionEvents:
 			if ev.Cluster != h.clusterName {
 				continue
 			}
-			dirty = true
+			sessionsDirty = true
 		case ev := <-auditEvents:
 			if ev.Cluster != h.clusterName {
 				continue
 			}
-			dirty = true
+			auditDirty = true
 		case <-ticker.C:
 			if _, ok := h.dashboardClaims(r); !ok {
 				return
 			}
-			if !dirty {
+			if !sessionsDirty && !auditDirty {
 				_, _ = fmt.Fprintf(w, ": keepalive\n\n")
 				flusher.Flush()
 				continue
 			}
 			// keep dirty set when the push failed so the next tick retries
-			dirty = !h.pushDashboardFragments(r.Context(), w, flusher, claims, sessionID, page)
+			if h.pushDashboardFragments(r.Context(), w, flusher, claims, sessionID, page, sessionsDirty, &cache) {
+				sessionsDirty, auditDirty = false, false
+			}
 		case <-r.Context().Done():
+			return
+		case <-h.shutdown.Done():
 			return
 		}
 	}
 }
 
+// pushCache holds the last successfully loaded overview so a tick with only audit activity can refresh metrics without re-querying sessions.
+type pushCache struct {
+	data overviewData
+	have bool
+}
+
 // pushDashboardFragments reports whether it wrote the fragments for this stream.
-func (h *DashboardHandler) pushDashboardFragments(parent context.Context, w http.ResponseWriter, flusher http.Flusher, claims *jwt.DashboardSessionToken, sessionID string, page int) bool {
+func (h *DashboardHandler) pushDashboardFragments(parent context.Context, w http.ResponseWriter, flusher http.Flusher, claims *jwt.DashboardSessionToken, sessionID string, page int, sessionsDirty bool, cache *pushCache) bool {
 	ctx, cancel := context.WithTimeout(parent, 10*time.Second)
 	defer cancel()
 
 	if sessionID == "" {
-		data, err := h.loadOverview(ctx, claims)
+		if sessionsDirty || !cache.have {
+			data, err := h.loadOverview(ctx, claims)
+			if err != nil {
+				return false
+			}
+			cache.data = data
+			cache.have = true
+		}
+		metrics, err := h.loadOverviewMetrics(ctx, cache.data)
 		if err != nil {
 			return false
 		}
-		metrics, err := h.loadOverviewMetrics(ctx, data)
-		if err != nil {
-			return false
-		}
-		view := dashboardView{Sessions: data.Sessions, ActiveSessions: data.ActiveSessions, Metrics: metrics}
+		view := dashboardView{Sessions: cache.data.Sessions, ActiveSessions: cache.data.ActiveSessions, Metrics: metrics}
 		h.writeFragment(w, flusher, "stat-strip", view)
-		h.writeFragment(w, flusher, "sessions-tbody", view)
+		h.writeFragment(w, flusher, "nav-summary", view)
+		if sessionsDirty {
+			h.writeFragment(w, flusher, "sessions-tbody", view)
+			h.writeFragment(w, flusher, "view-count", view)
+		}
 		return true
 	}
 
@@ -337,6 +359,7 @@ func (h *DashboardHandler) pushDashboardFragments(parent context.Context, w http
 		ActiveSessions: boolInt(oauthSession.Phase == session.PhaseActive),
 	}
 	h.writeFragment(w, flusher, "stat-strip", view)
+	h.writeFragment(w, flusher, "nav-summary", view)
 	h.writeFragment(w, flusher, "detail-stats", view)
 	if page == 1 {
 		events, err := h.requests.ListSession(ctx, h.clusterName, sessionID, 100, 0)

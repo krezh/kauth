@@ -91,6 +91,9 @@ func TestFragmentTemplates(t *testing.T) {
 		want     []string
 	}{
 		{"stat-strip", "stat-strip", overview, []string{`id="stat-strip"`, "5"}},
+		{"nav-summary", "nav-summary", overview, []string{`id="nav-summary"`, "5"}},
+		{"view-count overview", "view-count", overview, []string{`id="view-count"`, "1 total"}},
+		{"view-count detail", "view-count", dashboardView{Detail: &SessionInfo{Email: "user@example.com"}}, []string{`id="view-count"`, "user@example.com"}},
 		{"sessions-tbody with rows", "sessions-tbody", overview, []string{`id="sessions-tbody"`, "sess-1", "user@example.com"}},
 		{"sessions-tbody empty", "sessions-tbody", dashboardView{}, []string{`id="sessions-tbody"`, "No sessions found."}},
 		{"detail-stats", "detail-stats", dashboardView{Detail: &SessionInfo{Email: "user@example.com", Phase: "Revoked"}}, []string{`id="detail-stats"`, "user@example.com", "Revoked"}},
