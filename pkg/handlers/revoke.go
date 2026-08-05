@@ -111,26 +111,13 @@ func (h *RevokeHandler) HandleRevoke(w http.ResponseWriter, r *http.Request) {
 
 	if req.UserEmail != "" {
 
-		sessions, err := h.sessionClient.GetByUser(ctx, req.UserEmail)
+		count, err := h.sessionClient.RevokeByUser(ctx, req.UserEmail)
 		if err != nil {
-			slog.ErrorContext(ctx, "revoke: failed to list user sessions", "user_email", req.UserEmail, "error", err)
-			http.Error(w, "Failed to find user sessions", http.StatusInternalServerError)
+			slog.ErrorContext(ctx, "revoke: failed to revoke user sessions", "user_email", req.UserEmail, "error", err)
+			http.Error(w, "Failed to revoke user sessions", http.StatusInternalServerError)
 			return
 		}
-
-		for _, s := range sessions {
-			if s.Phase == session.PhaseRevoked || s.Phase == session.PhaseExpired {
-				continue
-			}
-			if s.SessionID == req.SessionID {
-				continue // already revoked in the session_id block above
-			}
-			if err := h.sessionClient.Revoke(ctx, s.SessionID); err != nil {
-				slog.WarnContext(ctx, "revoke: failed to revoke session", "session_id", s.SessionID, "error", err)
-				continue
-			}
-			revoked++
-		}
+		revoked += count
 
 		audit.Log(ctx, r, "sessions_revoked",
 			"user_email", req.UserEmail,

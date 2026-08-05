@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"kauth/pkg/audit"
@@ -34,6 +35,39 @@ type DashboardHandler struct {
 	secureCookie bool
 	static       http.Handler
 	shutdown     context.Context
+	sseLimiter   *sseLimiter
+}
+
+// maxSSEStreamsPerUser bounds concurrent /sse/dashboard connections per dashboard identity, since each stream polls through the same pool SessionAuthenticator relies on for every proxied request.
+const maxSSEStreamsPerUser = 4
+
+// sseLimiter caps concurrent SSE streams per key so one user can't exhaust the shared session pool.
+type sseLimiter struct {
+	mu     sync.Mutex
+	counts map[string]int
+}
+
+func newSSELimiter() *sseLimiter {
+	return &sseLimiter{counts: make(map[string]int)}
+}
+
+func (l *sseLimiter) acquire(key string) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.counts[key] >= maxSSEStreamsPerUser {
+		return false
+	}
+	l.counts[key]++
+	return true
+}
+
+func (l *sseLimiter) release(key string) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	l.counts[key]--
+	if l.counts[key] <= 0 {
+		delete(l.counts, key)
+	}
 }
 
 type DashboardConfig struct {
@@ -51,6 +85,7 @@ func NewDashboardHandler(jwtManager *jwt.Manager, sessions *session.Client, requ
 		secureCookie: strings.HasPrefix(config.BaseURL, "https://"),
 		static:       newStaticHandler(),
 		shutdown:     shutdown,
+		sseLimiter:   newSSELimiter(),
 	}
 }
 
@@ -245,6 +280,13 @@ func (h *DashboardHandler) handleDashboardSSE(w http.ResponseWriter, r *http.Req
 	if page < 1 {
 		page = 1
 	}
+
+	limiterKey := claims.Subject + "|" + claims.Issuer
+	if !h.sseLimiter.acquire(limiterKey) {
+		http.Error(w, "Too many open dashboard streams", http.StatusTooManyRequests)
+		return
+	}
+	defer h.sseLimiter.release(limiterKey)
 
 	if sessionID != "" {
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)

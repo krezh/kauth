@@ -175,3 +175,34 @@ func (c *Client) Revoke(ctx context.Context, sessionID string) error {
 	}
 	return nil
 }
+
+// RevokeByUser revokes every non-terminal session matching userID in one UPDATE, unbounded by maxListResults.
+func (c *Client) RevokeByUser(ctx context.Context, userID string) (int, error) {
+	var revoked int
+	err := c.withNotify(ctx, func(tx pgx.Tx) ([]SessionEvent, error) {
+		rows, err := tx.Query(ctx, `
+			UPDATE oauth_sessions
+			SET phase=$3, revoked_at=now(), refresh_token='', api_token=''
+			WHERE cluster=$1 AND (email=$2 OR user_id=$2) AND phase != $3
+			RETURNING session_id, subject, issuer
+		`, c.cluster, userID, string(PhaseRevoked))
+		if err != nil {
+			return nil, fmt.Errorf("failed to revoke user sessions: %w", err)
+		}
+		defer rows.Close()
+		var events []SessionEvent
+		for rows.Next() {
+			var sessionID, subject, issuer string
+			if err := rows.Scan(&sessionID, &subject, &issuer); err != nil {
+				return nil, fmt.Errorf("failed to scan revoked session: %w", err)
+			}
+			events = append(events, SessionEvent{SessionID: sessionID, Cluster: c.cluster, Phase: PhaseRevoked, Subject: subject, Issuer: issuer})
+		}
+		revoked = len(events)
+		return events, rows.Err()
+	})
+	if err != nil {
+		return 0, err
+	}
+	return revoked, nil
+}

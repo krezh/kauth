@@ -144,6 +144,25 @@ func TestAnonymousDashboardSSEReturns401NotSignInPage(t *testing.T) {
 	}
 }
 
+func TestSSELimiterBoundsConcurrentStreamsPerKey(t *testing.T) {
+	limiter := newSSELimiter()
+	for i := range maxSSEStreamsPerUser {
+		if !limiter.acquire("user-a") {
+			t.Fatalf("acquire %d for user-a should have succeeded", i)
+		}
+	}
+	if limiter.acquire("user-a") {
+		t.Fatal("acquire should fail once user-a is at the limit")
+	}
+	if !limiter.acquire("user-b") {
+		t.Fatal("a different key must not be blocked by user-a's limit")
+	}
+	limiter.release("user-a")
+	if !limiter.acquire("user-a") {
+		t.Fatal("releasing a slot should let a new acquire succeed")
+	}
+}
+
 func TestAnonymousDashboardDoesNotStartLogin(t *testing.T) {
 	handler := &DashboardHandler{}
 	response := httptest.NewRecorder()

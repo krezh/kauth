@@ -109,3 +109,66 @@ func TestDashboardSSE_PushesFragmentOnSessionEvent(t *testing.T) {
 		t.Fatal("did not observe a detail-stats SSE event within the deadline")
 	}
 }
+
+func TestDashboardSSE_NonOwnerNonAdminForbidden(t *testing.T) {
+	dsn := os.Getenv("TEST_DATABASE_URL")
+	if dsn == "" {
+		t.Skip("TEST_DATABASE_URL not set")
+	}
+	ctx := context.Background()
+
+	sessionClient, err := session.NewClient(ctx, dsn, "sse-forbidden-cluster")
+	if err != nil {
+		t.Fatalf("session.NewClient() error = %v", err)
+	}
+	t.Cleanup(func() { _ = sessionClient.Close(context.Background()) })
+
+	requestStore, err := audit.NewPostgresStore(ctx, dsn, 16, time.Hour)
+	if err != nil {
+		t.Fatalf("audit.NewPostgresStore() error = %v", err)
+	}
+	t.Cleanup(func() { _ = requestStore.Close(context.Background()) })
+
+	jwtManager, err := jwt.NewManager(make([]byte, 32), make([]byte, 32))
+	if err != nil {
+		t.Fatalf("jwt.NewManager() error = %v", err)
+	}
+
+	handler := NewDashboardHandler(jwtManager, sessionClient, requestStore, DashboardConfig{ClusterName: "sse-forbidden-cluster"}, context.Background())
+	server := httptest.NewServer(handler)
+	t.Cleanup(server.Close)
+
+	const sessionID = "sse-forbidden-session"
+	const ownerSubject, issuer, ownerEmail = "sse-forbidden-owner", "https://issuer.example", "owner@example.com"
+	_ = sessionClient.Delete(ctx, sessionID)
+	if _, err := sessionClient.Create(ctx, sessionID, "verifier", ownerEmail); err != nil {
+		t.Fatalf("Create() error = %v", err)
+	}
+	if err := sessionClient.UpdateStatus(ctx, sessionID, session.Status{
+		Phase: session.PhaseActive, Email: ownerEmail, Subject: ownerSubject, Issuer: issuer,
+	}); err != nil {
+		t.Fatalf("UpdateStatus() error = %v", err)
+	}
+
+	strangerToken, err := jwtManager.CreateDashboardSessionToken("stranger@example.com", "sse-forbidden-stranger", issuer, nil, time.Hour)
+	if err != nil {
+		t.Fatalf("CreateDashboardSessionToken() error = %v", err)
+	}
+
+	reqCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, server.URL+"/sse/dashboard?session="+sessionID, nil)
+	if err != nil {
+		t.Fatalf("NewRequestWithContext() error = %v", err)
+	}
+	req.AddCookie(&http.Cookie{Name: dashboardCookieName(false), Value: strangerToken})
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("Do() error = %v", err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("status = %d, want 403", resp.StatusCode)
+	}
+}

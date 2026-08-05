@@ -397,6 +397,64 @@ func TestClient_Revoke_NotFound(t *testing.T) {
 	}
 }
 
+func TestClient_RevokeByUser(t *testing.T) {
+	client := testClient(t)
+	ctx := context.Background()
+
+	if _, err := client.Create(ctx, "revokeby-pending", "v", "revokeby@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Create(ctx, "revokeby-active", "v", ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.UpdateStatus(ctx, "revokeby-active", Status{
+		Phase: PhaseActive, Email: "revokeby@example.com", RefreshToken: "refresh-secret", APIToken: "api-secret",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Create(ctx, "revokeby-already-revoked", "v", "revokeby@example.com"); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.Revoke(ctx, "revokeby-already-revoked"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Create(ctx, "revokeby-other-user", "v", "other@example.com"); err != nil {
+		t.Fatal(err)
+	}
+
+	count, err := client.RevokeByUser(ctx, "revokeby@example.com")
+	if err != nil {
+		t.Fatalf("RevokeByUser() error = %v", err)
+	}
+	if count != 2 {
+		t.Fatalf("RevokeByUser() count = %d, want 2 (already-revoked session must not be recounted)", count)
+	}
+
+	pending, err := client.Get(ctx, "revokeby-pending")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if pending.Phase != PhaseRevoked {
+		t.Errorf("revokeby-pending Phase = %q, want Revoked", pending.Phase)
+	}
+
+	active, err := client.Get(ctx, "revokeby-active")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active.Phase != PhaseRevoked || active.RefreshToken != "" || active.APIToken != "" {
+		t.Errorf("revokeby-active = %+v, want Revoked with credentials scrubbed", active)
+	}
+
+	other, err := client.Get(ctx, "revokeby-other-user")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if other.Phase == PhaseRevoked {
+		t.Error("a different user's session must not be revoked")
+	}
+}
+
 func TestClient_ListActiveExcludesTerminal(t *testing.T) {
 	client := testClient(t)
 	ctx := context.Background()
