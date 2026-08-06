@@ -97,8 +97,20 @@ func TestFragmentTemplates(t *testing.T) {
 		{"sessions-tbody with rows", "sessions-tbody", overview, []string{`id="sessions-tbody"`, "sess-1", "user@example.com"}},
 		{"sessions-tbody empty", "sessions-tbody", dashboardView{}, []string{`id="sessions-tbody"`, "No sessions found."}},
 		{"detail-stats", "detail-stats", dashboardView{Detail: &SessionInfo{Email: "user@example.com", Phase: "Revoked"}}, []string{`id="detail-stats"`, "user@example.com", "Revoked"}},
-		{"events-tbody with rows", "events-tbody", dashboardView{Events: []audit.RequestEvent{{Method: "GET", Path: "/x", StatusCode: 200}}}, []string{`id="events-tbody"`, "/x", "200"}},
+		{"events-tbody with rows", "events-tbody", dashboardView{Events: []groupedEvent{{RequestEvent: audit.RequestEvent{Method: "GET", Path: "/x", StatusCode: 200}}}}, []string{`id="events-tbody"`, "/x", "200"}},
 		{"events-tbody empty", "events-tbody", dashboardView{}, []string{`id="events-tbody"`, "No API requests recorded for this session."}},
+		{
+			"events-tbody groups discovery children",
+			"events-tbody",
+			dashboardView{Events: []groupedEvent{{
+				RequestEvent: audit.RequestEvent{Method: "GET", Path: "/api/v1/namespaces/default/pods", StatusCode: 200},
+				Discovery: []audit.RequestEvent{
+					{Method: "GET", Path: "/apis", StatusCode: 200},
+					{Method: "GET", Path: "/api", StatusCode: 200},
+				},
+			}}},
+			[]string{`class="row-toggle" data-group="g0"`, "+2", `class="discovery-row" data-group="g0"`, "/apis", "/api"},
+		},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			var buf strings.Builder
@@ -117,11 +129,54 @@ func TestFragmentTemplates(t *testing.T) {
 	}
 }
 
+func TestEventsTbodyOrphanDiscoveryHasNoToggleChrome(t *testing.T) {
+	var buf strings.Builder
+	view := dashboardView{Events: []groupedEvent{{RequestEvent: audit.RequestEvent{Method: "GET", Path: "/apis", StatusCode: 200}}}}
+	if err := dashboardTemplate.ExecuteTemplate(&buf, "events-tbody", view); err != nil {
+		t.Fatalf("ExecuteTemplate() error = %v", err)
+	}
+	got := buf.String()
+	if !strings.Contains(got, "/apis") {
+		t.Fatalf("events-tbody = %q, want the orphan row's path rendered", got)
+	}
+	for _, unwanted := range []string{"row-toggle", "discovery-row"} {
+		if strings.Contains(got, unwanted) {
+			t.Fatalf("events-tbody = %q, want it to NOT contain %q for a standalone (non-grouped) row", got, unwanted)
+		}
+	}
+}
+
+func TestWhenRendersLocalizableTimeElement(t *testing.T) {
+	value := time.Date(2026, 8, 5, 20, 57, 0, 0, time.UTC)
+	var buf strings.Builder
+	if err := dashboardTemplate.ExecuteTemplate(&buf, "detail-stats", dashboardView{
+		Detail: &SessionInfo{Email: "user@example.com", CreatedAt: value},
+	}); err != nil {
+		t.Fatalf("ExecuteTemplate() error = %v", err)
+	}
+	got := buf.String()
+	if !strings.Contains(got, `<time datetime="2026-08-05T20:57:00Z">2026-08-05 20:57:00Z</time>`) {
+		t.Fatalf("detail-stats = %q, want a <time> element with a matching datetime attribute and UTC fallback text", got)
+	}
+}
+
+func TestWhenRendersNeverForZeroTime(t *testing.T) {
+	var buf strings.Builder
+	if err := dashboardTemplate.ExecuteTemplate(&buf, "detail-stats", dashboardView{
+		Detail: &SessionInfo{Email: "user@example.com"},
+	}); err != nil {
+		t.Fatalf("ExecuteTemplate() error = %v", err)
+	}
+	if !strings.Contains(buf.String(), "Never") {
+		t.Fatalf("detail-stats = %q, want \"Never\" for a zero-value LastUsed", buf.String())
+	}
+}
+
 func TestWriteFragmentFramesNewlinesInRenderedValues(t *testing.T) {
 	handler := &DashboardHandler{}
 	response := httptest.NewRecorder()
 	handler.writeFragment(response, response, "events-tbody", dashboardView{
-		Events: []audit.RequestEvent{{Method: "GET", Path: "/api/v1\n\nevent: injected\ndata: x", StatusCode: 200}},
+		Events: []groupedEvent{{RequestEvent: audit.RequestEvent{Method: "GET", Path: "/api/v1\n\nevent: injected\ndata: x", StatusCode: 200}}},
 	})
 
 	body := response.Body.String()

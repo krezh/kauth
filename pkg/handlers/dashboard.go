@@ -243,7 +243,7 @@ func (h *DashboardHandler) handleSession(w http.ResponseWriter, r *http.Request,
 		http.Error(w, "Page out of range", http.StatusBadRequest)
 		return
 	}
-	events, err := h.requests.ListSession(ctx, h.clusterName, sessionID, 100, (page-1)*100)
+	events, hasNext, err := fetchGroupedSessionEvents(ctx, h.requests, h.clusterName, sessionID, 100, (page-1)*100)
 	if err != nil {
 		h.renderError(w, http.StatusServiceUnavailable, "Request history is temporarily unavailable")
 		return
@@ -257,7 +257,7 @@ func (h *DashboardHandler) handleSession(w http.ResponseWriter, r *http.Request,
 		Title: "Session detail", Cluster: h.clusterName, Email: claims.Email, Admin: admin,
 		CSRF: claims.CSRFToken, Detail: ptrTo(sessionInfo(*oauthSession)), Events: events,
 		Metrics: metrics, ActiveSessions: boolInt(oauthSession.Phase == session.PhaseActive),
-		Page: page, PreviousPage: page - 1, NextPage: page + 1, HasNext: len(events) == 100,
+		Page: page, PreviousPage: page - 1, NextPage: page + 1, HasNext: hasNext,
 	})
 }
 
@@ -404,7 +404,7 @@ func (h *DashboardHandler) pushDashboardFragments(parent context.Context, w http
 	h.writeFragment(w, flusher, "nav-summary", view)
 	h.writeFragment(w, flusher, "detail-stats", view)
 	if page == 1 {
-		events, err := h.requests.ListSession(ctx, h.clusterName, sessionID, 100, 0)
+		events, _, err := fetchGroupedSessionEvents(ctx, h.requests, h.clusterName, sessionID, 100, 0)
 		if err != nil {
 			return false
 		}
@@ -498,7 +498,7 @@ type dashboardView struct {
 	ActiveSessions               int
 	Sessions                     []SessionInfo
 	Detail                       *SessionInfo
-	Events                       []audit.RequestEvent
+	Events                       []groupedEvent
 	Metrics                      audit.RequestMetrics
 	Page, PreviousPage, NextPage int
 }
