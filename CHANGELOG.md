@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.2.29](https://github.com/krezh/kauth/compare/0.2.28...0.2.29) (2026-08-07)
+
+
+### Features
+
+* **dashboard:** group kubectl discovery calls in session events, render timestamps in local time ([9ebae55](https://github.com/krezh/kauth/commit/9ebae554b9cdb3eaf28add4c990e543ff7ed2952))
+
+
+### Miscellaneous Chores
+
+* **nix:** lock file maintenance flake.lock ([#313](https://github.com/krezh/kauth/issues/313)) ([320334f](https://github.com/krezh/kauth/commit/320334f94617aef499a38e715f77f50f3918c66a))
+* **nix:** lock file maintenance flake.lock ([#315](https://github.com/krezh/kauth/issues/315)) ([d9249ec](https://github.com/krezh/kauth/commit/d9249ec4b42842c7d9e0ef84f50e157b7f7900b6))
+
 ## [0.2.28](https://github.com/krezh/kauth/compare/0.2.27...0.2.28) (2026-08-05)
 
 
