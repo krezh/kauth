@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.30](https://github.com/krezh/kauth/compare/0.2.29...0.2.30) (2026-08-07)
+
+
+### Bug Fixes
+
+* **dashboard:** keep stat tile values from wrapping onto a second line ([4bdf903](https://github.com/krezh/kauth/commit/4bdf903ce33968e05777a9aa6120dc682341ff93))
+
 ## [0.2.29](https://github.com/krezh/kauth/compare/0.2.28...0.2.29) (2026-08-07)
 
 
