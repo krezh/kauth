@@ -1,5 +1,30 @@
 # Changelog
 
+## [0.3.0](https://github.com/krezh/kauth/compare/0.2.31...0.3.0) (2026-09-05)
+
+
+### ⚠ BREAKING CHANGES
+
+* **deps:** Update kubernetes monorepo (v0.36.4 ➔ v0.37.0) ([#336](https://github.com/krezh/kauth/issues/336))
+
+### Features
+
+* **deps:** Update kubernetes monorepo (v0.36.4 ➔ v0.37.0) ([#336](https://github.com/krezh/kauth/issues/336)) ([edec75c](https://github.com/krezh/kauth/commit/edec75cac4c18f48cd0bc79b4cd613885df7d743))
+* **deps:** update module github.com/coreos/go-oidc/v3 (v3.20.0 ➔ v3.21.0) ([#343](https://github.com/krezh/kauth/issues/343)) ([2b741e0](https://github.com/krezh/kauth/commit/2b741e0e5b8496ccb9d81a9e2a4f7aecc2a2567a))
+
+
+### Miscellaneous Chores
+
+* **nix:** lock file maintenance flake.lock ([#333](https://github.com/krezh/kauth/issues/333)) ([b97259b](https://github.com/krezh/kauth/commit/b97259b3fc2feb836b8894f6f69e70e36cf4e7a2))
+* **nix:** lock file maintenance flake.lock ([#335](https://github.com/krezh/kauth/issues/335)) ([4a6ca5d](https://github.com/krezh/kauth/commit/4a6ca5d79eb853053287eff80dbca59ff7b4d22b))
+* **nix:** lock file maintenance flake.lock ([#337](https://github.com/krezh/kauth/issues/337)) ([aff3ac2](https://github.com/krezh/kauth/commit/aff3ac2831de027eb1a7fe3f458cb79f7c3302b4))
+* **nix:** lock file maintenance flake.lock ([#338](https://github.com/krezh/kauth/issues/338)) ([cfcad8f](https://github.com/krezh/kauth/commit/cfcad8fc4639fe25d9a87fabf9164c8feeb9e9fa))
+* **nix:** lock file maintenance flake.lock ([#340](https://github.com/krezh/kauth/issues/340)) ([0af407c](https://github.com/krezh/kauth/commit/0af407c0807495592316c46dbe4b3fb839aa71c0))
+* **nix:** lock file maintenance flake.lock ([#341](https://github.com/krezh/kauth/issues/341)) ([61add77](https://github.com/krezh/kauth/commit/61add7721e395ba864a035603605eb3e15bf9dbb))
+* **nix:** lock file maintenance flake.lock ([#342](https://github.com/krezh/kauth/issues/342)) ([88bf037](https://github.com/krezh/kauth/commit/88bf0379759c77bf5327e51decd06e4015fcf1ae))
+* **nix:** lock file maintenance flake.lock ([#344](https://github.com/krezh/kauth/issues/344)) ([4f20a11](https://github.com/krezh/kauth/commit/4f20a117fee5dbd6fea61a2008edfca75efdad63))
+* **nix:** lock file maintenance flake.lock ([#346](https://github.com/krezh/kauth/issues/346)) ([cc3a17a](https://github.com/krezh/kauth/commit/cc3a17aa2830b5330a97779ebff9d1597d36eb68))
+
 ## [0.2.31](https://github.com/krezh/kauth/compare/0.2.30...0.2.31) (2026-08-24)
 
 
