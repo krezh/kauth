@@ -172,10 +172,10 @@ schema = 4
     go = "1.14"
     packages = ["github.com/jackc/pgservicefile"]
   [mod."github.com/jackc/pgx/v5"]
-    version = "v5.10.0"
-    hash = "sha256-rDJ6VNA0Pzei2KwZjETA1uOMgb5yuXJRgxUauwID630="
+    version = "v5.11.0"
+    hash = "sha256-9+JOnfkk5WiuBC9J0l4EcAlHO/nD3zgNPnSJlu7Yx48="
     go = "1.25.0"
-    packages = ["github.com/jackc/pgx/v5", "github.com/jackc/pgx/v5/internal/iobufpool", "github.com/jackc/pgx/v5/internal/pgio", "github.com/jackc/pgx/v5/internal/sanitize", "github.com/jackc/pgx/v5/internal/stmtcache", "github.com/jackc/pgx/v5/pgconn", "github.com/jackc/pgx/v5/pgconn/ctxwatch", "github.com/jackc/pgx/v5/pgconn/internal/bgreader", "github.com/jackc/pgx/v5/pgproto3", "github.com/jackc/pgx/v5/pgtype", "github.com/jackc/pgx/v5/pgxpool"]
+    packages = ["github.com/jackc/pgx/v5", "github.com/jackc/pgx/v5/internal/iobufpool", "github.com/jackc/pgx/v5/internal/pgdatetime", "github.com/jackc/pgx/v5/internal/pgio", "github.com/jackc/pgx/v5/internal/sanitize", "github.com/jackc/pgx/v5/internal/stmtcache", "github.com/jackc/pgx/v5/pgconn", "github.com/jackc/pgx/v5/pgconn/ctxwatch", "github.com/jackc/pgx/v5/pgconn/internal/bgreader", "github.com/jackc/pgx/v5/pgproto3", "github.com/jackc/pgx/v5/pgtype", "github.com/jackc/pgx/v5/pgxpool"]
   [mod."github.com/jackc/puddle/v2"]
     version = "v2.2.2"
     hash = "sha256-IUxdu4JYfsCh/qlz2SiUWu7EVPHhyooiVA4oaS2Z6yk="
