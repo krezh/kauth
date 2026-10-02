@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.3.2](https://github.com/krezh/kauth/compare/0.3.1...0.3.2) (2026-10-02)
+
+
+### Miscellaneous Chores
+
+* **nix:** lock file maintenance flake.lock ([#371](https://github.com/krezh/kauth/issues/371)) ([80e7325](https://github.com/krezh/kauth/commit/80e73257476d717250a601eece06c52635ecf932))
+* **nix:** lock file maintenance flake.lock ([#373](https://github.com/krezh/kauth/issues/373)) ([08f9b4a](https://github.com/krezh/kauth/commit/08f9b4ab7634fb8a2be40ca1530797c378d894af))
+* **nix:** lock file maintenance flake.lock ([#374](https://github.com/krezh/kauth/issues/374)) ([5c0ae42](https://github.com/krezh/kauth/commit/5c0ae428d8a77a6ef5a8a5f799eeb5ecf4d6b4ed))
+* **nix:** lock file maintenance flake.lock ([#375](https://github.com/krezh/kauth/issues/375)) ([87a93d3](https://github.com/krezh/kauth/commit/87a93d37544ca711a19e32608f9d9a21cbe73a09))
+* **nix:** lock file maintenance flake.lock ([#376](https://github.com/krezh/kauth/issues/376)) ([8415e6d](https://github.com/krezh/kauth/commit/8415e6d7cfda2bb020a282aee37bee814ee790d2))
+* **nix:** lock file maintenance flake.lock ([#377](https://github.com/krezh/kauth/issues/377)) ([beaf1d0](https://github.com/krezh/kauth/commit/beaf1d0628e76ff0957c02ad93ed09f138c328ae))
+* **nix:** lock file maintenance flake.lock ([#378](https://github.com/krezh/kauth/issues/378)) ([0c6007d](https://github.com/krezh/kauth/commit/0c6007d5566dea2e4e4c0c4d5bb935201464518b))
+
 ## [0.3.1](https://github.com/krezh/kauth/compare/0.3.0...0.3.1) (2026-09-25)
 
 
