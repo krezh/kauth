@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.4.1](https://github.com/krezh/kauth/compare/0.4.0...0.4.1) (2026-10-23)
+
+
+### Miscellaneous Chores
+
+* **nix:** lock file maintenance flake.lock ([#395](https://github.com/krezh/kauth/issues/395)) ([41f7070](https://github.com/krezh/kauth/commit/41f70704348529422865102405a45db6c8acb920))
+* **nix:** lock file maintenance flake.lock ([#397](https://github.com/krezh/kauth/issues/397)) ([a90fd92](https://github.com/krezh/kauth/commit/a90fd92961d03ab03f336ae6c3bb005c5cde02bd))
+* **nix:** lock file maintenance flake.lock ([#398](https://github.com/krezh/kauth/issues/398)) ([0d5d834](https://github.com/krezh/kauth/commit/0d5d8343850b1c40c7584990e91a696a9d3bf873))
+* **nix:** lock file maintenance flake.lock ([#400](https://github.com/krezh/kauth/issues/400)) ([46e1033](https://github.com/krezh/kauth/commit/46e103336362ec0751faa9f450f640327faa1988))
+
 ## [0.4.0](https://github.com/krezh/kauth/compare/0.3.1...0.4.0) (2026-10-17)
 
 
