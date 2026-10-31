@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.2](https://github.com/krezh/kauth/compare/0.4.1...0.4.2) (2026-10-31)
+
+
+### Features
+
+* **deps:** update module github.com/jackc/pgx/v5 (v5.11.0 ➔ v5.12.0) ([#407](https://github.com/krezh/kauth/issues/407)) ([af9adca](https://github.com/krezh/kauth/commit/af9adca1b4dc4c41604dc53bcdba722440bfdf99))
+
 ## [0.4.1](https://github.com/krezh/kauth/compare/0.4.0...0.4.1) (2026-10-31)
 
 
