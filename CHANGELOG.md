@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.4.1](https://github.com/krezh/kauth/compare/0.4.0...0.4.1) (2026-10-31)
+
+
+### Bug Fixes
+
+* **deps:** update kubernetes monorepo (v0.37.1 ➔ v0.37.2) ([#403](https://github.com/krezh/kauth/issues/403)) ([357a200](https://github.com/krezh/kauth/commit/357a20081464c09529e2ed2f89a9ea4b416f822a))
+
+
+### Miscellaneous Chores
+
+* **nix:** lock file maintenance flake.lock ([#395](https://github.com/krezh/kauth/issues/395)) ([41f7070](https://github.com/krezh/kauth/commit/41f70704348529422865102405a45db6c8acb920))
+* **nix:** lock file maintenance flake.lock ([#397](https://github.com/krezh/kauth/issues/397)) ([a90fd92](https://github.com/krezh/kauth/commit/a90fd92961d03ab03f336ae6c3bb005c5cde02bd))
+* **nix:** lock file maintenance flake.lock ([#398](https://github.com/krezh/kauth/issues/398)) ([0d5d834](https://github.com/krezh/kauth/commit/0d5d8343850b1c40c7584990e91a696a9d3bf873))
+* **nix:** lock file maintenance flake.lock ([#400](https://github.com/krezh/kauth/issues/400)) ([46e1033](https://github.com/krezh/kauth/commit/46e103336362ec0751faa9f450f640327faa1988))
+* **nix:** lock file maintenance flake.lock ([#402](https://github.com/krezh/kauth/issues/402)) ([461a83f](https://github.com/krezh/kauth/commit/461a83f7b1d1d17d7b7eb77e585b4c9ff4c1da26))
+* **nix:** lock file maintenance flake.lock ([#404](https://github.com/krezh/kauth/issues/404)) ([02f3be7](https://github.com/krezh/kauth/commit/02f3be7fa98c80c23e84d0f4a000069422a7a7f0))
+* **nix:** lock file maintenance flake.lock ([#405](https://github.com/krezh/kauth/issues/405)) ([4826021](https://github.com/krezh/kauth/commit/4826021b135a204c49ee15ce87132afc3eeb557a))
+* **nix:** lock file maintenance flake.lock ([#406](https://github.com/krezh/kauth/issues/406)) ([cde7070](https://github.com/krezh/kauth/commit/cde707095a240fc2c5fa8c2de299c445146adae0))
+
 ## [0.4.0](https://github.com/krezh/kauth/compare/0.3.1...0.4.0) (2026-10-17)
 
 
