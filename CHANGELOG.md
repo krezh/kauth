@@ -1,5 +1,20 @@
 # Changelog
 
+## [0.4.2](https://github.com/krezh/kauth/compare/0.4.1...0.4.2) (2026-11-04)
+
+
+### Features
+
+* **deps:** update module github.com/jackc/pgx/v5 (v5.11.0 ➔ v5.12.0) ([#407](https://github.com/krezh/kauth/issues/407)) ([af9adca](https://github.com/krezh/kauth/commit/af9adca1b4dc4c41604dc53bcdba722440bfdf99))
+
+
+### Miscellaneous Chores
+
+* **nix:** lock file maintenance flake.lock ([#409](https://github.com/krezh/kauth/issues/409)) ([d875cfe](https://github.com/krezh/kauth/commit/d875cfeac39a1990de43a408577508e84b1f8767))
+* **nix:** lock file maintenance flake.lock ([#410](https://github.com/krezh/kauth/issues/410)) ([4e11aba](https://github.com/krezh/kauth/commit/4e11aba31e9c4b17d07ebe72a364f16d50ca2064))
+* **nix:** lock file maintenance flake.lock ([#411](https://github.com/krezh/kauth/issues/411)) ([2fa098f](https://github.com/krezh/kauth/commit/2fa098f231dcd014210319fd62e7b8a07f165c36))
+* **nix:** lock file maintenance flake.lock ([#412](https://github.com/krezh/kauth/issues/412)) ([3fbef3b](https://github.com/krezh/kauth/commit/3fbef3b5017e9e3d27f9b07648289a13685089dd))
+
 ## [0.4.1](https://github.com/krezh/kauth/compare/0.4.0...0.4.1) (2026-10-31)
 
 
