@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.3](https://github.com/krezh/kauth/compare/0.4.2...0.4.3) (2026-11-05)
+
+
+### Miscellaneous Chores
+
+* **nix:** lock file maintenance flake.lock ([#413](https://github.com/krezh/kauth/issues/413)) ([366925d](https://github.com/krezh/kauth/commit/366925d17bc9cfd9f2148866eba5724b1e3fe117))
+
 ## [0.4.2](https://github.com/krezh/kauth/compare/0.4.1...0.4.2) (2026-11-04)
 
 
