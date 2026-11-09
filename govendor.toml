@@ -265,13 +265,13 @@ schema = 4
     go = "1.26.0"
     packages = ["golang.org/x/sync/errgroup", "golang.org/x/sync/semaphore", "golang.org/x/sync/singleflight"]
   [mod."golang.org/x/sys"]
-    version = "v0.49.0"
-    hash = "sha256-/1S3yy3in72ygZT1CKymvOzJZqCMYiGSqZDfvSyB3LI="
+    version = "v0.50.0"
+    hash = "sha256-3T1I5T5pgbQBxRhN9Q2Ajvsy1kJW9WM/uddR9cOUVNA="
     go = "1.26.0"
     packages = ["golang.org/x/sys/plan9", "golang.org/x/sys/unix", "golang.org/x/sys/windows"]
   [mod."golang.org/x/term"]
-    version = "v0.47.0"
-    hash = "sha256-XtEeyv5y3g9nWfzB7vevm5KwNR8hW+LVsBNEectqIhA="
+    version = "v0.48.0"
+    hash = "sha256-iTwcS7DeeZIc9MEPaTY4SgM0e5OVBim7xW7umCcxdkc="
     go = "1.26.0"
     packages = ["golang.org/x/term"]
   [mod."golang.org/x/text"]
