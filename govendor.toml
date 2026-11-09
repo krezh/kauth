@@ -255,8 +255,8 @@ schema = 4
     go = "1.25.0"
     packages = ["golang.org/x/net/http/httpguts", "golang.org/x/net/http2", "golang.org/x/net/http2/hpack", "golang.org/x/net/idna", "golang.org/x/net/internal/httpcommon", "golang.org/x/net/internal/httpsfv"]
   [mod."golang.org/x/oauth2"]
-    version = "v0.37.0"
-    hash = "sha256-CbL8ICe9yooSIiVL8F3UnYY/NayjpI2C7sueOauW2EI="
+    version = "v0.38.0"
+    hash = "sha256-cYUQdmagDGC4lkqukAdSNQXJoIlknqMKsSFiFhRRxrs="
     go = "1.26.0"
     packages = ["golang.org/x/oauth2", "golang.org/x/oauth2/internal"]
   [mod."golang.org/x/sync"]
