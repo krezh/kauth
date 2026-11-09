@@ -1,9 +1,9 @@
 module kauth
 
-go 1.26.1
+go 1.26.7
 
 require (
-	charm.land/lipgloss/v2 v2.0.6
+	charm.land/lipgloss/v2 v2.1.0
 	github.com/coreos/go-oidc/v3 v3.21.0
 	github.com/jackc/pgx/v5 v5.12.0
 	github.com/spf13/cobra v1.10.2
