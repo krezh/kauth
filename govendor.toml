@@ -172,8 +172,8 @@ schema = 4
     go = "1.14"
     packages = ["github.com/jackc/pgservicefile"]
   [mod."github.com/jackc/pgx/v5"]
-    version = "v5.12.0"
-    hash = "sha256-oawuG9nmLt2G3ovRBxnuNxKcOgnEI676aElmsUwsTPg="
+    version = "v5.13.0"
+    hash = "sha256-+D8TzwWNqLYbysR1hB1uPYp5K8dewn0OfZKr0CNiU8k="
     go = "1.25.0"
     packages = ["github.com/jackc/pgx/v5", "github.com/jackc/pgx/v5/internal/iobufpool", "github.com/jackc/pgx/v5/internal/pgdatetime", "github.com/jackc/pgx/v5/internal/pgio", "github.com/jackc/pgx/v5/internal/sanitize", "github.com/jackc/pgx/v5/internal/stmtcache", "github.com/jackc/pgx/v5/pgconn", "github.com/jackc/pgx/v5/pgconn/ctxwatch", "github.com/jackc/pgx/v5/pgconn/internal/bgreader", "github.com/jackc/pgx/v5/pgproto3", "github.com/jackc/pgx/v5/pgtype", "github.com/jackc/pgx/v5/pgxpool"]
   [mod."github.com/jackc/puddle/v2"]
