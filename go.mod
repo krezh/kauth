@@ -5,7 +5,7 @@ go 1.26.7
 require (
 	charm.land/lipgloss/v2 v2.1.0
 	github.com/coreos/go-oidc/v3 v3.21.0
-	github.com/jackc/pgx/v5 v5.12.0
+	github.com/jackc/pgx/v5 v5.13.0
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/oauth2 v0.38.0
 	golang.org/x/sync v0.25.0
