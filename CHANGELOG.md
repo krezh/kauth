@@ -1,5 +1,32 @@
 # Changelog
 
+## [0.5.0](https://github.com/krezh/kauth/compare/0.4.2...0.5.0) (2026-11-14)
+
+
+### ⚠ BREAKING CHANGES
+
+* **deps:** Update module golang.org/x/term (v0.47.0 ➔ v0.48.0) ([#422](https://github.com/krezh/kauth/issues/422))
+* **deps:** Update module golang.org/x/sync (v0.24.0 ➔ v0.25.0) ([#420](https://github.com/krezh/kauth/issues/420))
+* **deps:** Update module golang.org/x/oauth2 (v0.37.0 ➔ v0.38.0) ([#419](https://github.com/krezh/kauth/issues/419))
+
+### Features
+
+* **deps:** update module charm.land/lipgloss/v2 (v2.0.6 ➔ v2.1.0) ([#421](https://github.com/krezh/kauth/issues/421)) ([559f135](https://github.com/krezh/kauth/commit/559f13583ec962da27229ec7ce479b7d8bb0c392))
+* **deps:** update module github.com/jackc/pgx/v5 (v5.12.0 ➔ v5.13.0) ([#426](https://github.com/krezh/kauth/issues/426)) ([8a0b426](https://github.com/krezh/kauth/commit/8a0b426d91b1f0121a493b8c14c7bf92bf33f5f5))
+* **deps:** Update module golang.org/x/oauth2 (v0.37.0 ➔ v0.38.0) ([#419](https://github.com/krezh/kauth/issues/419)) ([2618993](https://github.com/krezh/kauth/commit/2618993dd0780b8e3be272d273a92453ca410307))
+* **deps:** Update module golang.org/x/sync (v0.24.0 ➔ v0.25.0) ([#420](https://github.com/krezh/kauth/issues/420)) ([074961f](https://github.com/krezh/kauth/commit/074961f22bfb84014e939683b55088e044a3554d))
+* **deps:** Update module golang.org/x/term (v0.47.0 ➔ v0.48.0) ([#422](https://github.com/krezh/kauth/issues/422)) ([c0f6a22](https://github.com/krezh/kauth/commit/c0f6a22fc72c6eec4075bdc029a2ca3b4c4f040f))
+
+
+### Miscellaneous Chores
+
+* **nix:** lock file maintenance flake.lock ([#413](https://github.com/krezh/kauth/issues/413)) ([366925d](https://github.com/krezh/kauth/commit/366925d17bc9cfd9f2148866eba5724b1e3fe117))
+* **nix:** lock file maintenance flake.lock ([#417](https://github.com/krezh/kauth/issues/417)) ([d3af80c](https://github.com/krezh/kauth/commit/d3af80c9f344f1bf478d25dd16833397e7934fb7))
+* **nix:** lock file maintenance flake.lock ([#418](https://github.com/krezh/kauth/issues/418)) ([5958799](https://github.com/krezh/kauth/commit/59587998e23be76d438aebcd6a07eaa4943f7fcf))
+* **nix:** lock file maintenance flake.lock ([#423](https://github.com/krezh/kauth/issues/423)) ([269488b](https://github.com/krezh/kauth/commit/269488b499ccdd1e2f3d19ebd080c7e3b41fc07e))
+* **nix:** lock file maintenance flake.lock ([#427](https://github.com/krezh/kauth/issues/427)) ([6600f78](https://github.com/krezh/kauth/commit/6600f7832a33e4a8ce157aea57d1ca08800281fd))
+* **nix:** lock file maintenance flake.lock ([#428](https://github.com/krezh/kauth/issues/428)) ([a59865c](https://github.com/krezh/kauth/commit/a59865cae5e0b694a5c2397c23fcef981f36e8f2))
+
 ## [0.4.2](https://github.com/krezh/kauth/compare/0.4.1...0.4.2) (2026-11-04)
 
 
